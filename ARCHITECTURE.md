@@ -34,7 +34,10 @@ GeometrieCameraApp
 ├── MeasurementManager
 │   ├── TargetDetector
 │   └── GeometryMeasurementEngine
-└── CameraApiHandler
+├── CameraApiHandler
+└── Diagnostic camera temporaire
+    ├── GrayscaleDiagnostic
+    └── GrayscaleDiagnosticApiHandler
 ```
 
 ### `GeometrieCameraApp`
@@ -43,7 +46,8 @@ Responsabilité : orchestration ESPHome uniquement.
 
 - initialise les sous-systèmes ;
 - appelle leur boucle ;
-- enregistre l'API dans le serveur web ;
+- reçoit par injection la vraie `ESP32Camera` déclarée dans le YAML ;
+- enregistre les handlers HTTP ;
 - expose quelques façades nécessaires au YAML.
 
 Il ne doit pas contenir les algorithmes caméra, vision, calcul géométrique ou sérialisation HTTP.
@@ -128,15 +132,55 @@ Cette classe doit rester indépendante du réseau et du matériel autant que pos
 
 ### `CameraApiHandler`
 
-Responsabilité : interface HTTP uniquement.
+Responsabilité : interface HTTP de l'application uniquement.
 
-- routage des URL ;
+- routage des URL `/api/*` et `/image.jpg` ;
 - transformation des états en réponses HTTP/JSON ;
 - transmission de l'image fournie par `CameraManager`.
 
 Elle dépend directement de `CameraManager` et `MeasurementManager`, pas de toute l'application.
 
-Si la sérialisation JSON devient importante, elle devra être sortie dans une classe dédiée plutôt que d'alourdir `CameraApiHandler`.
+Le diagnostic caméra n'est volontairement pas ajouté dans cette classe.
+
+### `GrayscaleDiagnostic`
+
+Responsabilité : diagnostic temporaire de la chaîne d'acquisition brute OV3660 -> ESP32-S3.
+
+- reçoit la vraie `ESP32Camera` par injection ;
+- demande une frame uniquement sur ordre explicite ;
+- accepte uniquement une frame `PIXFORMAT_GRAYSCALE` ;
+- copie la frame brute dans un BMP 8 bits non compressé stocké en PSRAM ;
+- ne fait aucun traitement géométrique et aucune compression JPEG.
+
+Ce sous-système permet de déterminer si les artefacts observés existent déjà dans les données brutes avant compression JPEG.
+
+**Tests unitaires / tests de composant à prévoir :**
+
+- rejet d'un format autre que GRAYSCALE ;
+- validation de la taille minimale du framebuffer ;
+- génération correcte de l'en-tête BMP ;
+- inversion correcte des lignes pour le format BMP ;
+- conservation exacte des valeurs de pixels source.
+
+### `GrayscaleDiagnosticApiHandler`
+
+Responsabilité : HTTP du diagnostic brut uniquement.
+
+Routes temporaires :
+
+```text
+GET /diagnostic/capture
+GET /diagnostic/status
+GET /diagnostic/raw.bmp
+```
+
+Cette classe ne connaît pas `CameraManager`, `MeasurementManager` ou les calculs de géométrie.
+
+### `Ov3660CameraConfigurator`
+
+Classe de diagnostic bas niveau créée pour les essais de registres OV3660/PCLK.
+
+Elle n'est plus instanciée dans l'application après l'échec du test de polarité PCLK. Le fichier est conservé temporairement pour tracer et éventuellement réutiliser les essais matériels, sans modifier l'orchestrateur principal.
 
 ## Revue obligatoire avant nouvelle fonctionnalité
 
