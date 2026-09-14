@@ -14,6 +14,7 @@ GeometrieCameraApp::GeometrieCameraApp()
       camera_manager_(&this->placeholder_image_provider_),
       measurement_manager_(),
       grayscale_diagnostic_(),
+      camera_configurator_(),
       api_handler_(&this->camera_manager_, &this->measurement_manager_),
       diagnostic_api_handler_(&this->grayscale_diagnostic_),
       api_registered_(false) {}
@@ -23,11 +24,13 @@ void GeometrieCameraApp::setup() {
 
   this->measurement_manager_.setup();
   this->camera_manager_.setup();
+  this->camera_configurator_.setup();
   this->register_api_if_possible_();
 }
 
 void GeometrieCameraApp::loop() {
   this->camera_manager_.loop();
+  this->camera_configurator_.loop();
 
   if (!this->api_registered_) {
     this->register_api_if_possible_();
@@ -41,6 +44,11 @@ void GeometrieCameraApp::dump_config() {
   ESP_LOGCONFIG(TAG, "  Physical camera ready: %s", this->camera_manager_.physical_camera_ready() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Placeholder mode: %s", this->camera_manager_.placeholder_mode() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Grayscale diagnostic ready: %s", this->grayscale_diagnostic_.ready() ? "YES" : "NO");
+  ESP_LOGCONFIG(TAG, "  OV3660 detected: %s", this->camera_configurator_.sensor_detected() ? "YES" : "NO");
+  ESP_LOGCONFIG(TAG, "  PCLK divider requested: %u",
+                static_cast<unsigned>(this->camera_configurator_.requested_pclk_divider()));
+  ESP_LOGCONFIG(TAG, "  PCLK divider applied: %s",
+                this->camera_configurator_.pclk_divider_applied() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Valid measurements: %u",
                 static_cast<unsigned>(this->measurement_manager_.valid_measurement_count()));
 }
@@ -49,13 +57,17 @@ void GeometrieCameraApp::set_camera(esp32_camera::ESP32Camera *camera) {
   this->grayscale_diagnostic_.set_camera(camera);
 }
 
+void GeometrieCameraApp::set_ov3660_pclk_divider(uint8_t divider) {
+  this->camera_configurator_.set_pclk_divider(divider);
+}
+
 std::string GeometrieCameraApp::status_text() const {
   if (!this->api_registered_) {
     return "V0 - API camera en attente du serveur web";
   }
 
   if (this->camera_manager_.placeholder_mode()) {
-    return "V0 - API bouchon active - diagnostic camera brute disponible";
+    return "V0 - API bouchon active - diagnostic camera disponible";
   }
 
   if (!this->measurement_manager_.last_measurement().valid) {
@@ -91,6 +103,10 @@ GeometryMeasurementEngine &GeometrieCameraApp::measurement_engine() {
 
 GrayscaleDiagnostic &GeometrieCameraApp::grayscale_diagnostic() {
   return this->grayscale_diagnostic_;
+}
+
+Ov3660CameraConfigurator &GeometrieCameraApp::camera_configurator() {
+  return this->camera_configurator_;
 }
 
 void GeometrieCameraApp::register_api_if_possible_() {
