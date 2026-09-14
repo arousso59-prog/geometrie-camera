@@ -4,6 +4,7 @@
 #include <string>
 
 #include "esphome/core/component.h"
+#include "camera_api.h"
 #include "camera_manager.h"
 #include "geometry_measurement.h"
 #include "target_detector.h"
@@ -13,6 +14,8 @@ namespace geometrie_camera_app {
 
 class GeometrieCameraApp : public Component {
  public:
+  GeometrieCameraApp();
+
   void setup() override;
   void loop() override;
   void dump_config() override;
@@ -26,12 +29,16 @@ class GeometrieCameraApp : public Component {
   GeometryMeasurementEngine &measurement_engine();
 
  private:
+  void register_api_if_possible_();
+
   CameraManager camera_manager_{};
   TargetDetector target_detector_{};
   GeometryMeasurementEngine measurement_engine_{};
+  CameraApiHandler api_handler_;
 
   GeometryMeasurement last_measurement_{};
   uint32_t valid_measurement_count_{0};
+  bool api_registered_{false};
 };
 
 }  // namespace geometrie_camera_app
