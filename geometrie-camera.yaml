@@ -80,9 +80,8 @@ geometrie_camera_app:
 #   Y9    = GPIO16
 #   PCLK  = GPIO13
 #
-# Validation haute resolution : 1600x1200.
-# Test de stabilite du bus camera avec XCLK reduit a 10 MHz.
-# Tous les autres parametres sont conserves pour isoler l'effet de XCLK.
+# Test intermediaire : retour XCLK a 20 MHz et resolution 1024x768.
+# Les autres parametres restent inchanges pour comparer les artefacts.
 
 i2c:
   - id: camera_i2c
@@ -96,7 +95,7 @@ esp32_camera:
 
   external_clock:
     pin: GPIO15
-    frequency: 10MHz
+    frequency: 20MHz
 
   i2c_id: camera_i2c
 
@@ -115,7 +114,7 @@ esp32_camera:
   pixel_clock_pin: GPIO13
 
   pixel_format: JPEG
-  resolution: 1600x1200
+  resolution: 1024x768
   jpeg_quality: 10
   frame_buffer_count: 1
   frame_buffer_location: PSRAM
