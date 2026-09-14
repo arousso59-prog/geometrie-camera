@@ -9,6 +9,7 @@
 #include "grayscale_diagnostic.h"
 #include "grayscale_diagnostic_api.h"
 #include "measurement_manager.h"
+#include "ov3660_camera_configurator.h"
 #include "placeholder_image_provider.h"
 #include "types.h"
 
@@ -27,6 +28,7 @@ class GeometrieCameraApp : public Component {
   void dump_config() override;
 
   void set_camera(esp32_camera::ESP32Camera *camera);
+  void set_ov3660_pclk_divider(uint8_t divider);
 
   std::string status_text() const;
   uint32_t valid_measurement_count() const;
@@ -37,6 +39,7 @@ class GeometrieCameraApp : public Component {
   TargetDetector &target_detector();
   GeometryMeasurementEngine &measurement_engine();
   GrayscaleDiagnostic &grayscale_diagnostic();
+  Ov3660CameraConfigurator &camera_configurator();
 
  private:
   void register_api_if_possible_();
@@ -45,6 +48,7 @@ class GeometrieCameraApp : public Component {
   CameraManager camera_manager_;
   MeasurementManager measurement_manager_;
   GrayscaleDiagnostic grayscale_diagnostic_;
+  Ov3660CameraConfigurator camera_configurator_;
   CameraApiHandler api_handler_;
   GrayscaleDiagnosticApiHandler diagnostic_api_handler_;
   bool api_registered_;
