@@ -3,6 +3,8 @@
 namespace esphome {
 namespace geometrie_camera_app {
 
+TargetDetector::TargetDetector() {}
+
 TargetObservation TargetDetector::detect(const GrayFrameView &frame) const {
   // V0 : l'architecture est prete mais l'algorithme de vision sera ajoute
   // apres validation de la camera et de la cible physique.
