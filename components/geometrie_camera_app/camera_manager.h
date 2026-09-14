@@ -20,13 +20,21 @@ class CameraManager {
   void loop();
 
   bool ready() const;
+  bool physical_camera_ready() const;
+  bool placeholder_mode() const;
+  uint32_t capture_count() const;
   const CameraFrameInfo &last_frame_info() const;
 
-  // Sera relie au composant esp32_camera apres validation du pinout.
+  // En V0 cette methode produit une capture bouchon valide.
+  // Plus tard son implementation sera remplacee par l'acquisition OV3660,
+  // sans modifier l'API HTTP ni le logiciel PC.
   bool request_capture();
 
  private:
   bool ready_{false};
+  bool physical_camera_ready_{false};
+  bool placeholder_mode_{true};
+  uint32_t capture_count_{0};
   CameraFrameInfo last_frame_{};
 };
 
