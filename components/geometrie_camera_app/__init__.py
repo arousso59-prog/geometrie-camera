@@ -11,6 +11,9 @@ GeometrieCameraApp = geometrie_camera_app_ns.class_(
     cg.Component,
 )
 
+# L'application enregistre ses routes API dans le serveur web ESPHome.
+DEPENDENCIES = ["web_server"]
+
 
 CONFIG_SCHEMA = cv.Schema(
     {
