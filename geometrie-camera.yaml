@@ -28,6 +28,9 @@ preferences:
 logger:
   level: DEBUG
 
+# API native ESPHome : permet notamment l'affichage des logs via le reseau.
+api:
+
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
