@@ -6,12 +6,16 @@
 #include "esphome/core/component.h"
 #include "camera_api.h"
 #include "camera_manager.h"
+#include "grayscale_diagnostic.h"
+#include "grayscale_diagnostic_api.h"
 #include "measurement_manager.h"
-#include "ov3660_camera_configurator.h"
 #include "placeholder_image_provider.h"
 #include "types.h"
 
 namespace esphome {
+namespace esp32_camera {
+class ESP32Camera;
+}
 namespace geometrie_camera_app {
 
 class GeometrieCameraApp : public Component {
@@ -22,6 +26,8 @@ class GeometrieCameraApp : public Component {
   void loop() override;
   void dump_config() override;
 
+  void set_camera(esp32_camera::ESP32Camera *camera);
+
   std::string status_text() const;
   uint32_t valid_measurement_count() const;
   const GeometryMeasurement &last_measurement() const;
@@ -30,7 +36,7 @@ class GeometrieCameraApp : public Component {
   MeasurementManager &measurement_manager();
   TargetDetector &target_detector();
   GeometryMeasurementEngine &measurement_engine();
-  Ov3660CameraConfigurator &camera_configurator();
+  GrayscaleDiagnostic &grayscale_diagnostic();
 
  private:
   void register_api_if_possible_();
@@ -38,8 +44,9 @@ class GeometrieCameraApp : public Component {
   PlaceholderImageProvider placeholder_image_provider_;
   CameraManager camera_manager_;
   MeasurementManager measurement_manager_;
-  Ov3660CameraConfigurator camera_configurator_;
+  GrayscaleDiagnostic grayscale_diagnostic_;
   CameraApiHandler api_handler_;
+  GrayscaleDiagnosticApiHandler diagnostic_api_handler_;
   bool api_registered_;
 };
 
