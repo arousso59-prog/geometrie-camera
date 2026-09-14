@@ -26,7 +26,6 @@ preferences:
 logger:
   level: DEBUG
 
-# API native ESPHome : permet notamment l'affichage des logs via le reseau.
 api:
 
 wifi:
@@ -60,6 +59,11 @@ geometrie_camera_app:
   id: geometrie_camera_app_id
   camera_id: camera_geometrie
 
+  # Diagnostic JPEG : le driver OV3660 utilise normalement PCLK_RATIO=10
+  # pour environ 10 MHz PCLK avec XCLK=20 MHz. On double uniquement ce
+  # diviseur afin de viser environ 5 MHz PCLK.
+  ov3660_pclk_divider: 20
+
 # ============================================================
 # CAMERA OV3660 - GOOUUU ESP32-S3-CAM V1.5
 # ============================================================
@@ -79,13 +83,12 @@ geometrie_camera_app:
 #   Y9    = GPIO16
 #   PCLK  = GPIO13
 #
-# TEST DIAGNOSTIC COMPRESSION :
-# - sortie OV3660 en niveaux de gris bruts ;
-# - jpeg_quality = 0 => aucune conversion JPEG ESPHome ;
-# - XCLK = 16 MHz pour tester le reglage non-JPEG prevu par le driver OV3660 ;
-# - 640x480 => 307200 octets bruts, suffisant pour comparer avec le test JPEG initial ;
-# - framebuffer en PSRAM ;
-# - acquisition uniquement sur demande via /diagnostic/capture.
+# TEST DIAGNOSTIC PCLK JPEG :
+# - retour au JPEG qui presentait les traits reguliers ;
+# - XCLK = 20 MHz ;
+# - JPEG 1024x768 qualite 10 ;
+# - PCLK_RATIO force de 10 a 20 apres initialisation du capteur ;
+# - aucun autre reglage du capteur n'est modifie par le configurateur.
 
 i2c:
   - id: camera_i2c
@@ -95,12 +98,12 @@ i2c:
 
 esp32_camera:
   id: camera_geometrie
-  name: "Camera geometrie diagnostic"
+  name: "Camera geometrie JPEG PCLK lent"
   internal: true
 
   external_clock:
     pin: GPIO15
-    frequency: 16MHz
+    frequency: 20MHz
 
   i2c_id: camera_i2c
 
@@ -118,23 +121,23 @@ esp32_camera:
   href_pin: GPIO7
   pixel_clock_pin: GPIO13
 
-  pixel_format: GRAYSCALE
-  resolution: 640x480
-  jpeg_quality: 0
+  pixel_format: JPEG
+  resolution: 1024x768
+  jpeg_quality: 10
   frame_buffer_count: 1
   frame_buffer_location: PSRAM
   max_framerate: 1 fps
-  idle_framerate: 0 fps
+  idle_framerate: 0.1 fps
   test_pattern: false
 
-# Le serveur esp32_camera_web_server est volontairement retire pendant ce test :
-# il est destine a la diffusion JPEG. La frame brute est exposee par notre
-# classe GrayscaleDiagnostic sous forme de BMP non compresse.
-#
-# Routes de diagnostic :
-#   GET /diagnostic/capture  -> demande une frame brute
-#   GET /diagnostic/status   -> verifie que la frame est recue
-#   GET /diagnostic/raw.bmp  -> affiche la frame sans compression JPEG
+# Snapshot JPEG temporaire pour comparer directement avec nos images defectueuses
+# precedentes. Le test se fait a nouveau sur le port 8081.
+esp32_camera_web_server:
+  - port: 8081
+    mode: snapshot
+
+# Les routes /diagnostic/* restent compilees mais ne sont pas utilisees pendant
+# ce test JPEG ; elles etaient destinees au diagnostic GRAYSCALE brut.
 
 # ============================================================
 # PARAMETRES DE DEVELOPPEMENT / CALIBRATION
