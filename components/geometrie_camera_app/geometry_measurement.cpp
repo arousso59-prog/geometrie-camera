@@ -9,6 +9,8 @@ namespace {
 constexpr float RAD_TO_DEG_F = 57.29577951308232f;
 }
 
+GeometryMeasurementEngine::GeometryMeasurementEngine() : calibration_() {}
+
 void GeometryMeasurementEngine::set_calibration(const CameraCalibration &calibration) {
   this->calibration_ = calibration;
 }
