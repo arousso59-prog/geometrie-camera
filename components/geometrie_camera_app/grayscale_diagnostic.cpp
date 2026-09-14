@@ -72,13 +72,7 @@ void GrayscaleDiagnostic::on_camera_image(const std::shared_ptr<camera::CameraIm
     return;
   }
 
-  auto esp_image = std::dynamic_pointer_cast<esp32_camera::ESP32CameraImage>(image);
-  if (esp_image == nullptr) {
-    ESP_LOGE(TAG, "Image recue incompatible avec ESP32CameraImage");
-    this->capture_pending_ = false;
-    return;
-  }
-
+  auto esp_image = std::static_pointer_cast<esp32_camera::ESP32CameraImage>(image);
   camera_fb_t *frame = esp_image->get_raw_buffer();
   if (frame == nullptr || frame->buf == nullptr) {
     ESP_LOGE(TAG, "Framebuffer grayscale indisponible");
