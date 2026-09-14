@@ -1,7 +1,6 @@
 # Capteur camera pour geometrie automobile - ESP32-S3 + OV3660
-# Architecture inspiree de equilibreuse-esp32 :
 # YAML = materiel / ESPHome
-# C++  = logique applicative / traitement image / calculs
+# C++  = logique applicative / diagnostic / traitement image / calculs
 
 substitutions:
   device_name: geometrie-camera
@@ -16,7 +15,6 @@ esp32:
   framework:
     type: esp-idf
 
-# La camera haute resolution necessite la PSRAM.
 # Carte GOOUUU ESP32-S3-CAM N16R8 : 8 Mo de PSRAM octal.
 psram:
   mode: octal
@@ -60,6 +58,7 @@ external_components:
 
 geometrie_camera_app:
   id: geometrie_camera_app_id
+  camera_id: camera_geometrie
 
 # ============================================================
 # CAMERA OV3660 - GOOUUU ESP32-S3-CAM V1.5
@@ -80,9 +79,12 @@ geometrie_camera_app:
 #   Y9    = GPIO16
 #   PCLK  = GPIO13
 #
-# Test de diagnostic : retour a l'image reelle et framebuffer en DRAM.
-# L'objectif est de verifier si les artefacts proviennent du transfert ou
-# du stockage du framebuffer en PSRAM.
+# TEST DIAGNOSTIC COMPRESSION :
+# - sortie OV3660 en niveaux de gris bruts ;
+# - jpeg_quality = 0 => aucune conversion JPEG ESPHome ;
+# - 640x480 => 307200 octets bruts, suffisant pour comparer avec le test JPEG initial ;
+# - framebuffer en PSRAM ;
+# - acquisition uniquement sur demande via /diagnostic/capture.
 
 i2c:
   - id: camera_i2c
@@ -92,7 +94,8 @@ i2c:
 
 esp32_camera:
   id: camera_geometrie
-  name: "Camera geometrie"
+  name: "Camera geometrie diagnostic"
+  internal: true
 
   external_clock:
     pin: GPIO15
@@ -114,21 +117,23 @@ esp32_camera:
   href_pin: GPIO7
   pixel_clock_pin: GPIO13
 
-  pixel_format: JPEG
-  resolution: 1024x768
-  jpeg_quality: 10
+  pixel_format: GRAYSCALE
+  resolution: 640x480
+  jpeg_quality: 0
   frame_buffer_count: 1
-  frame_buffer_location: DRAM
+  frame_buffer_location: PSRAM
   max_framerate: 1 fps
-  idle_framerate: 0.1 fps
+  idle_framerate: 0 fps
   test_pattern: false
 
-# Serveur temporaire de validation de la camera reelle.
-# Une requete HTTP sur http://<IP>:8081/ declenche et retourne un snapshot JPEG.
-# Il sera retire lorsque Ov3660ImageProvider sera relie a notre API /api/capture.
-esp32_camera_web_server:
-  - port: 8081
-    mode: snapshot
+# Le serveur esp32_camera_web_server est volontairement retire pendant ce test :
+# il est destine a la diffusion JPEG. La frame brute est exposee par notre
+# classe GrayscaleDiagnostic sous forme de BMP non compresse.
+#
+# Routes de diagnostic :
+#   GET /diagnostic/capture  -> demande une frame brute
+#   GET /diagnostic/status   -> verifie que la frame est recue
+#   GET /diagnostic/raw.bmp  -> affiche la frame sans compression JPEG
 
 # ============================================================
 # PARAMETRES DE DEVELOPPEMENT / CALIBRATION
