@@ -40,7 +40,13 @@ GrayscaleDiagnostic::GrayscaleDiagnostic()
       capture_count_(0),
       last_capture_ms_(0),
       capture_pending_(false),
-      ready_(false) {}
+      ready_(false),
+      raw_min_(0),
+      raw_max_(0),
+      raw_mean_(0.0f),
+      raw_zero_count_(0),
+      raw_full_count_(0),
+      raw_pixel_count_(0) {}
 
 GrayscaleDiagnostic::~GrayscaleDiagnostic() {
   this->clear_buffer_();
@@ -86,6 +92,16 @@ void GrayscaleDiagnostic::on_camera_image(const std::shared_ptr<camera::CameraIm
     return;
   }
 
+  const size_t expected_pixels = static_cast<size_t>(frame->width) * static_cast<size_t>(frame->height);
+  if (frame->len < expected_pixels) {
+    ESP_LOGE(TAG, "Framebuffer trop court pour statistiques: %u < %u", static_cast<unsigned>(frame->len),
+             static_cast<unsigned>(expected_pixels));
+    this->capture_pending_ = false;
+    return;
+  }
+
+  this->calculate_statistics_(frame->buf, expected_pixels);
+
   if (!this->build_bmp_(frame->buf, frame->len, frame->width, frame->height)) {
     ESP_LOGE(TAG, "Construction BMP diagnostic impossible");
     this->capture_pending_ = false;
@@ -102,6 +118,10 @@ void GrayscaleDiagnostic::on_camera_image(const std::shared_ptr<camera::CameraIm
   ESP_LOGI(TAG, "Capture brute recue: %ux%u, %u octets source, BMP %u octets",
            static_cast<unsigned>(frame->width), static_cast<unsigned>(frame->height),
            static_cast<unsigned>(frame->len), static_cast<unsigned>(this->bmp_size_));
+  ESP_LOGI(TAG, "Stats brutes: min=%u max=%u moyenne=%.2f zero=%u full255=%u pixels=%u",
+           static_cast<unsigned>(this->raw_min_), static_cast<unsigned>(this->raw_max_),
+           static_cast<double>(this->raw_mean_), static_cast<unsigned>(this->raw_zero_count_),
+           static_cast<unsigned>(this->raw_full_count_), static_cast<unsigned>(this->raw_pixel_count_));
 }
 
 bool GrayscaleDiagnostic::ready() const {
@@ -134,6 +154,30 @@ const uint8_t *GrayscaleDiagnostic::bmp_data() const {
 
 size_t GrayscaleDiagnostic::bmp_size() const {
   return this->bmp_size_;
+}
+
+uint8_t GrayscaleDiagnostic::raw_min() const {
+  return this->raw_min_;
+}
+
+uint8_t GrayscaleDiagnostic::raw_max() const {
+  return this->raw_max_;
+}
+
+float GrayscaleDiagnostic::raw_mean() const {
+  return this->raw_mean_;
+}
+
+uint32_t GrayscaleDiagnostic::raw_zero_count() const {
+  return this->raw_zero_count_;
+}
+
+uint32_t GrayscaleDiagnostic::raw_full_count() const {
+  return this->raw_full_count_;
+}
+
+size_t GrayscaleDiagnostic::raw_pixel_count() const {
+  return this->raw_pixel_count_;
 }
 
 bool GrayscaleDiagnostic::build_bmp_(const uint8_t *grayscale, size_t grayscale_size, uint16_t width,
@@ -193,6 +237,44 @@ bool GrayscaleDiagnostic::build_bmp_(const uint8_t *grayscale, size_t grayscale_
 
   this->bmp_size_ = file_size;
   return true;
+}
+
+void GrayscaleDiagnostic::calculate_statistics_(const uint8_t *grayscale, size_t pixel_count) {
+  this->raw_pixel_count_ = pixel_count;
+  this->raw_zero_count_ = 0;
+  this->raw_full_count_ = 0;
+  this->raw_mean_ = 0.0f;
+
+  if (grayscale == nullptr || pixel_count == 0) {
+    this->raw_min_ = 0;
+    this->raw_max_ = 0;
+    return;
+  }
+
+  uint8_t minimum = 255;
+  uint8_t maximum = 0;
+  uint64_t sum = 0;
+
+  for (size_t i = 0; i < pixel_count; i++) {
+    const uint8_t value = grayscale[i];
+    if (value < minimum) {
+      minimum = value;
+    }
+    if (value > maximum) {
+      maximum = value;
+    }
+    if (value == 0) {
+      this->raw_zero_count_++;
+    }
+    if (value == 255) {
+      this->raw_full_count_++;
+    }
+    sum += value;
+  }
+
+  this->raw_min_ = minimum;
+  this->raw_max_ = maximum;
+  this->raw_mean_ = static_cast<float>(sum) / static_cast<float>(pixel_count);
 }
 
 bool GrayscaleDiagnostic::ensure_buffer_(size_t required_size) {
