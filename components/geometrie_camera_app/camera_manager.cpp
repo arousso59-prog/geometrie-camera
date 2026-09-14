@@ -1,39 +1,36 @@
 #include "camera_manager.h"
 
-#include "esphome/core/hal.h"
-#include "placeholder_image.h"
-
 namespace esphome {
 namespace geometrie_camera_app {
 
-void CameraManager::setup() {
-  // V0 : le service camera est disponible en mode bouchon.
-  // La vraie camera physique reste explicitement marquee non prete.
-  this->ready_ = true;
-  this->physical_camera_ready_ = false;
-  this->placeholder_mode_ = true;
+CameraManager::CameraManager(ImageProvider *image_provider)
+    : image_provider_(image_provider), capture_count_(0), last_frame_(), current_image_() {}
 
-  this->last_frame_.valid = true;
-  this->last_frame_.width = PLACEHOLDER_IMAGE_WIDTH;
-  this->last_frame_.height = PLACEHOLDER_IMAGE_HEIGHT;
-  this->last_frame_.size_bytes = PLACEHOLDER_IMAGE_JPEG_SIZE;
-  this->last_frame_.timestamp_ms = 0;
+void CameraManager::setup() {
+  if (this->image_provider_ == nullptr) {
+    return;
+  }
+
+  this->image_provider_->setup();
+  this->request_capture();
 }
 
 void CameraManager::loop() {
-  // Reserve pour la future gestion non bloquante des acquisitions OV3660.
+  if (this->image_provider_ != nullptr) {
+    this->image_provider_->loop();
+  }
 }
 
 bool CameraManager::ready() const {
-  return this->ready_;
+  return this->image_provider_ != nullptr && this->image_provider_->ready();
 }
 
 bool CameraManager::physical_camera_ready() const {
-  return this->physical_camera_ready_;
+  return this->ready() && this->image_provider_->is_physical_camera();
 }
 
 bool CameraManager::placeholder_mode() const {
-  return this->placeholder_mode_;
+  return this->ready() && !this->image_provider_->is_physical_camera();
 }
 
 uint32_t CameraManager::capture_count() const {
@@ -44,19 +41,30 @@ const CameraFrameInfo &CameraManager::last_frame_info() const {
   return this->last_frame_;
 }
 
+const ImageBufferView &CameraManager::current_image() const {
+  return this->current_image_;
+}
+
 bool CameraManager::request_capture() {
-  if (!this->ready_) {
+  if (!this->ready()) {
     return false;
   }
 
-  // Capture bouchon : on conserve les memes metadonnees d'image et on met
-  // seulement a jour l'identifiant logique et l'horodatage de la capture.
+  ImageBufferView image;
+  uint32_t timestamp_ms = 0;
+
+  if (!this->image_provider_->capture(image, timestamp_ms)) {
+    return false;
+  }
+
+  this->current_image_ = image;
   this->capture_count_++;
+
   this->last_frame_.valid = true;
-  this->last_frame_.width = PLACEHOLDER_IMAGE_WIDTH;
-  this->last_frame_.height = PLACEHOLDER_IMAGE_HEIGHT;
-  this->last_frame_.size_bytes = PLACEHOLDER_IMAGE_JPEG_SIZE;
-  this->last_frame_.timestamp_ms = millis();
+  this->last_frame_.width = image.width;
+  this->last_frame_.height = image.height;
+  this->last_frame_.size_bytes = image.size_bytes;
+  this->last_frame_.timestamp_ms = timestamp_ms;
 
   return true;
 }
