@@ -12,7 +12,24 @@ void CameraManager::setup() {
   }
 
   this->image_provider_->setup();
-  this->request_capture();
+
+  if (!this->image_provider_->ready()) {
+    return;
+  }
+
+  ImageBufferView image;
+  uint32_t timestamp_ms = 0;
+
+  if (!this->image_provider_->capture(image, timestamp_ms)) {
+    return;
+  }
+
+  this->current_image_ = image;
+  this->last_frame_.valid = true;
+  this->last_frame_.width = image.width;
+  this->last_frame_.height = image.height;
+  this->last_frame_.size_bytes = image.size_bytes;
+  this->last_frame_.timestamp_ms = timestamp_ms;
 }
 
 void CameraManager::loop() {
