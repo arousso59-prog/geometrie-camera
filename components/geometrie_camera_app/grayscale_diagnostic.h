@@ -15,7 +15,7 @@ namespace geometrie_camera_app {
 class GrayscaleDiagnostic : public camera::CameraListener {
  public:
   GrayscaleDiagnostic();
-  ~GrayscaleDiagnostic() override;
+  ~GrayscaleDiagnostic();
 
   void set_camera(esp32_camera::ESP32Camera *camera);
   bool request_capture();
