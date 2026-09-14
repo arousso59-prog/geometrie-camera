@@ -82,6 +82,7 @@ geometrie_camera_app:
 # TEST DIAGNOSTIC COMPRESSION :
 # - sortie OV3660 en niveaux de gris bruts ;
 # - jpeg_quality = 0 => aucune conversion JPEG ESPHome ;
+# - XCLK = 16 MHz pour tester le reglage non-JPEG prevu par le driver OV3660 ;
 # - 640x480 => 307200 octets bruts, suffisant pour comparer avec le test JPEG initial ;
 # - framebuffer en PSRAM ;
 # - acquisition uniquement sur demande via /diagnostic/capture.
@@ -99,7 +100,7 @@ esp32_camera:
 
   external_clock:
     pin: GPIO15
-    frequency: 20MHz
+    frequency: 16MHz
 
   i2c_id: camera_i2c
 
