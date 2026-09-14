@@ -80,10 +80,9 @@ geometrie_camera_app:
 #   Y9    = GPIO16
 #   PCLK  = GPIO13
 #
-# Test de diagnostic : mire interne du capteur activee.
-# Si les artefacts apparaissent aussi sur la mire, le probleme est situe
-# dans la chaine numerique camera -> bus parallele -> ESP32, et non dans
-# la scene optique ou les reglages d'exposition.
+# Test de diagnostic : retour a l'image reelle et framebuffer en DRAM.
+# L'objectif est de verifier si les artefacts proviennent du transfert ou
+# du stockage du framebuffer en PSRAM.
 
 i2c:
   - id: camera_i2c
@@ -119,10 +118,10 @@ esp32_camera:
   resolution: 1024x768
   jpeg_quality: 10
   frame_buffer_count: 1
-  frame_buffer_location: PSRAM
+  frame_buffer_location: DRAM
   max_framerate: 1 fps
   idle_framerate: 0.1 fps
-  test_pattern: true
+  test_pattern: false
 
 # Serveur temporaire de validation de la camera reelle.
 # Une requete HTTP sur http://<IP>:8081/ declenche et retourne un snapshot JPEG.
