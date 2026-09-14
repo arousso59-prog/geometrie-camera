@@ -8,10 +8,17 @@ namespace geometrie_camera_app {
 
 static const char *const TAG = "geometrie_camera_app";
 
-GeometrieCameraApp::GeometrieCameraApp() : api_handler_(this) {}
+GeometrieCameraApp::GeometrieCameraApp()
+    : placeholder_image_provider_(),
+      camera_manager_(&this->placeholder_image_provider_),
+      measurement_manager_(),
+      api_handler_(&this->camera_manager_, &this->measurement_manager_),
+      api_registered_(false) {}
 
 void GeometrieCameraApp::setup() {
   ESP_LOGI(TAG, "Initialisation application geometrie camera");
+
+  this->measurement_manager_.setup();
   this->camera_manager_.setup();
   this->register_api_if_possible_();
 }
@@ -19,7 +26,6 @@ void GeometrieCameraApp::setup() {
 void GeometrieCameraApp::loop() {
   this->camera_manager_.loop();
 
-  // Rend l'enregistrement robuste meme si l'ordre de setup ESPHome change.
   if (!this->api_registered_) {
     this->register_api_if_possible_();
   }
@@ -31,7 +37,8 @@ void GeometrieCameraApp::dump_config() {
   ESP_LOGCONFIG(TAG, "  Camera service ready: %s", this->camera_manager_.ready() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Physical camera ready: %s", this->camera_manager_.physical_camera_ready() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Placeholder mode: %s", this->camera_manager_.placeholder_mode() ? "YES" : "NO");
-  ESP_LOGCONFIG(TAG, "  Valid measurements: %u", static_cast<unsigned>(this->valid_measurement_count_));
+  ESP_LOGCONFIG(TAG, "  Valid measurements: %u",
+                static_cast<unsigned>(this->measurement_manager_.valid_measurement_count()));
 }
 
 std::string GeometrieCameraApp::status_text() const {
@@ -43,7 +50,7 @@ std::string GeometrieCameraApp::status_text() const {
     return "V0 - API bouchon active - image noir/blanc";
   }
 
-  if (!this->last_measurement_.valid) {
+  if (!this->measurement_manager_.last_measurement().valid) {
     return "Camera prete - aucune mesure valide";
   }
 
@@ -51,23 +58,27 @@ std::string GeometrieCameraApp::status_text() const {
 }
 
 uint32_t GeometrieCameraApp::valid_measurement_count() const {
-  return this->valid_measurement_count_;
+  return this->measurement_manager_.valid_measurement_count();
 }
 
 const GeometryMeasurement &GeometrieCameraApp::last_measurement() const {
-  return this->last_measurement_;
+  return this->measurement_manager_.last_measurement();
 }
 
 CameraManager &GeometrieCameraApp::camera_manager() {
   return this->camera_manager_;
 }
 
+MeasurementManager &GeometrieCameraApp::measurement_manager() {
+  return this->measurement_manager_;
+}
+
 TargetDetector &GeometrieCameraApp::target_detector() {
-  return this->target_detector_;
+  return this->measurement_manager_.target_detector();
 }
 
 GeometryMeasurementEngine &GeometrieCameraApp::measurement_engine() {
-  return this->measurement_engine_;
+  return this->measurement_manager_.measurement_engine();
 }
 
 void GeometrieCameraApp::register_api_if_possible_() {
