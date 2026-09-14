@@ -80,8 +80,8 @@ geometrie_camera_app:
 #   Y9    = GPIO16
 #   PCLK  = GPIO13
 #
-# Pour la premiere validation on reste volontairement en 640x480.
-# L'objectif est uniquement de confirmer l'initialisation et une capture JPEG.
+# Validation haute resolution : 1600x1200.
+# On conserve jpeg_quality a 10 pour ne modifier qu'un parametre a la fois.
 
 i2c:
   - id: camera_i2c
@@ -114,7 +114,7 @@ esp32_camera:
   pixel_clock_pin: GPIO13
 
   pixel_format: JPEG
-  resolution: 640x480
+  resolution: 1600x1200
   jpeg_quality: 10
   frame_buffer_count: 1
   frame_buffer_location: PSRAM
