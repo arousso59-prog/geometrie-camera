@@ -4,142 +4,122 @@ Capteur optique pour appareil de géométrie automobile maison, basé sur ESP32-
 
 ## Architecture
 
-Le projet sépare maintenant strictement les responsabilités :
+Le projet sépare strictement les responsabilités :
 
 - `geometrie-camera.yaml` : configuration ESPHome et matérielle ;
 - `GeometrieCameraApp` : orchestration uniquement ;
 - `ImageProvider` : interface de source d'image ;
-- `PlaceholderImageProvider` : image bouchon actuelle ;
+- `PlaceholderImageProvider` : image bouchon de l'API principale ;
 - `CameraManager` : cycle d'acquisition et métadonnées ;
 - `MeasurementManager` : chaîne de détection et de mesure ;
 - `TargetDetector` : détection de cible ;
 - `GeometryMeasurementEngine` : calcul mathématique des angles ;
-- `CameraApiHandler` : interface HTTP uniquement.
+- `CameraApiHandler` : interface HTTP principale ;
+- `GrayscaleDiagnostic` + `GrayscaleDiagnosticApiHandler` : diagnostic temporaire de la caméra brute.
 
-Les règles complètes de développement, découpage des classes et préparation des tests unitaires sont décrites dans [`ARCHITECTURE.md`](ARCHITECTURE.md).
+Les règles de développement et la préparation des tests unitaires sont décrites dans [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
-## Étape actuelle — V0 API bouchon
+## Matériel validé
 
-La caméra physique n'est pas encore activée tant que le brochage exact du PCB ESP32-S3 + OV3660 n'est pas validé.
+Carte : GOOUUU ESP32-S3-CAM V1.5, ESP32-S3 N16R8.
 
-L'API HTTP fonctionne avec une image JPEG de test monochrome 160 × 120, moitié noire / moitié blanche. Cela permet de développer et tester la communication PC sans attendre la caméra réelle.
+Capteur : OV3660.
 
-### Routes HTTP
-
-#### `GET /api/status`
-
-Retourne l'état du module, la source d'image utilisée et les métadonnées de la dernière image.
-
-Exemple :
-
-```json
-{
-  "api_version": 1,
-  "status": "ok",
-  "mode": "placeholder",
-  "camera_ready": true,
-  "physical_camera_ready": false,
-  "capture_count": 0,
-  "last_capture_ms": 1234,
-  "image": {
-    "url": "/image.jpg",
-    "format": "jpeg",
-    "width": 160,
-    "height": 120,
-    "size_bytes": 269
-  }
-}
-```
-
-#### `GET /api/capture`
-
-Déclenche une capture logique. En V0, le `PlaceholderImageProvider` fournit le JPEG de test. Le compteur est incrémenté uniquement lors d'une demande explicite de capture.
-
-```json
-{
-  "success": true,
-  "placeholder": true,
-  "capture_id": 1,
-  "timestamp_ms": 12543,
-  "width": 160,
-  "height": 120,
-  "size_bytes": 269,
-  "image": "/image.jpg"
-}
-```
-
-#### `GET /image.jpg`
-
-Retourne directement la dernière image fournie par `CameraManager`.
-
-Aujourd'hui il s'agit du JPEG bouchon. Lorsque l'OV3660 sera activée, cette même route retournera l'image réelle sans changer le contrat de l'API PC.
-
-#### `GET /api/measure`
-
-Retourne la dernière mesure connue. Tant que la détection de cible n'est pas développée, `valid` reste à `false`.
-
-```json
-{
-  "valid": false,
-  "timestamp_ms": 0,
-  "yaw_deg": 0.0,
-  "pitch_deg": 0.0,
-  "roll_deg": 0.0,
-  "quality": 0.0
-}
-```
-
-## Arborescence principale
+Brochage caméra validé :
 
 ```text
-geometrie-camera/
-├── ARCHITECTURE.md
-├── geometrie-camera.yaml
-├── secrets.yaml.example
-└── components/
-    └── geometrie_camera_app/
-        ├── __init__.py
-        ├── types.h / types.cpp
-        ├── geometrie_camera_app.h / .cpp
-        ├── image_provider.h / .cpp
-        ├── placeholder_image_provider.h / .cpp
-        ├── placeholder_image.h / .cpp
-        ├── camera_manager.h / .cpp
-        ├── camera_api.h / .cpp
-        ├── measurement_manager.h / .cpp
-        ├── target_detector.h / .cpp
-        └── geometry_measurement.h / .cpp
+SIOD  GPIO4
+SIOC  GPIO5
+VSYNC GPIO6
+HREF  GPIO7
+XCLK  GPIO15
+Y2    GPIO11
+Y3    GPIO9
+Y4    GPIO8
+Y5    GPIO10
+Y6    GPIO12
+Y7    GPIO18
+Y8    GPIO17
+Y9    GPIO16
+PCLK  GPIO13
 ```
 
-## Brochage caméra
+La capture JPEG réelle a été validée jusqu'à 1600x1200. Un artefact régulier sous forme de petits traits a cependant été observé et reste présent avec différentes résolutions, XCLK 10/20 MHz, PSRAM/DRAM, mire interne et inversion de polarité PCLK.
 
-La carte est configurée comme ESP32-S3 et le capteur prévu est l'OV3660. Le brochage parallèle de la caméra dépend toutefois du PCB exact.
+## Étape actuelle — diagnostic sans compression JPEG
 
-Le bloc `esp32_camera` reste volontairement désactivé dans le YAML jusqu'à validation de D0..D7, XCLK, PCLK, VSYNC, HREF et SCCB.
+Le firmware est temporairement configuré en :
 
-## Principe pour la suite
+```yaml
+pixel_format: GRAYSCALE
+resolution: 640x480
+jpeg_quality: 0
+frame_buffer_location: PSRAM
+idle_framerate: 0 fps
+```
 
-Le contrat HTTP doit rester stable :
+Avec `jpeg_quality: 0`, ESPHome conserve la frame GRAYSCALE brute et ne la convertit pas en JPEG.
+
+`GrayscaleDiagnostic` copie cette frame dans un BMP 8 bits **non compressé** uniquement pour permettre son affichage dans un navigateur. Les valeurs de pixels ne sont pas recompressées.
+
+### Procédure de test
+
+1. Demander une acquisition :
 
 ```text
-PC -> GET /api/capture
-ESP -> acquisition via ImageProvider
-PC <- JSON avec métadonnées
-PC -> GET /image.jpg
-ESP -> dernière image disponible
-PC -> GET /api/measure
-ESP -> dernière mesure calculée
+GET http://<IP>/diagnostic/capture
 ```
 
-Le futur `Ov3660ImageProvider` remplacera le provider bouchon sans imposer de refonte de `CameraManager`, de l'API ou de la console PC.
+Réponse attendue :
+
+```json
+{
+  "accepted": true,
+  "status": "capture_requested"
+}
+```
+
+2. Attendre environ une seconde puis contrôler :
+
+```text
+GET http://<IP>/diagnostic/status
+```
+
+Une capture valide doit donner `ready: true` avec une taille de 640x480.
+
+3. Afficher la frame brute :
+
+```text
+GET http://<IP>/diagnostic/raw.bmp
+```
+
+Le navigateur affiche alors un BMP niveaux de gris généré directement à partir de la frame brute OV3660.
+
+### Interprétation
+
+- si les artefacts sont encore visibles dans `/diagnostic/raw.bmp`, ils sont présents **avant toute compression JPEG** : bus caméra, acquisition parallèle, capteur ou driver deviennent les pistes prioritaires ;
+- si l'image brute est propre, le problème se situe dans la chaîne JPEG utilisée lors des tests précédents.
+
+## API principale
+
+L'API principale reste actuellement branchée sur `PlaceholderImageProvider` afin de ne pas mélanger diagnostic matériel et architecture finale :
+
+```text
+GET /api/status
+GET /api/capture
+GET /api/measure
+GET /image.jpg
+```
+
+Le futur `Ov3660ImageProvider` remplacera le bouchon une fois la chaîne caméra validée.
 
 ## Étapes suivantes
 
-- compiler et valider cette nouvelle architecture sur l'ESP32-S3 ;
-- valider le brochage réel de la carte reçue ;
-- ajouter `Ov3660ImageProvider` ;
+- exécuter le test GRAYSCALE sans JPEG ;
+- selon le résultat, poursuivre le diagnostic bus/PCLK/driver ou chaîne JPEG ;
+- revenir ensuite à la résolution de travail validée ;
+- créer `Ov3660ImageProvider` ;
 - fixer exposition / gain / balance des blancs ;
 - implémenter la détection de cible ;
-- ajouter les premiers tests unitaires du calcul géométrique et du gestionnaire de capture ;
-- passer aux coordonnées sub-pixel puis aux angles ;
-- ajouter la calibration optique.
+- ajouter les tests unitaires du calcul et des gestionnaires ;
+- passer aux coordonnées sub-pixel et à la calibration optique.
