@@ -6,8 +6,9 @@
 #include "esphome/core/component.h"
 #include "camera_api.h"
 #include "camera_manager.h"
-#include "geometry_measurement.h"
-#include "target_detector.h"
+#include "measurement_manager.h"
+#include "placeholder_image_provider.h"
+#include "types.h"
 
 namespace esphome {
 namespace geometrie_camera_app {
@@ -25,20 +26,18 @@ class GeometrieCameraApp : public Component {
   const GeometryMeasurement &last_measurement() const;
 
   CameraManager &camera_manager();
+  MeasurementManager &measurement_manager();
   TargetDetector &target_detector();
   GeometryMeasurementEngine &measurement_engine();
 
  private:
   void register_api_if_possible_();
 
-  CameraManager camera_manager_{};
-  TargetDetector target_detector_{};
-  GeometryMeasurementEngine measurement_engine_{};
+  PlaceholderImageProvider placeholder_image_provider_;
+  CameraManager camera_manager_;
+  MeasurementManager measurement_manager_;
   CameraApiHandler api_handler_;
-
-  GeometryMeasurement last_measurement_{};
-  uint32_t valid_measurement_count_{0};
-  bool api_registered_{false};
+  bool api_registered_;
 };
 
 }  // namespace geometrie_camera_app
