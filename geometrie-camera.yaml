@@ -17,6 +17,7 @@ esp32:
     type: esp-idf
 
 # La camera haute resolution necessite la PSRAM.
+# Carte GOOUUU ESP32-S3-CAM N16R8 : 8 Mo de PSRAM octal.
 psram:
   mode: octal
   speed: 80MHz
@@ -58,46 +59,71 @@ geometrie_camera_app:
   id: geometrie_camera_app_id
 
 # ============================================================
-# CAMERA OV3660
+# CAMERA OV3660 - GOOUUU ESP32-S3-CAM V1.5
 # ============================================================
+# Brochage confirme depuis le schema vendeur :
+#   SIOD  = GPIO4
+#   SIOC  = GPIO5
+#   VSYNC = GPIO6
+#   HREF  = GPIO7
+#   XCLK  = GPIO15
+#   Y2    = GPIO11
+#   Y3    = GPIO9
+#   Y4    = GPIO8
+#   Y5    = GPIO10
+#   Y6    = GPIO12
+#   Y7    = GPIO18
+#   Y8    = GPIO17
+#   Y9    = GPIO16
+#   PCLK  = GPIO13
 #
-# Le capteur recu est un OV3660 monte sur une carte ESP32-S3.
-# Le brochage du bus camera (D0..D7, XCLK, PCLK, VSYNC, HREF, SCCB)
-# depend du PCB exact et doit etre confirme avant activation.
-#
-# La section ci-dessous est volontairement laissee inactive pour eviter de
-# commander une broche incorrecte lors du premier flash. Une fois le pinout
-# du PCB confirme, elle sera activee sans changer l'architecture C++.
-#
-# esp32_camera:
-#   id: camera_geometrie
-#   name: "Camera geometrie"
-#   external_clock:
-#     pin: GPIOXX
-#     frequency: 20MHz
-#   i2c_pins:
-#     sda: GPIOXX
-#     scl: GPIOXX
-#   data_pins:
-#     - GPIOXX  # D0
-#     - GPIOXX  # D1
-#     - GPIOXX  # D2
-#     - GPIOXX  # D3
-#     - GPIOXX  # D4
-#     - GPIOXX  # D5
-#     - GPIOXX  # D6
-#     - GPIOXX  # D7
-#   vsync_pin: GPIOXX
-#   href_pin: GPIOXX
-#   pixel_clock_pin: GPIOXX
-#   # power_down_pin: GPIOXX
-#   # reset_pin: GPIOXX
-#   resolution: 1600x1200
-#   jpeg_quality: 10
-#   max_framerate: 1 fps
-#   idle_framerate: 0.1 fps
-#
-# Premier objectif : image fixe exploitable, pas de streaming temps reel.
+# Pour la premiere validation on reste volontairement en 640x480.
+# L'objectif est uniquement de confirmer l'initialisation et une capture JPEG.
+
+i2c:
+  - id: camera_i2c
+    sda: GPIO4
+    scl: GPIO5
+    scan: true
+
+esp32_camera:
+  id: camera_geometrie
+  name: "Camera geometrie"
+
+  external_clock:
+    pin: GPIO15
+    frequency: 20MHz
+
+  i2c_id: camera_i2c
+
+  data_pins:
+    - GPIO11  # Y2 / D0
+    - GPIO9   # Y3 / D1
+    - GPIO8   # Y4 / D2
+    - GPIO10  # Y5 / D3
+    - GPIO12  # Y6 / D4
+    - GPIO18  # Y7 / D5
+    - GPIO17  # Y8 / D6
+    - GPIO16  # Y9 / D7
+
+  vsync_pin: GPIO6
+  href_pin: GPIO7
+  pixel_clock_pin: GPIO13
+
+  pixel_format: JPEG
+  resolution: 640x480
+  jpeg_quality: 10
+  frame_buffer_count: 1
+  frame_buffer_location: PSRAM
+  max_framerate: 1 fps
+  idle_framerate: 0.1 fps
+
+# Serveur temporaire de validation de la camera reelle.
+# Une requete HTTP sur http://<IP>:8081/ declenche et retourne un snapshot JPEG.
+# Il sera retire lorsque Ov3660ImageProvider sera relie a notre API /api/capture.
+esp32_camera_web_server:
+  - port: 8081
+    mode: snapshot
 
 # ============================================================
 # PARAMETRES DE DEVELOPPEMENT / CALIBRATION
