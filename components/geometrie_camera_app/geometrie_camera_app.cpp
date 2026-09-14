@@ -12,6 +12,7 @@ GeometrieCameraApp::GeometrieCameraApp()
     : placeholder_image_provider_(),
       camera_manager_(&this->placeholder_image_provider_),
       measurement_manager_(),
+      camera_configurator_(),
       api_handler_(&this->camera_manager_, &this->measurement_manager_),
       api_registered_(false) {}
 
@@ -20,11 +21,13 @@ void GeometrieCameraApp::setup() {
 
   this->measurement_manager_.setup();
   this->camera_manager_.setup();
+  this->camera_configurator_.setup();
   this->register_api_if_possible_();
 }
 
 void GeometrieCameraApp::loop() {
   this->camera_manager_.loop();
+  this->camera_configurator_.loop();
 
   if (!this->api_registered_) {
     this->register_api_if_possible_();
@@ -37,6 +40,9 @@ void GeometrieCameraApp::dump_config() {
   ESP_LOGCONFIG(TAG, "  Camera service ready: %s", this->camera_manager_.ready() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Physical camera ready: %s", this->camera_manager_.physical_camera_ready() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Placeholder mode: %s", this->camera_manager_.placeholder_mode() ? "YES" : "NO");
+  ESP_LOGCONFIG(TAG, "  OV3660 detected: %s", this->camera_configurator_.sensor_detected() ? "YES" : "NO");
+  ESP_LOGCONFIG(TAG, "  PCLK polarity test applied: %s",
+                this->camera_configurator_.pclk_test_applied() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Valid measurements: %u",
                 static_cast<unsigned>(this->measurement_manager_.valid_measurement_count()));
 }
@@ -79,6 +85,10 @@ TargetDetector &GeometrieCameraApp::target_detector() {
 
 GeometryMeasurementEngine &GeometrieCameraApp::measurement_engine() {
   return this->measurement_manager_.measurement_engine();
+}
+
+Ov3660CameraConfigurator &GeometrieCameraApp::camera_configurator() {
+  return this->camera_configurator_;
 }
 
 void GeometrieCameraApp::register_api_if_possible_() {
