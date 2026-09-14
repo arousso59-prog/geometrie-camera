@@ -10,28 +10,37 @@ namespace geometrie_camera_app {
 
 namespace {
 static const char *const TAG = "ov3660_config";
-constexpr int CLOCK_POL_CONTROL_REGISTER = 0x4740;
-constexpr int PCLK_POLARITY_MASK = 0x20;
+constexpr int PCLK_RATIO_REGISTER = 0x3824;
+constexpr int VFIFO_CTRL0C_REGISTER = 0x460C;
+constexpr int PCLK_RATIO_MASK = 0x1F;
+constexpr int PCLK_MANUAL_ENABLE_MASK = 0x02;
 constexpr uint32_t RETRY_INTERVAL_MS = 500;
 }
 
 Ov3660CameraConfigurator::Ov3660CameraConfigurator()
-    : sensor_detected_(false),
-      pclk_test_applied_(false),
+    : requested_pclk_divider_(0),
+      sensor_detected_(false),
+      pclk_divider_applied_(false),
       last_attempt_ms_(0),
-      original_clock_pol_control_(-1),
-      modified_clock_pol_control_(-1) {}
+      original_pclk_ratio_(-1),
+      applied_pclk_ratio_(-1),
+      vfifo_ctrl0c_(-1) {}
+
+void Ov3660CameraConfigurator::set_pclk_divider(uint8_t divider) {
+  this->requested_pclk_divider_ = divider & PCLK_RATIO_MASK;
+}
 
 void Ov3660CameraConfigurator::setup() {
   this->sensor_detected_ = false;
-  this->pclk_test_applied_ = false;
+  this->pclk_divider_applied_ = false;
   this->last_attempt_ms_ = 0;
-  this->original_clock_pol_control_ = -1;
-  this->modified_clock_pol_control_ = -1;
+  this->original_pclk_ratio_ = -1;
+  this->applied_pclk_ratio_ = -1;
+  this->vfifo_ctrl0c_ = -1;
 }
 
 void Ov3660CameraConfigurator::loop() {
-  if (this->pclk_test_applied_) {
+  if (this->requested_pclk_divider_ == 0 || this->pclk_divider_applied_) {
     return;
   }
 
@@ -41,26 +50,34 @@ void Ov3660CameraConfigurator::loop() {
   }
 
   this->last_attempt_ms_ = now;
-  this->apply_pclk_polarity_test_();
+  this->apply_pclk_divider_();
 }
 
 bool Ov3660CameraConfigurator::sensor_detected() const {
   return this->sensor_detected_;
 }
 
-bool Ov3660CameraConfigurator::pclk_test_applied() const {
-  return this->pclk_test_applied_;
+bool Ov3660CameraConfigurator::pclk_divider_applied() const {
+  return this->pclk_divider_applied_;
 }
 
-int Ov3660CameraConfigurator::original_clock_pol_control() const {
-  return this->original_clock_pol_control_;
+uint8_t Ov3660CameraConfigurator::requested_pclk_divider() const {
+  return this->requested_pclk_divider_;
 }
 
-int Ov3660CameraConfigurator::modified_clock_pol_control() const {
-  return this->modified_clock_pol_control_;
+int Ov3660CameraConfigurator::original_pclk_ratio() const {
+  return this->original_pclk_ratio_;
 }
 
-bool Ov3660CameraConfigurator::apply_pclk_polarity_test_() {
+int Ov3660CameraConfigurator::applied_pclk_ratio() const {
+  return this->applied_pclk_ratio_;
+}
+
+int Ov3660CameraConfigurator::vfifo_ctrl0c() const {
+  return this->vfifo_ctrl0c_;
+}
+
+bool Ov3660CameraConfigurator::apply_pclk_divider_() {
   sensor_t *sensor = esp_camera_sensor_get();
   if (sensor == nullptr) {
     return false;
@@ -78,32 +95,52 @@ bool Ov3660CameraConfigurator::apply_pclk_polarity_test_() {
     return false;
   }
 
-  const int current_value = sensor->get_reg(sensor, CLOCK_POL_CONTROL_REGISTER, 0xFF);
-  if (current_value < 0) {
-    ESP_LOGE(TAG, "Lecture registre 0x4740 impossible: %d", current_value);
+  const int current_ratio = sensor->get_reg(sensor, PCLK_RATIO_REGISTER, 0xFF);
+  if (current_ratio < 0) {
+    ESP_LOGE(TAG, "Lecture PCLK_RATIO 0x3824 impossible: %d", current_ratio);
     return false;
   }
 
-  const int requested_pclk_bit = (current_value ^ PCLK_POLARITY_MASK) & PCLK_POLARITY_MASK;
-  const int result = sensor->set_reg(sensor, CLOCK_POL_CONTROL_REGISTER, PCLK_POLARITY_MASK, requested_pclk_bit);
+  const int vfifo_ctrl = sensor->get_reg(sensor, VFIFO_CTRL0C_REGISTER, 0xFF);
+  if (vfifo_ctrl < 0) {
+    ESP_LOGE(TAG, "Lecture VFIFO_CTRL0C 0x460C impossible: %d", vfifo_ctrl);
+    return false;
+  }
+
+  this->original_pclk_ratio_ = current_ratio & PCLK_RATIO_MASK;
+  this->vfifo_ctrl0c_ = vfifo_ctrl & 0xFF;
+
+  if ((vfifo_ctrl & PCLK_MANUAL_ENABLE_MASK) == 0) {
+    ESP_LOGE(TAG, "PCLK manuel non actif dans VFIFO_CTRL0C: 0x%02X", vfifo_ctrl & 0xFF);
+    return false;
+  }
+
+  const int result = sensor->set_reg(sensor, PCLK_RATIO_REGISTER, PCLK_RATIO_MASK,
+                                     this->requested_pclk_divider_ & PCLK_RATIO_MASK);
   if (result != 0) {
-    ESP_LOGE(TAG, "Echec inversion polarite PCLK: %d", result);
+    ESP_LOGE(TAG, "Echec reglage PCLK_RATIO: %d", result);
     return false;
   }
 
-  const int readback_value = sensor->get_reg(sensor, CLOCK_POL_CONTROL_REGISTER, 0xFF);
-  if (readback_value < 0) {
-    ESP_LOGE(TAG, "Lecture de controle registre 0x4740 impossible: %d", readback_value);
+  const int readback = sensor->get_reg(sensor, PCLK_RATIO_REGISTER, 0xFF);
+  if (readback < 0) {
+    ESP_LOGE(TAG, "Lecture de controle PCLK_RATIO impossible: %d", readback);
     return false;
   }
 
-  this->original_clock_pol_control_ = current_value;
-  this->modified_clock_pol_control_ = readback_value;
-  this->pclk_test_applied_ = true;
+  this->applied_pclk_ratio_ = readback & PCLK_RATIO_MASK;
+  this->pclk_divider_applied_ = this->applied_pclk_ratio_ == this->requested_pclk_divider_;
+
+  if (!this->pclk_divider_applied_) {
+    ESP_LOGE(TAG, "PCLK_RATIO inattendu apres ecriture: demande=%u lecture=%d",
+             static_cast<unsigned>(this->requested_pclk_divider_), this->applied_pclk_ratio_);
+    return false;
+  }
 
   ESP_LOGW(TAG,
-           "TEST PCLK applique: CLOCK_POL_CONTROL 0x4740: 0x%02X -> 0x%02X (bit5 inverse)",
-           current_value & 0xFF, readback_value & 0xFF);
+           "TEST PCLK JPEG applique: PCLK_RATIO 0x3824: %d -> %d, VFIFO_CTRL0C=0x%02X. "
+           "Avec la PLL JPEG standard a 20 MHz XCLK, divider 20 vise environ 5 MHz PCLK.",
+           this->original_pclk_ratio_, this->applied_pclk_ratio_, this->vfifo_ctrl0c_ & 0xFF);
 
   return true;
 }
