@@ -31,8 +31,16 @@ class GrayscaleDiagnostic : public camera::CameraListener {
   const uint8_t *bmp_data() const;
   size_t bmp_size() const;
 
+  uint8_t raw_min() const;
+  uint8_t raw_max() const;
+  float raw_mean() const;
+  uint32_t raw_zero_count() const;
+  uint32_t raw_full_count() const;
+  size_t raw_pixel_count() const;
+
  private:
   bool build_bmp_(const uint8_t *grayscale, size_t grayscale_size, uint16_t width, uint16_t height);
+  void calculate_statistics_(const uint8_t *grayscale, size_t pixel_count);
   bool ensure_buffer_(size_t required_size);
   void clear_buffer_();
 
@@ -46,6 +54,13 @@ class GrayscaleDiagnostic : public camera::CameraListener {
   uint32_t last_capture_ms_;
   bool capture_pending_;
   bool ready_;
+
+  uint8_t raw_min_;
+  uint8_t raw_max_;
+  float raw_mean_;
+  uint32_t raw_zero_count_;
+  uint32_t raw_full_count_;
+  size_t raw_pixel_count_;
 };
 
 }  // namespace geometrie_camera_app
