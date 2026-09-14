@@ -7,6 +7,7 @@
 #include "camera_api.h"
 #include "camera_manager.h"
 #include "measurement_manager.h"
+#include "ov3660_camera_configurator.h"
 #include "placeholder_image_provider.h"
 #include "types.h"
 
@@ -29,6 +30,7 @@ class GeometrieCameraApp : public Component {
   MeasurementManager &measurement_manager();
   TargetDetector &target_detector();
   GeometryMeasurementEngine &measurement_engine();
+  Ov3660CameraConfigurator &camera_configurator();
 
  private:
   void register_api_if_possible_();
@@ -36,6 +38,7 @@ class GeometrieCameraApp : public Component {
   PlaceholderImageProvider placeholder_image_provider_;
   CameraManager camera_manager_;
   MeasurementManager measurement_manager_;
+  Ov3660CameraConfigurator camera_configurator_;
   CameraApiHandler api_handler_;
   bool api_registered_;
 };
