@@ -17,9 +17,22 @@ constexpr uint8_t TARGET_GRID[7][7] = {
     {1, 1, 1, 1, 1, 1, 1},
 };
 
-constexpr uint16_t MIN_TARGET_SIZE_PX = 28;
-constexpr uint16_t MAX_TARGET_SIZE_PX = 168;
-constexpr uint16_t TARGET_SIZE_STEP_PX = 7;
+// Le motif contient 7 cellules par cote. En dessous de 14 px, chaque cellule
+// aurait moins de 2 px et la reconnaissance devient trop fragile.
+constexpr uint16_t MIN_TARGET_SIZE_ABSOLUTE_PX = 14;
+
+// La plage de recherche est exprimee relativement au petit cote de l'image :
+// - minimum ~= 1 % du petit cote, avec plancher absolu de 14 px ;
+// - maximum ~= 25 % du petit cote.
+// Cela rend le detecteur independant de la resolution selectionnee.
+constexpr uint16_t MIN_TARGET_SIZE_DIVISOR = 100;
+constexpr uint16_t MAX_TARGET_SIZE_DIVISOR = 4;
+
+// Les petites cibles gardent une exploration fine. Pour les grandes tailles,
+// le pas d'echelle augmente progressivement afin de ne pas exploser le temps CPU.
+constexpr uint16_t MIN_SCALE_STEP_PX = 4;
+constexpr uint16_t SCALE_STEP_DIVISOR = 10;
+
 constexpr float MIN_ACCEPTED_SCORE = 0.78f;
 constexpr int MIN_CONTRAST = 40;
 }
@@ -29,10 +42,20 @@ TargetDetector::TargetDetector() {}
 TargetObservation TargetDetector::detect(const GrayFrameView &frame) const {
   TargetObservation best;
 
-  if (frame.data == nullptr || frame.width < MIN_TARGET_SIZE_PX || frame.height < MIN_TARGET_SIZE_PX ||
-      frame.stride < frame.width) {
+  if (frame.data == nullptr || frame.stride < frame.width) {
     return best;
   }
+
+  const uint16_t short_side = std::min<uint16_t>(frame.width, frame.height);
+  if (short_side < MIN_TARGET_SIZE_ABSOLUTE_PX) {
+    return best;
+  }
+
+  const uint16_t relative_minimum =
+      std::max<uint16_t>(1, static_cast<uint16_t>(short_side / MIN_TARGET_SIZE_DIVISOR));
+  const uint16_t minimum_size = std::max<uint16_t>(MIN_TARGET_SIZE_ABSOLUTE_PX, relative_minimum);
+  const uint16_t maximum_size =
+      std::max<uint16_t>(minimum_size, static_cast<uint16_t>(short_side / MAX_TARGET_SIZE_DIVISOR));
 
   float best_score = 0.0f;
   uint16_t best_x = 0;
@@ -40,14 +63,12 @@ TargetObservation TargetDetector::detect(const GrayFrameView &frame) const {
   uint16_t best_size = 0;
   uint8_t best_rotation = 0;
 
-  const uint16_t maximum_size = std::min<uint16_t>(
-      MAX_TARGET_SIZE_PX, std::min<uint16_t>(frame.width, frame.height));
+  uint16_t size = minimum_size;
+  while (size <= maximum_size) {
+    const uint16_t spatial_step = std::max<uint16_t>(4, size / 12U);
 
-  for (uint16_t size = MIN_TARGET_SIZE_PX; size <= maximum_size; size += TARGET_SIZE_STEP_PX) {
-    const uint16_t step = std::max<uint16_t>(4, size / 12U);
-
-    for (uint16_t y = 0; static_cast<uint32_t>(y) + size <= frame.height; y += step) {
-      for (uint16_t x = 0; static_cast<uint32_t>(x) + size <= frame.width; x += step) {
+    for (uint16_t y = 0; static_cast<uint32_t>(y) + size <= frame.height; y += spatial_step) {
+      for (uint16_t x = 0; static_cast<uint32_t>(x) + size <= frame.width; x += spatial_step) {
         for (uint8_t rotation = 0; rotation < 4; rotation++) {
           const float score = this->score_candidate_(frame, x, y, size, rotation);
           if (score > best_score) {
@@ -55,6 +76,33 @@ TargetObservation TargetDetector::detect(const GrayFrameView &frame) const {
             best_x = x;
             best_y = y;
             best_size = size;
+            best_rotation = rotation;
+          }
+        }
+      }
+    }
+
+    const uint16_t scale_step = std::max<uint16_t>(MIN_SCALE_STEP_PX, size / SCALE_STEP_DIVISOR);
+    if (static_cast<uint32_t>(size) + scale_step > maximum_size) {
+      break;
+    }
+    size = static_cast<uint16_t>(size + scale_step);
+  }
+
+  // Toujours tester exactement la borne haute si elle n'a pas ete visitee par
+  // la progression ci-dessus. C'est utile pour une cible proche occupant une
+  // grande partie du champ.
+  if (size != maximum_size && maximum_size >= minimum_size) {
+    const uint16_t spatial_step = std::max<uint16_t>(4, maximum_size / 12U);
+    for (uint16_t y = 0; static_cast<uint32_t>(y) + maximum_size <= frame.height; y += spatial_step) {
+      for (uint16_t x = 0; static_cast<uint32_t>(x) + maximum_size <= frame.width; x += spatial_step) {
+        for (uint8_t rotation = 0; rotation < 4; rotation++) {
+          const float score = this->score_candidate_(frame, x, y, maximum_size, rotation);
+          if (score > best_score) {
+            best_score = score;
+            best_x = x;
+            best_y = y;
+            best_size = maximum_size;
             best_rotation = rotation;
           }
         }
