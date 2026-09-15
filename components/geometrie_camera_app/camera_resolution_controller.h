@@ -11,6 +11,7 @@ class CameraResolutionController {
   CameraResolutionController();
 
   bool sync_from_sensor();
+  bool refresh_sensor_identity();
   bool apply(const std::string &resolution);
   bool is_supported(const std::string &resolution) const;
 
