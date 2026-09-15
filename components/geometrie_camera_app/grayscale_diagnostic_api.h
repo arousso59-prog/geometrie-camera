@@ -5,21 +5,24 @@
 namespace esphome {
 namespace geometrie_camera_app {
 
+class CameraResolutionController;
 class GrayscaleDiagnostic;
 
 class GrayscaleDiagnosticApiHandler : public AsyncWebHandler {
  public:
-  explicit GrayscaleDiagnosticApiHandler(GrayscaleDiagnostic *diagnostic);
+  GrayscaleDiagnosticApiHandler(GrayscaleDiagnostic *diagnostic, CameraResolutionController *resolution_controller);
 
   bool canHandle(AsyncWebServerRequest *request) const override;
   void handleRequest(AsyncWebServerRequest *request) override;
 
  private:
-  GrayscaleDiagnostic *diagnostic_;
-
+  bool apply_requested_resolution_(AsyncWebServerRequest *request);
   void handle_status_(AsyncWebServerRequest *request);
   void handle_capture_(AsyncWebServerRequest *request);
   void handle_image_(AsyncWebServerRequest *request);
+
+  GrayscaleDiagnostic *diagnostic_;
+  CameraResolutionController *resolution_controller_;
 };
 
 }  // namespace geometrie_camera_app
