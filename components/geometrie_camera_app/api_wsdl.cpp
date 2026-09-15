@@ -74,7 +74,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
 
   xml += "  <method name=\"diagnostic_status\" http=\"GET\" path=\"/diagnostic/status\">\n";
-  xml += "    <comment>Etat du diagnostic GRAYSCALE : capteur, resolution active, statistiques brutes et timings.</comment>\n";
+  xml += "    <comment>Etat du diagnostic GRAYSCALE : identite capteur relue a la demande, PID, resolution maximale, resolution active, statistiques brutes et timings.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
@@ -112,7 +112,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
 
   xml += "  <method name=\"target_status\" http=\"GET\" path=\"/target/status\">\n";
-  xml += "    <comment>Etat de la derniere recherche : capteur, resolution, cible trouvee, boite, orientation, qualite et timings.</comment>\n";
+  xml += "    <comment>Etat de la derniere recherche : identite capteur relue a la demande, PID, resolution, cible trouvee, boite, orientation, qualite et timings.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
