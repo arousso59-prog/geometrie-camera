@@ -23,10 +23,11 @@ constexpr uint16_t MIN_TARGET_SIZE_ABSOLUTE_PX = 14;
 
 // La plage de recherche est exprimee relativement au petit cote de l'image :
 // - minimum ~= 1 % du petit cote, avec plancher absolu de 14 px ;
-// - maximum ~= 25 % du petit cote.
-// Cela rend le detecteur independant de la resolution selectionnee.
+// - maximum ~= 50 % du petit cote.
+// Cela rend le detecteur independant de la resolution selectionnee et permet
+// aussi de retrouver une cible tres proche occupant une grande partie du champ.
 constexpr uint16_t MIN_TARGET_SIZE_DIVISOR = 100;
-constexpr uint16_t MAX_TARGET_SIZE_DIVISOR = 4;
+constexpr uint16_t MAX_TARGET_SIZE_DIVISOR = 2;
 
 // Les petites cibles gardent une exploration fine. Pour les grandes tailles,
 // le pas d'echelle augmente progressivement afin de ne pas exploser le temps CPU.
