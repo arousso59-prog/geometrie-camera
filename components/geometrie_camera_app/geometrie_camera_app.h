@@ -4,6 +4,7 @@
 #include <string>
 
 #include "esphome/core/component.h"
+#include "api_wsdl.h"
 #include "camera_api.h"
 #include "camera_manager.h"
 #include "camera_resolution_controller.h"
@@ -60,6 +61,7 @@ class GeometrieCameraApp : public Component {
   Rgb565Diagnostic rgb565_diagnostic_;
   TargetSearchDiagnostic target_search_diagnostic_;
   Ov3660CameraConfigurator camera_configurator_;
+  ApiWsdlHandler api_wsdl_handler_;
   CameraApiHandler api_handler_;
   GrayscaleDiagnosticApiHandler diagnostic_api_handler_;
   Rgb565DiagnosticApiHandler rgb565_diagnostic_api_handler_;
