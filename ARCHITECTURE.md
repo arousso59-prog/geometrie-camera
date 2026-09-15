@@ -35,9 +35,12 @@ GeometrieCameraApp
 │   ├── TargetDetector
 │   └── GeometryMeasurementEngine
 ├── CameraApiHandler
-└── Diagnostic camera temporaire
+├── Ov3660CameraConfigurator
+└── Diagnostics camera temporaires
     ├── GrayscaleDiagnostic
-    └── GrayscaleDiagnosticApiHandler
+    │   └── GrayscaleDiagnosticApiHandler
+    └── Rgb565Diagnostic
+        └── Rgb565DiagnosticApiHandler
 ```
 
 ### `GeometrieCameraApp`
@@ -140,31 +143,32 @@ Responsabilité : interface HTTP de l'application uniquement.
 
 Elle dépend directement de `CameraManager` et `MeasurementManager`, pas de toute l'application.
 
-Le diagnostic caméra n'est volontairement pas ajouté dans cette classe.
+Les diagnostics caméra ne sont volontairement pas ajoutés dans cette classe.
 
 ### `GrayscaleDiagnostic`
 
-Responsabilité : diagnostic temporaire de la chaîne d'acquisition brute OV3660 -> ESP32-S3.
+Responsabilité : diagnostic temporaire de la chaîne d'acquisition brute OV3660 -> ESP32-S3 en niveaux de gris.
 
 - reçoit la vraie `ESP32Camera` par injection ;
 - demande une frame uniquement sur ordre explicite ;
 - accepte uniquement une frame `PIXFORMAT_GRAYSCALE` ;
 - copie la frame brute dans un BMP 8 bits non compressé stocké en PSRAM ;
+- calcule quelques statistiques brutes pour vérifier la dynamique reçue ;
 - ne fait aucun traitement géométrique et aucune compression JPEG.
 
-Ce sous-système permet de déterminer si les artefacts observés existent déjà dans les données brutes avant compression JPEG.
+Ce sous-système a permis de vérifier que la chaîne parallèle peut produire une image exploitable sans JPEG.
 
 **Tests unitaires / tests de composant à prévoir :**
 
 - rejet d'un format autre que GRAYSCALE ;
 - validation de la taille minimale du framebuffer ;
 - génération correcte de l'en-tête BMP ;
-- inversion correcte des lignes pour le format BMP ;
-- conservation exacte des valeurs de pixels source.
+- conservation exacte des valeurs de pixels source ;
+- statistiques min/max/moyenne sur un tableau connu.
 
 ### `GrayscaleDiagnosticApiHandler`
 
-Responsabilité : HTTP du diagnostic brut uniquement.
+Responsabilité : HTTP du diagnostic GRAYSCALE uniquement.
 
 Routes temporaires :
 
@@ -176,11 +180,50 @@ GET /diagnostic/raw.bmp
 
 Cette classe ne connaît pas `CameraManager`, `MeasurementManager` ou les calculs de géométrie.
 
+### `Rgb565Diagnostic`
+
+Responsabilité : diagnostic temporaire de la chaîne d'acquisition brute couleur en `PIXFORMAT_RGB565`.
+
+- reçoit la même `ESP32Camera` par injection ;
+- demande une frame uniquement sur ordre explicite ;
+- refuse tout format autre que RGB565 ;
+- vérifie que la taille source vaut au moins `largeur × hauteur × 2` ;
+- transforme la frame RGB565 en BMP 24 bits non compressé avec le convertisseur du driver Espressif ;
+- conserve uniquement le BMP et ses métadonnées pour inspection HTTP.
+
+Ce diagnostic reste séparé de `GrayscaleDiagnostic` afin de ne pas transformer ce dernier en classe multi-format et pour conserver des responsabilités simples pendant les essais matériels.
+
+**Tests unitaires / tests de composant à prévoir :**
+
+- rejet d'un format autre que RGB565 ;
+- validation de la taille minimale du framebuffer ;
+- conversion de quelques pixels RGB565 connus vers les valeurs RGB attendues ;
+- remplacement/libération correcte du buffer BMP entre deux captures.
+
+### `Rgb565DiagnosticApiHandler`
+
+Responsabilité : HTTP du diagnostic RGB565 uniquement.
+
+Routes temporaires :
+
+```text
+GET /diagnostic-rgb565/capture
+GET /diagnostic-rgb565/status
+GET /diagnostic-rgb565/raw.bmp
+```
+
+Il ne dépend que de `Rgb565Diagnostic`.
+
 ### `Ov3660CameraConfigurator`
 
-Classe de diagnostic bas niveau créée pour les essais de registres OV3660/PCLK.
+Responsabilité : essais bas niveau de registres spécifiques à l'OV3660.
 
-Elle n'est plus instanciée dans l'application après l'échec du test de polarité PCLK. Le fichier est conservé temporairement pour tracer et éventuellement réutiliser les essais matériels, sans modifier l'orchestrateur principal.
+- accès au capteur via `esp_camera_sensor_get()` ;
+- vérification du PID OV3660 ;
+- application optionnelle d'un diviseur `PCLK_RATIO` demandé depuis le YAML ;
+- aucune modification si le diviseur demandé vaut `0`.
+
+Il reste isolé du traitement d'image et n'est utilisé que lorsqu'un test matériel explicite le nécessite.
 
 ## Revue obligatoire avant nouvelle fonctionnalité
 
