@@ -49,13 +49,20 @@ const ResolutionEntry *find_by_framesize(framesize_t frame_size) {
 }  // namespace
 
 CameraResolutionController::CameraResolutionController()
-    : active_resolution_("2048x1536"), active_width_(2048), active_height_(1536) {}
+    : active_resolution_("2048x1536"),
+      active_width_(2048),
+      active_height_(1536),
+      sensor_pid_(0),
+      sensor_name_("unknown"),
+      sensor_max_resolution_("unknown") {}
 
 bool CameraResolutionController::sync_from_sensor() {
   sensor_t *sensor = esp_camera_sensor_get();
   if (sensor == nullptr) {
     return false;
   }
+
+  this->update_sensor_identity_();
 
   const auto *entry = find_by_framesize(sensor->status.framesize);
   if (entry == nullptr) {
@@ -81,6 +88,8 @@ bool CameraResolutionController::apply(const std::string &resolution) {
     ESP_LOGE(TAG, "Capteur ou fonction set_framesize indisponible");
     return false;
   }
+
+  this->update_sensor_identity_();
 
   if (sensor->set_framesize(sensor, entry->frame_size) != 0) {
     ESP_LOGE(TAG, "Echec application resolution %s", resolution.c_str());
@@ -108,6 +117,45 @@ uint16_t CameraResolutionController::active_width() const {
 
 uint16_t CameraResolutionController::active_height() const {
   return this->active_height_;
+}
+
+uint16_t CameraResolutionController::sensor_pid() const {
+  return this->sensor_pid_;
+}
+
+const std::string &CameraResolutionController::sensor_name() const {
+  return this->sensor_name_;
+}
+
+const std::string &CameraResolutionController::sensor_max_resolution() const {
+  return this->sensor_max_resolution_;
+}
+
+void CameraResolutionController::update_sensor_identity_() {
+  sensor_t *sensor = esp_camera_sensor_get();
+  if (sensor == nullptr) {
+    this->sensor_pid_ = 0;
+    this->sensor_name_ = "unknown";
+    this->sensor_max_resolution_ = "unknown";
+    return;
+  }
+
+  this->sensor_pid_ = sensor->id.PID;
+
+  if (this->sensor_pid_ == OV5640_PID) {
+    this->sensor_name_ = "OV5640";
+    this->sensor_max_resolution_ = "2592x1944";
+  } else if (this->sensor_pid_ == OV3660_PID) {
+    this->sensor_name_ = "OV3660";
+    this->sensor_max_resolution_ = "2048x1536";
+  } else {
+    this->sensor_name_ = "unknown";
+    this->sensor_max_resolution_ = "unknown";
+  }
+
+  ESP_LOGI(TAG, "Capteur detecte: %s, PID=0x%04X, resolution max=%s",
+           this->sensor_name_.c_str(), static_cast<unsigned>(this->sensor_pid_),
+           this->sensor_max_resolution_.c_str());
 }
 
 const char *CameraResolutionController::allowed_resolutions_text() {
