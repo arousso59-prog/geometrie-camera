@@ -78,16 +78,19 @@ geometrie_camera_app:
 #   Y9    = GPIO16
 #   PCLK  = GPIO13
 #
-# TEST DIAGNOSTIC RGB565 BRUT QVGA :
-# - meme socle que le GRAYSCALE brut qui a produit une image correcte ;
-# - sortie capteur RGB565 sans compression JPEG ;
-# - XCLK = 16 MHz ;
-# - 320x240 => 153600 octets RGB565, soit 4x moins que le test VGA ;
-# - framebuffer en PSRAM ;
-# - acquisition uniquement sur demande via /diagnostic-rgb565/capture.
+# TEST DE BASE POUR LE PROJET FINAL :
+# - GRAYSCALE brut, sans JPEG ;
+# - resolution maximale OV3660 : 2048x1536 ;
+# - XCLK = 16 MHz, configuration non-JPEG deja validee ;
+# - framebuffer unique en PSRAM ;
+# - acquisition uniquement sur demande ;
+# - max_framerate releve a 5 fps pour ne pas brider artificiellement
+#   notre objectif d'au moins 2 mesures completes par seconde.
 #
-# Ce test reduit volontairement la charge DMA/PSRAM afin de verifier si
-# l'image RGB565 VGA precedente etait incomplete a cause du debit brut.
+# Le diagnostic expose separement :
+# - temps acquisition camera : demande -> framebuffer recu ;
+# - temps diagnostic : statistiques + construction BMP ;
+# - temps cycle total.
 
 i2c:
   - id: camera_i2c
@@ -97,7 +100,7 @@ i2c:
 
 esp32_camera:
   id: camera_geometrie
-  name: "Camera geometrie RGB565 QVGA diagnostic"
+  name: "Camera geometrie GRAYSCALE QXGA diagnostic"
   internal: true
 
   external_clock:
@@ -120,25 +123,23 @@ esp32_camera:
   href_pin: GPIO7
   pixel_clock_pin: GPIO13
 
-  pixel_format: RGB565
-  resolution: 320x240
+  pixel_format: GRAYSCALE
+  resolution: 2048x1536
   jpeg_quality: 0
   frame_buffer_count: 1
   frame_buffer_location: PSRAM
-  max_framerate: 1 fps
+  max_framerate: 5 fps
   idle_framerate: 0 fps
   test_pattern: false
 
-# Le serveur snapshot JPEG sur le port 8081 est retire pendant ce test :
-# on veut observer la frame RGB565 avant toute compression.
+# Pas de serveur snapshot JPEG : on teste directement la frame brute.
 #
-# Routes RGB565 :
-#   GET /diagnostic-rgb565/capture  -> demande une frame RGB565 brute
-#   GET /diagnostic-rgb565/status   -> etat/metadonnees de la derniere frame
-#   GET /diagnostic-rgb565/raw.bmp  -> BMP 24 bits non compresse genere depuis RGB565
+# Routes du diagnostic GRAYSCALE :
+#   GET /diagnostic/capture  -> demande une frame brute
+#   GET /diagnostic/status   -> dimensions, statistiques et temps mesures
+#   GET /diagnostic/raw.bmp  -> BMP 8 bits non compresse pour verifier la nettete
 #
-# Les anciennes routes /diagnostic/* GRAYSCALE restent compilees mais ne sont
-# pas utilisees pendant ce test.
+# Le diagnostic RGB565 reste compile dans le projet mais n'est pas utilise ici.
 
 # ============================================================
 # PARAMETRES DE DEVELOPPEMENT / CALIBRATION
