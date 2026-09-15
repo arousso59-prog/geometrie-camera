@@ -11,6 +11,8 @@
 #include "measurement_manager.h"
 #include "ov3660_camera_configurator.h"
 #include "placeholder_image_provider.h"
+#include "rgb565_diagnostic.h"
+#include "rgb565_diagnostic_api.h"
 #include "types.h"
 
 namespace esphome {
@@ -39,6 +41,7 @@ class GeometrieCameraApp : public Component {
   TargetDetector &target_detector();
   GeometryMeasurementEngine &measurement_engine();
   GrayscaleDiagnostic &grayscale_diagnostic();
+  Rgb565Diagnostic &rgb565_diagnostic();
   Ov3660CameraConfigurator &camera_configurator();
 
  private:
@@ -48,9 +51,11 @@ class GeometrieCameraApp : public Component {
   CameraManager camera_manager_;
   MeasurementManager measurement_manager_;
   GrayscaleDiagnostic grayscale_diagnostic_;
+  Rgb565Diagnostic rgb565_diagnostic_;
   Ov3660CameraConfigurator camera_configurator_;
   CameraApiHandler api_handler_;
   GrayscaleDiagnosticApiHandler diagnostic_api_handler_;
+  Rgb565DiagnosticApiHandler rgb565_diagnostic_api_handler_;
   bool api_registered_;
 };
 
