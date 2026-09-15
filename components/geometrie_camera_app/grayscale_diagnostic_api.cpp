@@ -79,11 +79,21 @@ void GrayscaleDiagnosticApiHandler::handle_status_(AsyncWebServerRequest *reques
   const char *active_resolution = this->resolution_controller_ != nullptr
                                       ? this->resolution_controller_->active_resolution().c_str()
                                       : "unknown";
+  const char *sensor_name = this->resolution_controller_ != nullptr
+                                ? this->resolution_controller_->sensor_name().c_str()
+                                : "unknown";
+  const char *sensor_max_resolution = this->resolution_controller_ != nullptr
+                                          ? this->resolution_controller_->sensor_max_resolution().c_str()
+                                          : "unknown";
+  const unsigned sensor_pid = this->resolution_controller_ != nullptr
+                                  ? static_cast<unsigned>(this->resolution_controller_->sensor_pid())
+                                  : 0U;
 
-  char json[1152];
+  char json[1280];
   std::snprintf(
       json, sizeof(json),
       "{\"status\":\"ok\",\"mode\":\"grayscale_raw\",\"ready\":%s,\"capture_pending\":%s,"
+      "\"camera\":{\"sensor\":\"%s\",\"pid\":\"0x%04X\",\"max_resolution\":\"%s\"},"
       "\"capture_count\":%u,\"last_capture_ms\":%u,\"active_resolution\":\"%s\","
       "\"width\":%u,\"height\":%u,\"bmp_size\":%u,"
       "\"timing\":{\"request_started_ms\":%u,\"frame_received_ms\":%u,"
@@ -93,6 +103,9 @@ void GrayscaleDiagnosticApiHandler::handle_status_(AsyncWebServerRequest *reques
       "\"image\":\"/diagnostic/raw.bmp\"}",
       this->diagnostic_->ready() ? "true" : "false",
       this->diagnostic_->capture_pending() ? "true" : "false",
+      sensor_name,
+      sensor_pid,
+      sensor_max_resolution,
       static_cast<unsigned>(this->diagnostic_->capture_count()),
       static_cast<unsigned>(this->diagnostic_->last_capture_ms()),
       active_resolution,
