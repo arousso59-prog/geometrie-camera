@@ -31,6 +31,12 @@ class GrayscaleDiagnostic : public camera::CameraListener {
   const uint8_t *bmp_data() const;
   size_t bmp_size() const;
 
+  uint32_t request_started_ms() const;
+  uint32_t frame_received_ms() const;
+  uint32_t acquisition_ms() const;
+  uint32_t diagnostic_processing_ms() const;
+  uint32_t total_cycle_ms() const;
+
   uint8_t raw_min() const;
   uint8_t raw_max() const;
   float raw_mean() const;
@@ -54,6 +60,12 @@ class GrayscaleDiagnostic : public camera::CameraListener {
   uint32_t last_capture_ms_;
   bool capture_pending_;
   bool ready_;
+
+  uint32_t request_started_ms_;
+  uint32_t frame_received_ms_;
+  uint32_t acquisition_ms_;
+  uint32_t diagnostic_processing_ms_;
+  uint32_t total_cycle_ms_;
 
   uint8_t raw_min_;
   uint8_t raw_max_;
