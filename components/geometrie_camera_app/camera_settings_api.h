@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 #include "esphome/components/web_server_base/web_server_base.h"
 
 namespace esphome {
