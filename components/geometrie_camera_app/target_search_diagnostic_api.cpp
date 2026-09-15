@@ -2,6 +2,7 @@
 
 #include <cstdio>
 
+#include "camera_resolution_controller.h"
 #include "grayscale_diagnostic.h"
 #include "target_search_diagnostic.h"
 
@@ -9,8 +10,9 @@ namespace esphome {
 namespace geometrie_camera_app {
 
 TargetSearchDiagnosticApiHandler::TargetSearchDiagnosticApiHandler(TargetSearchDiagnostic *diagnostic,
-                                                                   GrayscaleDiagnostic *visualization)
-    : diagnostic_(diagnostic), visualization_(visualization) {}
+                                                                   GrayscaleDiagnostic *visualization,
+                                                                   CameraResolutionController *resolution_controller)
+    : diagnostic_(diagnostic), visualization_(visualization), resolution_controller_(resolution_controller) {}
 
 bool TargetSearchDiagnosticApiHandler::canHandle(AsyncWebServerRequest *request) const {
   if (request->method() != HTTP_GET) {
@@ -42,18 +44,59 @@ void TargetSearchDiagnosticApiHandler::handleRequest(AsyncWebServerRequest *requ
   request->send(404, "application/json", "{\"error\":\"not_found\"}");
 }
 
+bool TargetSearchDiagnosticApiHandler::apply_requested_resolution_(AsyncWebServerRequest *request) {
+  if (this->resolution_controller_ == nullptr || !request->hasParam("resolution")) {
+    return true;
+  }
+
+  const std::string requested = request->getParam("resolution")->value();
+  if (!this->resolution_controller_->is_supported(requested)) {
+    char json[384];
+    std::snprintf(json, sizeof(json),
+                  "{\"accepted\":false,\"error\":\"unsupported_resolution\",\"requested\":\"%s\","
+                  "\"allowed\":\"%s\"}",
+                  requested.c_str(), CameraResolutionController::allowed_resolutions_text());
+    request->send(400, "application/json", json);
+    return false;
+  }
+
+  if (!this->resolution_controller_->apply(requested)) {
+    request->send(500, "application/json",
+                  "{\"accepted\":false,\"error\":\"resolution_apply_failed\"}");
+    return false;
+  }
+
+  return true;
+}
+
 void TargetSearchDiagnosticApiHandler::handle_search_(AsyncWebServerRequest *request) {
   if (this->diagnostic_ == nullptr) {
     request->send(500, "application/json", "{\"accepted\":false,\"error\":\"diagnostic_unavailable\"}");
     return;
   }
 
-  if (!this->diagnostic_->request_search()) {
-    request->send(503, "application/json", "{\"accepted\":false,\"error\":\"search_busy_or_camera_unavailable\"}");
+  if (this->diagnostic_->search_pending()) {
+    request->send(503, "application/json", "{\"accepted\":false,\"error\":\"search_busy\"}");
     return;
   }
 
-  request->send(202, "application/json", "{\"accepted\":true,\"status\":\"target_search_requested\"}");
+  if (!this->apply_requested_resolution_(request)) {
+    return;
+  }
+
+  if (!this->diagnostic_->request_search()) {
+    request->send(503, "application/json", "{\"accepted\":false,\"error\":\"camera_unavailable\"}");
+    return;
+  }
+
+  char json[256];
+  const char *active_resolution = this->resolution_controller_ != nullptr
+                                      ? this->resolution_controller_->active_resolution().c_str()
+                                      : "unknown";
+  std::snprintf(json, sizeof(json),
+                "{\"accepted\":true,\"status\":\"target_search_requested\",\"resolution\":\"%s\"}",
+                active_resolution);
+  request->send(202, "application/json", json);
 }
 
 void TargetSearchDiagnosticApiHandler::handle_status_(AsyncWebServerRequest *request) {
@@ -63,11 +106,15 @@ void TargetSearchDiagnosticApiHandler::handle_status_(AsyncWebServerRequest *req
   }
 
   const auto &observation = this->diagnostic_->last_observation();
-  char json[1024];
+  const char *active_resolution = this->resolution_controller_ != nullptr
+                                      ? this->resolution_controller_->active_resolution().c_str()
+                                      : "unknown";
+  char json[1152];
   std::snprintf(
       json, sizeof(json),
       "{\"status\":\"ok\",\"ready\":%s,\"search_pending\":%s,\"search_count\":%u,"
-      "\"target_found\":%s,\"target\":{\"center_x_px\":%.2f,\"center_y_px\":%.2f,"
+      "\"active_resolution\":\"%s\",\"target_found\":%s,"
+      "\"target\":{\"center_x_px\":%.2f,\"center_y_px\":%.2f,"
       "\"width_px\":%.2f,\"height_px\":%.2f,\"rotation_deg\":%.2f,\"quality\":%.3f},"
       "\"timing\":{\"request_started_ms\":%u,\"frame_received_ms\":%u,\"acquisition_ms\":%u,"
       "\"detection_ms\":%u,\"visualization_ms\":%u,\"total_cycle_ms\":%u},"
@@ -75,6 +122,7 @@ void TargetSearchDiagnosticApiHandler::handle_status_(AsyncWebServerRequest *req
       this->diagnostic_->ready() ? "true" : "false",
       this->diagnostic_->search_pending() ? "true" : "false",
       static_cast<unsigned>(this->diagnostic_->search_count()),
+      active_resolution,
       this->diagnostic_->target_found() ? "true" : "false",
       static_cast<double>(observation.center_x_px),
       static_cast<double>(observation.center_y_px),
