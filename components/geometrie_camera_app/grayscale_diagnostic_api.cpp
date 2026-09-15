@@ -2,13 +2,15 @@
 
 #include <cstdio>
 
+#include "camera_resolution_controller.h"
 #include "grayscale_diagnostic.h"
 
 namespace esphome {
 namespace geometrie_camera_app {
 
-GrayscaleDiagnosticApiHandler::GrayscaleDiagnosticApiHandler(GrayscaleDiagnostic *diagnostic)
-    : diagnostic_(diagnostic) {}
+GrayscaleDiagnosticApiHandler::GrayscaleDiagnosticApiHandler(GrayscaleDiagnostic *diagnostic,
+                                                             CameraResolutionController *resolution_controller)
+    : diagnostic_(diagnostic), resolution_controller_(resolution_controller) {}
 
 bool GrayscaleDiagnosticApiHandler::canHandle(AsyncWebServerRequest *request) const {
   if (request->method() != HTTP_GET) {
@@ -43,18 +45,47 @@ void GrayscaleDiagnosticApiHandler::handleRequest(AsyncWebServerRequest *request
   request->send(404, "application/json", "{\"error\":\"not_found\"}");
 }
 
+bool GrayscaleDiagnosticApiHandler::apply_requested_resolution_(AsyncWebServerRequest *request) {
+  if (this->resolution_controller_ == nullptr || !request->hasParam("resolution")) {
+    return true;
+  }
+
+  const std::string requested = request->getParam("resolution")->value();
+  if (!this->resolution_controller_->is_supported(requested)) {
+    char json[384];
+    std::snprintf(json, sizeof(json),
+                  "{\"accepted\":false,\"error\":\"unsupported_resolution\",\"requested\":\"%s\","
+                  "\"allowed\":\"%s\"}",
+                  requested.c_str(), CameraResolutionController::allowed_resolutions_text());
+    request->send(400, "application/json", json);
+    return false;
+  }
+
+  if (!this->resolution_controller_->apply(requested)) {
+    request->send(500, "application/json",
+                  "{\"accepted\":false,\"error\":\"resolution_apply_failed\"}");
+    return false;
+  }
+
+  return true;
+}
+
 void GrayscaleDiagnosticApiHandler::handle_status_(AsyncWebServerRequest *request) {
   if (this->diagnostic_ == nullptr) {
     request->send(500, "application/json", "{\"status\":\"error\",\"error\":\"diagnostic_unavailable\"}");
     return;
   }
 
-  char json[1024];
+  const char *active_resolution = this->resolution_controller_ != nullptr
+                                      ? this->resolution_controller_->active_resolution().c_str()
+                                      : "unknown";
+
+  char json[1152];
   std::snprintf(
       json, sizeof(json),
       "{\"status\":\"ok\",\"mode\":\"grayscale_raw\",\"ready\":%s,\"capture_pending\":%s,"
-      "\"capture_count\":%u,\"last_capture_ms\":%u,\"width\":%u,\"height\":%u,"
-      "\"bmp_size\":%u,"
+      "\"capture_count\":%u,\"last_capture_ms\":%u,\"active_resolution\":\"%s\","
+      "\"width\":%u,\"height\":%u,\"bmp_size\":%u,"
       "\"timing\":{\"request_started_ms\":%u,\"frame_received_ms\":%u,"
       "\"acquisition_ms\":%u,\"diagnostic_processing_ms\":%u,\"total_cycle_ms\":%u},"
       "\"raw_stats\":{\"pixel_count\":%u,\"min\":%u,\"max\":%u,"
@@ -64,6 +95,7 @@ void GrayscaleDiagnosticApiHandler::handle_status_(AsyncWebServerRequest *reques
       this->diagnostic_->capture_pending() ? "true" : "false",
       static_cast<unsigned>(this->diagnostic_->capture_count()),
       static_cast<unsigned>(this->diagnostic_->last_capture_ms()),
+      active_resolution,
       static_cast<unsigned>(this->diagnostic_->width()),
       static_cast<unsigned>(this->diagnostic_->height()),
       static_cast<unsigned>(this->diagnostic_->bmp_size()),
@@ -90,12 +122,28 @@ void GrayscaleDiagnosticApiHandler::handle_capture_(AsyncWebServerRequest *reque
     return;
   }
 
-  if (!this->diagnostic_->request_capture()) {
-    request->send(503, "application/json", "{\"accepted\":false,\"error\":\"capture_busy_or_camera_unavailable\"}");
+  if (this->diagnostic_->capture_pending()) {
+    request->send(503, "application/json", "{\"accepted\":false,\"error\":\"capture_busy\"}");
     return;
   }
 
-  request->send(202, "application/json", "{\"accepted\":true,\"status\":\"capture_requested\"}");
+  if (!this->apply_requested_resolution_(request)) {
+    return;
+  }
+
+  if (!this->diagnostic_->request_capture()) {
+    request->send(503, "application/json", "{\"accepted\":false,\"error\":\"camera_unavailable\"}");
+    return;
+  }
+
+  char json[256];
+  const char *active_resolution = this->resolution_controller_ != nullptr
+                                      ? this->resolution_controller_->active_resolution().c_str()
+                                      : "unknown";
+  std::snprintf(json, sizeof(json),
+                "{\"accepted\":true,\"status\":\"capture_requested\",\"resolution\":\"%s\"}",
+                active_resolution);
+  request->send(202, "application/json", json);
 }
 
 void GrayscaleDiagnosticApiHandler::handle_image_(AsyncWebServerRequest *request) {
