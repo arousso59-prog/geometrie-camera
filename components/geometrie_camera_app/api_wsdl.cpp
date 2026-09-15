@@ -25,7 +25,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
                                         : "unknown";
 
   std::string xml;
-  xml.reserve(12288);
+  xml.reserve(14336);
   xml += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
   xml += "<api name=\"geometrie-camera\" version=\"1\" style=\"REST-over-HTTP\">\n";
   xml += "  <description>Catalogue WSDL-like des routes HTTP du projet. Ce document doit etre maintenu avec toute evolution d API.</description>\n";
@@ -55,6 +55,26 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "    <comment>Retourne la derniere mesure geometrique connue : yaw, pitch, roll et qualite.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
+  xml += "  </method>\n";
+
+  xml += "  <method name=\"camera_settings_get\" http=\"GET\" path=\"/api/camera/settings\">\n";
+  xml += "    <comment>Lit les reglages d acquisition directement depuis le capteur actif et expose leurs plages de test.</comment>\n";
+  xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
+  xml += "    <response code=\"503\" content_type=\"application/json\"/>\n";
+  xml += "  </method>\n";
+
+  xml += "  <method name=\"camera_settings_set\" http=\"GET\" path=\"/api/camera/settings/set\">\n";
+  xml += "    <comment>Modifie un ou plusieurs reglages d acquisition du capteur. Route temporaire de mise au point avant stabilisation de l API v1.</comment>\n";
+  xml += "    <parameter name=\"brightness\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"-2..2\">Luminosite capteur.</parameter>\n";
+  xml += "    <parameter name=\"contrast\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"-2..2\">Contraste capteur.</parameter>\n";
+  xml += "    <parameter name=\"exposure_ctrl\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0,1\">Active ou desactive l exposition automatique.</parameter>\n";
+  xml += "    <parameter name=\"ae_level\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"-2..2\">Compensation du niveau d exposition automatique.</parameter>\n";
+  xml += "    <parameter name=\"aec_value\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0..1200\">Valeur d exposition manuelle, utile quand exposure_ctrl vaut 0.</parameter>\n";
+  xml += "    <parameter name=\"gain_ctrl\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0,1\">Active ou desactive le gain automatique.</parameter>\n";
+  xml += "    <parameter name=\"agc_gain\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0..30\">Gain manuel, utile quand gain_ctrl vaut 0.</parameter>\n";
+  xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
+  xml += "    <response code=\"400\" content_type=\"application/json\"/>\n";
+  xml += "    <response code=\"503\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
   xml += "  <method name=\"api_image\" http=\"GET\" path=\"/image.jpg\">\n";
