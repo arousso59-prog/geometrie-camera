@@ -78,14 +78,16 @@ geometrie_camera_app:
 #   Y9    = GPIO16
 #   PCLK  = GPIO13
 #
-# TEST DIAGNOSTIC RGB565 BRUT :
+# TEST DIAGNOSTIC RGB565 BRUT QVGA :
 # - meme socle que le GRAYSCALE brut qui a produit une image correcte ;
-# - seule la sortie capteur passe de GRAYSCALE a RGB565 ;
-# - aucune compression JPEG ESPHome (jpeg_quality = 0) ;
+# - sortie capteur RGB565 sans compression JPEG ;
 # - XCLK = 16 MHz ;
-# - 640x480 => 614400 octets RGB565 ;
+# - 320x240 => 153600 octets RGB565, soit 4x moins que le test VGA ;
 # - framebuffer en PSRAM ;
 # - acquisition uniquement sur demande via /diagnostic-rgb565/capture.
+#
+# Ce test reduit volontairement la charge DMA/PSRAM afin de verifier si
+# l'image RGB565 VGA precedente etait incomplete a cause du debit brut.
 
 i2c:
   - id: camera_i2c
@@ -95,7 +97,7 @@ i2c:
 
 esp32_camera:
   id: camera_geometrie
-  name: "Camera geometrie RGB565 diagnostic"
+  name: "Camera geometrie RGB565 QVGA diagnostic"
   internal: true
 
   external_clock:
@@ -119,7 +121,7 @@ esp32_camera:
   pixel_clock_pin: GPIO13
 
   pixel_format: RGB565
-  resolution: 640x480
+  resolution: 320x240
   jpeg_quality: 0
   frame_buffer_count: 1
   frame_buffer_location: PSRAM
