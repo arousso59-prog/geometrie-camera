@@ -109,10 +109,21 @@ void TargetSearchDiagnosticApiHandler::handle_status_(AsyncWebServerRequest *req
   const char *active_resolution = this->resolution_controller_ != nullptr
                                       ? this->resolution_controller_->active_resolution().c_str()
                                       : "unknown";
-  char json[1152];
+  const char *sensor_name = this->resolution_controller_ != nullptr
+                                ? this->resolution_controller_->sensor_name().c_str()
+                                : "unknown";
+  const char *sensor_max_resolution = this->resolution_controller_ != nullptr
+                                          ? this->resolution_controller_->sensor_max_resolution().c_str()
+                                          : "unknown";
+  const unsigned sensor_pid = this->resolution_controller_ != nullptr
+                                  ? static_cast<unsigned>(this->resolution_controller_->sensor_pid())
+                                  : 0U;
+
+  char json[1280];
   std::snprintf(
       json, sizeof(json),
       "{\"status\":\"ok\",\"ready\":%s,\"search_pending\":%s,\"search_count\":%u,"
+      "\"camera\":{\"sensor\":\"%s\",\"pid\":\"0x%04X\",\"max_resolution\":\"%s\"},"
       "\"active_resolution\":\"%s\",\"target_found\":%s,"
       "\"target\":{\"center_x_px\":%.2f,\"center_y_px\":%.2f,"
       "\"width_px\":%.2f,\"height_px\":%.2f,\"rotation_deg\":%.2f,\"quality\":%.3f},"
@@ -122,6 +133,9 @@ void TargetSearchDiagnosticApiHandler::handle_status_(AsyncWebServerRequest *req
       this->diagnostic_->ready() ? "true" : "false",
       this->diagnostic_->search_pending() ? "true" : "false",
       static_cast<unsigned>(this->diagnostic_->search_count()),
+      sensor_name,
+      sensor_pid,
+      sensor_max_resolution,
       active_resolution,
       this->diagnostic_->target_found() ? "true" : "false",
       static_cast<double>(observation.center_x_px),
