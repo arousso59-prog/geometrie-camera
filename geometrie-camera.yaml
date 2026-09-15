@@ -59,11 +59,6 @@ geometrie_camera_app:
   id: geometrie_camera_app_id
   camera_id: camera_geometrie
 
-  # Diagnostic JPEG : le driver OV3660 utilise normalement PCLK_RATIO=10
-  # pour environ 10 MHz PCLK avec XCLK=20 MHz. On double uniquement ce
-  # diviseur afin de viser environ 5 MHz PCLK.
-  ov3660_pclk_divider: 20
-
 # ============================================================
 # CAMERA OV3660 - GOOUUU ESP32-S3-CAM V1.5
 # ============================================================
@@ -83,12 +78,14 @@ geometrie_camera_app:
 #   Y9    = GPIO16
 #   PCLK  = GPIO13
 #
-# TEST DIAGNOSTIC PCLK JPEG :
-# - retour au JPEG qui presentait les traits reguliers ;
-# - XCLK = 20 MHz ;
-# - JPEG 1024x768 qualite 10 ;
-# - PCLK_RATIO force de 10 a 20 apres initialisation du capteur ;
-# - aucun autre reglage du capteur n'est modifie par le configurateur.
+# TEST DIAGNOSTIC RGB565 BRUT :
+# - meme socle que le GRAYSCALE brut qui a produit une image correcte ;
+# - seule la sortie capteur passe de GRAYSCALE a RGB565 ;
+# - aucune compression JPEG ESPHome (jpeg_quality = 0) ;
+# - XCLK = 16 MHz ;
+# - 640x480 => 614400 octets RGB565 ;
+# - framebuffer en PSRAM ;
+# - acquisition uniquement sur demande via /diagnostic-rgb565/capture.
 
 i2c:
   - id: camera_i2c
@@ -98,12 +95,12 @@ i2c:
 
 esp32_camera:
   id: camera_geometrie
-  name: "Camera geometrie JPEG PCLK lent"
+  name: "Camera geometrie RGB565 diagnostic"
   internal: true
 
   external_clock:
     pin: GPIO15
-    frequency: 20MHz
+    frequency: 16MHz
 
   i2c_id: camera_i2c
 
@@ -121,23 +118,25 @@ esp32_camera:
   href_pin: GPIO7
   pixel_clock_pin: GPIO13
 
-  pixel_format: JPEG
-  resolution: 1024x768
-  jpeg_quality: 10
+  pixel_format: RGB565
+  resolution: 640x480
+  jpeg_quality: 0
   frame_buffer_count: 1
   frame_buffer_location: PSRAM
   max_framerate: 1 fps
-  idle_framerate: 0.1 fps
+  idle_framerate: 0 fps
   test_pattern: false
 
-# Snapshot JPEG temporaire pour comparer directement avec nos images defectueuses
-# precedentes. Le test se fait a nouveau sur le port 8081.
-esp32_camera_web_server:
-  - port: 8081
-    mode: snapshot
-
-# Les routes /diagnostic/* restent compilees mais ne sont pas utilisees pendant
-# ce test JPEG ; elles etaient destinees au diagnostic GRAYSCALE brut.
+# Le serveur snapshot JPEG sur le port 8081 est retire pendant ce test :
+# on veut observer la frame RGB565 avant toute compression.
+#
+# Routes RGB565 :
+#   GET /diagnostic-rgb565/capture  -> demande une frame RGB565 brute
+#   GET /diagnostic-rgb565/status   -> etat/metadonnees de la derniere frame
+#   GET /diagnostic-rgb565/raw.bmp  -> BMP 24 bits non compresse genere depuis RGB565
+#
+# Les anciennes routes /diagnostic/* GRAYSCALE restent compilees mais ne sont
+# pas utilisees pendant ce test.
 
 # ============================================================
 # PARAMETRES DE DEVELOPPEMENT / CALIBRATION
