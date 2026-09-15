@@ -105,6 +105,10 @@ void TargetSearchDiagnosticApiHandler::handle_status_(AsyncWebServerRequest *req
     return;
   }
 
+  if (this->resolution_controller_ != nullptr) {
+    this->resolution_controller_->refresh_sensor_identity();
+  }
+
   const auto &observation = this->diagnostic_->last_observation();
   const char *active_resolution = this->resolution_controller_ != nullptr
                                       ? this->resolution_controller_->active_resolution().c_str()
