@@ -22,6 +22,10 @@ class GrayscaleDiagnostic : public camera::CameraListener {
 
   void on_camera_image(const std::shared_ptr<camera::CameraImage> &image) override;
 
+  bool update_visualization(const uint8_t *grayscale, size_t grayscale_size, uint16_t width, uint16_t height,
+                            bool reserve_green_overlay);
+  bool annotate_box_green(uint16_t x, uint16_t y, uint16_t width, uint16_t height, uint8_t thickness);
+
   bool ready() const;
   bool capture_pending() const;
   uint32_t capture_count() const;
@@ -45,7 +49,8 @@ class GrayscaleDiagnostic : public camera::CameraListener {
   size_t raw_pixel_count() const;
 
  private:
-  bool build_bmp_(const uint8_t *grayscale, size_t grayscale_size, uint16_t width, uint16_t height);
+  bool build_bmp_(const uint8_t *grayscale, size_t grayscale_size, uint16_t width, uint16_t height,
+                  bool reserve_green_overlay);
   void calculate_statistics_(const uint8_t *grayscale, size_t pixel_count);
   bool ensure_buffer_(size_t required_size);
   void clear_buffer_();
