@@ -49,12 +49,15 @@ void GrayscaleDiagnosticApiHandler::handle_status_(AsyncWebServerRequest *reques
     return;
   }
 
-  char json[768];
+  char json[1024];
   std::snprintf(
       json, sizeof(json),
       "{\"status\":\"ok\",\"mode\":\"grayscale_raw\",\"ready\":%s,\"capture_pending\":%s,"
       "\"capture_count\":%u,\"last_capture_ms\":%u,\"width\":%u,\"height\":%u,"
-      "\"bmp_size\":%u,\"raw_stats\":{\"pixel_count\":%u,\"min\":%u,\"max\":%u,"
+      "\"bmp_size\":%u,"
+      "\"timing\":{\"request_started_ms\":%u,\"frame_received_ms\":%u,"
+      "\"acquisition_ms\":%u,\"diagnostic_processing_ms\":%u,\"total_cycle_ms\":%u},"
+      "\"raw_stats\":{\"pixel_count\":%u,\"min\":%u,\"max\":%u,"
       "\"mean\":%.3f,\"zero_count\":%u,\"full_255_count\":%u},"
       "\"image\":\"/diagnostic/raw.bmp\"}",
       this->diagnostic_->ready() ? "true" : "false",
@@ -64,6 +67,11 @@ void GrayscaleDiagnosticApiHandler::handle_status_(AsyncWebServerRequest *reques
       static_cast<unsigned>(this->diagnostic_->width()),
       static_cast<unsigned>(this->diagnostic_->height()),
       static_cast<unsigned>(this->diagnostic_->bmp_size()),
+      static_cast<unsigned>(this->diagnostic_->request_started_ms()),
+      static_cast<unsigned>(this->diagnostic_->frame_received_ms()),
+      static_cast<unsigned>(this->diagnostic_->acquisition_ms()),
+      static_cast<unsigned>(this->diagnostic_->diagnostic_processing_ms()),
+      static_cast<unsigned>(this->diagnostic_->total_cycle_ms()),
       static_cast<unsigned>(this->diagnostic_->raw_pixel_count()),
       static_cast<unsigned>(this->diagnostic_->raw_min()),
       static_cast<unsigned>(this->diagnostic_->raw_max()),
