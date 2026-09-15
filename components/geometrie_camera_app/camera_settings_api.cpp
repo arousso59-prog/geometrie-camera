@@ -147,7 +147,8 @@ void CameraSettingsApiHandler::handle_set_(AsyncWebServerRequest *request) {
       !this->parse_int_param_(request, "aec_value", aec_value, has_aec_value, error) ||
       !this->parse_bool_param_(request, "gain_ctrl", gain_ctrl, has_gain_ctrl, error) ||
       !this->parse_int_param_(request, "agc_gain", agc_gain, has_agc_gain, error)) {
-    request->send(400, "application/json", std::string("{\"status\":\"error\",\"error\":\"") + error + "\"}");
+    const std::string body = std::string("{\"status\":\"error\",\"error\":\"") + error + "\"}";
+    request->send(400, "application/json", body.c_str());
     return;
   }
 
@@ -164,7 +165,8 @@ void CameraSettingsApiHandler::handle_set_(AsyncWebServerRequest *request) {
       (has_aec_value && !this->controller_->set_aec_value(aec_value, error)) ||
       (has_gain_ctrl && !this->controller_->set_gain_ctrl(gain_ctrl, error)) ||
       (has_agc_gain && !this->controller_->set_agc_gain(agc_gain, error))) {
-    request->send(400, "application/json", std::string("{\"status\":\"error\",\"error\":\"") + error + "\"}");
+    const std::string body = std::string("{\"status\":\"error\",\"error\":\"") + error + "\"}";
+    request->send(400, "application/json", body.c_str());
     return;
   }
 
