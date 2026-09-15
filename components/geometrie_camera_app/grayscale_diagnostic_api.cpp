@@ -1,6 +1,7 @@
 #include "grayscale_diagnostic_api.h"
 
 #include <cstdio>
+#include <string>
 
 #include "camera_resolution_controller.h"
 #include "grayscale_diagnostic.h"
@@ -76,6 +77,10 @@ void GrayscaleDiagnosticApiHandler::handle_status_(AsyncWebServerRequest *reques
     return;
   }
 
+  if (this->resolution_controller_ != nullptr) {
+    this->resolution_controller_->refresh_sensor_identity();
+  }
+
   const char *active_resolution = this->resolution_controller_ != nullptr
                                       ? this->resolution_controller_->active_resolution().c_str()
                                       : "unknown";
@@ -89,40 +94,49 @@ void GrayscaleDiagnosticApiHandler::handle_status_(AsyncWebServerRequest *reques
                                   ? static_cast<unsigned>(this->resolution_controller_->sensor_pid())
                                   : 0U;
 
-  char json[1280];
-  std::snprintf(
-      json, sizeof(json),
-      "{\"status\":\"ok\",\"mode\":\"grayscale_raw\",\"ready\":%s,\"capture_pending\":%s,"
-      "\"camera\":{\"sensor\":\"%s\",\"pid\":\"0x%04X\",\"max_resolution\":\"%s\"},"
-      "\"capture_count\":%u,\"last_capture_ms\":%u,\"active_resolution\":\"%s\","
-      "\"width\":%u,\"height\":%u,\"bmp_size\":%u,"
-      "\"timing\":{\"request_started_ms\":%u,\"frame_received_ms\":%u,"
-      "\"acquisition_ms\":%u,\"diagnostic_processing_ms\":%u,\"total_cycle_ms\":%u},"
-      "\"raw_stats\":{\"pixel_count\":%u,\"min\":%u,\"max\":%u,"
-      "\"mean\":%.3f,\"zero_count\":%u,\"full_255_count\":%u},"
-      "\"image\":\"/diagnostic/raw.bmp\"}",
-      this->diagnostic_->ready() ? "true" : "false",
-      this->diagnostic_->capture_pending() ? "true" : "false",
-      sensor_name,
-      sensor_pid,
-      sensor_max_resolution,
-      static_cast<unsigned>(this->diagnostic_->capture_count()),
-      static_cast<unsigned>(this->diagnostic_->last_capture_ms()),
-      active_resolution,
-      static_cast<unsigned>(this->diagnostic_->width()),
-      static_cast<unsigned>(this->diagnostic_->height()),
-      static_cast<unsigned>(this->diagnostic_->bmp_size()),
-      static_cast<unsigned>(this->diagnostic_->request_started_ms()),
-      static_cast<unsigned>(this->diagnostic_->frame_received_ms()),
-      static_cast<unsigned>(this->diagnostic_->acquisition_ms()),
-      static_cast<unsigned>(this->diagnostic_->diagnostic_processing_ms()),
-      static_cast<unsigned>(this->diagnostic_->total_cycle_ms()),
-      static_cast<unsigned>(this->diagnostic_->raw_pixel_count()),
-      static_cast<unsigned>(this->diagnostic_->raw_min()),
-      static_cast<unsigned>(this->diagnostic_->raw_max()),
-      static_cast<double>(this->diagnostic_->raw_mean()),
-      static_cast<unsigned>(this->diagnostic_->raw_zero_count()),
-      static_cast<unsigned>(this->diagnostic_->raw_full_count()));
+  std::string json;
+  json.reserve(1024);
+  char chunk[320];
+
+  std::snprintf(chunk, sizeof(chunk),
+                "{\"status\":\"ok\",\"mode\":\"grayscale_raw\",\"ready\":%s,\"capture_pending\":%s,"
+                "\"camera\":{\"sensor\":\"%s\",\"pid\":\"0x%04X\",\"max_resolution\":\"%s\"},"
+                "\"capture_count\":%u,\"last_capture_ms\":%u,\"active_resolution\":\"%s\",",
+                this->diagnostic_->ready() ? "true" : "false",
+                this->diagnostic_->capture_pending() ? "true" : "false",
+                sensor_name,
+                sensor_pid,
+                sensor_max_resolution,
+                static_cast<unsigned>(this->diagnostic_->capture_count()),
+                static_cast<unsigned>(this->diagnostic_->last_capture_ms()),
+                active_resolution);
+  json += chunk;
+
+  std::snprintf(chunk, sizeof(chunk),
+                "\"width\":%u,\"height\":%u,\"bmp_size\":%u,"
+                "\"timing\":{\"request_started_ms\":%u,\"frame_received_ms\":%u,"
+                "\"acquisition_ms\":%u,\"diagnostic_processing_ms\":%u,\"total_cycle_ms\":%u},",
+                static_cast<unsigned>(this->diagnostic_->width()),
+                static_cast<unsigned>(this->diagnostic_->height()),
+                static_cast<unsigned>(this->diagnostic_->bmp_size()),
+                static_cast<unsigned>(this->diagnostic_->request_started_ms()),
+                static_cast<unsigned>(this->diagnostic_->frame_received_ms()),
+                static_cast<unsigned>(this->diagnostic_->acquisition_ms()),
+                static_cast<unsigned>(this->diagnostic_->diagnostic_processing_ms()),
+                static_cast<unsigned>(this->diagnostic_->total_cycle_ms()));
+  json += chunk;
+
+  std::snprintf(chunk, sizeof(chunk),
+                "\"raw_stats\":{\"pixel_count\":%u,\"min\":%u,\"max\":%u,"
+                "\"mean\":%.3f,\"zero_count\":%u,\"full_255_count\":%u},"
+                "\"image\":\"/diagnostic/raw.bmp\"}",
+                static_cast<unsigned>(this->diagnostic_->raw_pixel_count()),
+                static_cast<unsigned>(this->diagnostic_->raw_min()),
+                static_cast<unsigned>(this->diagnostic_->raw_max()),
+                static_cast<double>(this->diagnostic_->raw_mean()),
+                static_cast<unsigned>(this->diagnostic_->raw_zero_count()),
+                static_cast<unsigned>(this->diagnostic_->raw_full_count()));
+  json += chunk;
 
   auto *response = request->beginResponse(200, "application/json", json);
   response->addHeader("Cache-Control", "no-store");
