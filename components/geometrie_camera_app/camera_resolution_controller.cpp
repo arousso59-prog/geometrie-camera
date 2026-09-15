@@ -77,6 +77,11 @@ bool CameraResolutionController::sync_from_sensor() {
   return true;
 }
 
+bool CameraResolutionController::refresh_sensor_identity() {
+  this->update_sensor_identity_();
+  return this->sensor_pid_ != 0;
+}
+
 bool CameraResolutionController::apply(const std::string &resolution) {
   const auto *entry = find_by_name(resolution);
   if (entry == nullptr) {
