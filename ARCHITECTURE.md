@@ -39,8 +39,10 @@ GeometrieCameraApp
 └── Diagnostics camera temporaires
     ├── GrayscaleDiagnostic
     │   └── GrayscaleDiagnosticApiHandler
-    └── Rgb565Diagnostic
-        └── Rgb565DiagnosticApiHandler
+    ├── Rgb565Diagnostic
+    │   └── Rgb565DiagnosticApiHandler
+    └── TargetSearchDiagnostic
+        └── TargetSearchDiagnosticApiHandler
 ```
 
 ### `GeometrieCameraApp`
@@ -107,6 +109,19 @@ Responsabilité : chaîne de mesure.
 
 Responsabilité : transformer une image de traitement en observation de cible.
 
+La première implémentation réelle reconnaît le repère 7×7 imprimé pour le prototype : bord noir continu et motif intérieur asymétrique. La recherche est multi-échelle et identifie pour l'instant les orientations discrètes 0/90/180/270°.
+
+Le détecteur travaille uniquement sur un `GrayFrameView` non propriétaire : il ne copie pas le framebuffer caméra et reste indépendant d'ESPHome, du réseau et de l'affichage.
+
+**Tests unitaires prioritaires :**
+
+- cible synthétique connue au centre ;
+- cible aux quatre orientations ;
+- cible absente ;
+- contraste insuffisant ;
+- plusieurs échelles de cible ;
+- stabilité des coordonnées et du score de qualité.
+
 Il sera découpé si l'algorithme devient important. Sous-classes possibles :
 
 ```text
@@ -147,23 +162,26 @@ Les diagnostics caméra ne sont volontairement pas ajoutés dans cette classe.
 
 ### `GrayscaleDiagnostic`
 
-Responsabilité : diagnostic temporaire de la chaîne d'acquisition brute OV3660 -> ESP32-S3 en niveaux de gris.
+Responsabilité : acquisition brute et stockage de l'unique image de diagnostic GRAYSCALE.
 
 - reçoit la vraie `ESP32Camera` par injection ;
 - demande une frame uniquement sur ordre explicite ;
 - accepte uniquement une frame `PIXFORMAT_GRAYSCALE` ;
 - copie la frame brute dans un BMP 8 bits non compressé stocké en PSRAM ;
 - calcule quelques statistiques brutes pour vérifier la dynamique reçue ;
-- ne fait aucun traitement géométrique et aucune compression JPEG.
+- expose ce même buffer BMP au diagnostic de recherche de cible afin d'éviter un second buffer image persistant ;
+- sait réserver une entrée de palette et tracer un cadre vert directement dans le BMP existant.
 
-Ce sous-système a permis de vérifier que la chaîne parallèle peut produire une image exploitable sans JPEG.
+Le framebuffer caméra reste la source de calcul. Le BMP n'est qu'une visualisation HTTP et n'est jamais réinjecté dans l'algorithme de détection.
 
 **Tests unitaires / tests de composant à prévoir :**
 
 - rejet d'un format autre que GRAYSCALE ;
 - validation de la taille minimale du framebuffer ;
 - génération correcte de l'en-tête BMP ;
-- conservation exacte des valeurs de pixels source ;
+- conservation exacte des valeurs de pixels source en mode brut ;
+- réservation de la couleur d'overlay sans duplication du buffer ;
+- tracé correct du cadre vert ;
 - statistiques min/max/moyenne sur un tableau connu.
 
 ### `GrayscaleDiagnosticApiHandler`
@@ -178,7 +196,30 @@ GET /diagnostic/status
 GET /diagnostic/raw.bmp
 ```
 
-Cette classe ne connaît pas `CameraManager`, `MeasurementManager` ou les calculs de géométrie.
+### `TargetSearchDiagnostic`
+
+Responsabilité : piloter une acquisition destinée à la recherche de cible et mesurer les temps de la chaîne complète.
+
+- demande une nouvelle frame à `ESP32Camera` ;
+- transmet directement le framebuffer GRAYSCALE à `TargetDetector` sans copie ;
+- mesure séparément acquisition, détection, préparation de visualisation et cycle total ;
+- demande à `GrayscaleDiagnostic` de remplacer l'unique BMP de visualisation ;
+- si la cible est trouvée, demande le tracé d'un cadre vert dans ce même BMP ;
+- ne possède aucun second buffer image.
+
+Cette classe prépare la future stratégie à deux régimes : recherche pleine image pour l'accrochage initial, puis recherche dans une ROI autour de la dernière position pour atteindre une cadence élevée en suivi.
+
+### `TargetSearchDiagnosticApiHandler`
+
+Routes de validation de la chaîne cible :
+
+```text
+GET /target/search
+GET /target/status
+GET /target/image.bmp
+```
+
+`/target/status` expose notamment `target_found`, la boîte détectée, l'orientation discrète, le score de qualité et les temps `acquisition_ms`, `detection_ms`, `visualization_ms` et `total_cycle_ms`.
 
 ### `Rgb565Diagnostic`
 
@@ -191,18 +232,9 @@ Responsabilité : diagnostic temporaire de la chaîne d'acquisition brute couleu
 - transforme la frame RGB565 en BMP 24 bits non compressé avec le convertisseur du driver Espressif ;
 - conserve uniquement le BMP et ses métadonnées pour inspection HTTP.
 
-Ce diagnostic reste séparé de `GrayscaleDiagnostic` afin de ne pas transformer ce dernier en classe multi-format et pour conserver des responsabilités simples pendant les essais matériels.
-
-**Tests unitaires / tests de composant à prévoir :**
-
-- rejet d'un format autre que RGB565 ;
-- validation de la taille minimale du framebuffer ;
-- conversion de quelques pixels RGB565 connus vers les valeurs RGB attendues ;
-- remplacement/libération correcte du buffer BMP entre deux captures.
+Ce diagnostic reste séparé de `GrayscaleDiagnostic` afin de conserver l'historique et les outils des essais matériels.
 
 ### `Rgb565DiagnosticApiHandler`
-
-Responsabilité : HTTP du diagnostic RGB565 uniquement.
 
 Routes temporaires :
 
@@ -211,8 +243,6 @@ GET /diagnostic-rgb565/capture
 GET /diagnostic-rgb565/status
 GET /diagnostic-rgb565/raw.bmp
 ```
-
-Il ne dépend que de `Rgb565Diagnostic`.
 
 ### `Ov3660CameraConfigurator`
 
