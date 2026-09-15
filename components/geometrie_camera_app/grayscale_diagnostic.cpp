@@ -41,6 +41,11 @@ GrayscaleDiagnostic::GrayscaleDiagnostic()
       last_capture_ms_(0),
       capture_pending_(false),
       ready_(false),
+      request_started_ms_(0),
+      frame_received_ms_(0),
+      acquisition_ms_(0),
+      diagnostic_processing_ms_(0),
+      total_cycle_ms_(0),
       raw_min_(0),
       raw_max_(0),
       raw_mean_(0.0f),
@@ -67,9 +72,14 @@ bool GrayscaleDiagnostic::request_capture() {
     return false;
   }
 
+  this->request_started_ms_ = millis();
+  this->frame_received_ms_ = 0;
+  this->acquisition_ms_ = 0;
+  this->diagnostic_processing_ms_ = 0;
+  this->total_cycle_ms_ = 0;
   this->capture_pending_ = true;
   this->camera_->request_image(camera::WEB_REQUESTER);
-  ESP_LOGD(TAG, "Capture grayscale brute demandee");
+  ESP_LOGD(TAG, "Capture grayscale brute demandee a %u ms", static_cast<unsigned>(this->request_started_ms_));
   return true;
 }
 
@@ -77,6 +87,10 @@ void GrayscaleDiagnostic::on_camera_image(const std::shared_ptr<camera::CameraIm
   if (!this->capture_pending_ || image == nullptr) {
     return;
   }
+
+  this->frame_received_ms_ = millis();
+  this->acquisition_ms_ = this->frame_received_ms_ - this->request_started_ms_;
+  const uint32_t processing_started_ms = this->frame_received_ms_;
 
   auto esp_image = std::static_pointer_cast<esp32_camera::ESP32CameraImage>(image);
   camera_fb_t *frame = esp_image->get_raw_buffer();
@@ -112,12 +126,18 @@ void GrayscaleDiagnostic::on_camera_image(const std::shared_ptr<camera::CameraIm
   this->height_ = frame->height;
   this->capture_count_++;
   this->last_capture_ms_ = millis();
+  this->diagnostic_processing_ms_ = this->last_capture_ms_ - processing_started_ms;
+  this->total_cycle_ms_ = this->last_capture_ms_ - this->request_started_ms_;
   this->ready_ = true;
   this->capture_pending_ = false;
 
   ESP_LOGI(TAG, "Capture brute recue: %ux%u, %u octets source, BMP %u octets",
            static_cast<unsigned>(frame->width), static_cast<unsigned>(frame->height),
            static_cast<unsigned>(frame->len), static_cast<unsigned>(this->bmp_size_));
+  ESP_LOGI(TAG, "Temps: acquisition=%u ms, diagnostic=%u ms, total=%u ms",
+           static_cast<unsigned>(this->acquisition_ms_),
+           static_cast<unsigned>(this->diagnostic_processing_ms_),
+           static_cast<unsigned>(this->total_cycle_ms_));
   ESP_LOGI(TAG, "Stats brutes: min=%u max=%u moyenne=%.2f zero=%u full255=%u pixels=%u",
            static_cast<unsigned>(this->raw_min_), static_cast<unsigned>(this->raw_max_),
            static_cast<double>(this->raw_mean_), static_cast<unsigned>(this->raw_zero_count_),
@@ -154,6 +174,26 @@ const uint8_t *GrayscaleDiagnostic::bmp_data() const {
 
 size_t GrayscaleDiagnostic::bmp_size() const {
   return this->bmp_size_;
+}
+
+uint32_t GrayscaleDiagnostic::request_started_ms() const {
+  return this->request_started_ms_;
+}
+
+uint32_t GrayscaleDiagnostic::frame_received_ms() const {
+  return this->frame_received_ms_;
+}
+
+uint32_t GrayscaleDiagnostic::acquisition_ms() const {
+  return this->acquisition_ms_;
+}
+
+uint32_t GrayscaleDiagnostic::diagnostic_processing_ms() const {
+  return this->diagnostic_processing_ms_;
+}
+
+uint32_t GrayscaleDiagnostic::total_cycle_ms() const {
+  return this->total_cycle_ms_;
 }
 
 uint8_t GrayscaleDiagnostic::raw_min() const {
