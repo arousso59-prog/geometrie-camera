@@ -25,6 +25,13 @@ Ces règles s'appliquent aux nouveaux développements du projet.
    - utiliser des interfaces ou des classes injectables quand un composant matériel doit pouvoir être remplacé par un bouchon de test ;
    - préciser quelles classes et quels comportements devront recevoir des tests.
 
+5. **Toute évolution de l'API HTTP doit mettre à jour le WSDL-like dans le même changement.**
+   - l'endpoint de référence est `GET /api/wsdl` ;
+   - toute nouvelle route, suppression de route, modification de méthode HTTP ou ajout/suppression/modification de paramètre doit être reporté dans `ApiWsdlHandler` ;
+   - chaque méthode doit conserver un commentaire fonctionnel, à enrichir au fur et à mesure de la réalisation ;
+   - les valeurs autorisées d'un paramètre doivent être exposées quand elles sont connues ;
+   - une évolution API n'est pas considérée terminée tant que le descripteur n'est pas cohérent avec le code.
+
 ## Architecture actuelle
 
 ```text
@@ -34,7 +41,9 @@ GeometrieCameraApp
 ├── MeasurementManager
 │   ├── TargetDetector
 │   └── GeometryMeasurementEngine
+├── ApiWsdlHandler
 ├── CameraApiHandler
+├── CameraResolutionController
 ├── Ov3660CameraConfigurator
 └── Diagnostics camera temporaires
     ├── GrayscaleDiagnostic
@@ -113,13 +122,15 @@ La première implémentation réelle reconnaît le repère 7×7 imprimé pour le
 
 Le détecteur travaille uniquement sur un `GrayFrameView` non propriétaire : il ne copie pas le framebuffer caméra et reste indépendant d'ESPHome, du réseau et de l'affichage.
 
+La plage de taille de cible est adaptée à la résolution reçue. Le minimum conserve un plancher compatible avec le motif 7×7 et le maximum actuel vaut 50 % du petit côté de l'image.
+
 **Tests unitaires prioritaires :**
 
 - cible synthétique connue au centre ;
 - cible aux quatre orientations ;
 - cible absente ;
 - contraste insuffisant ;
-- plusieurs échelles de cible ;
+- plusieurs échelles et plusieurs résolutions d'image ;
 - stabilité des coordonnées et du score de qualité.
 
 Il sera découpé si l'algorithme devient important. Sous-classes possibles :
@@ -148,6 +159,22 @@ Cette classe doit rester indépendante du réseau et du matériel autant que pos
 - calibration invalide => mesure invalide ;
 - rotation cible => roll transmis correctement.
 
+### `ApiWsdlHandler`
+
+Responsabilité : publier le contrat descriptif de l'API HTTP.
+
+Route :
+
+```text
+GET /api/wsdl
+```
+
+Le document est un catalogue XML **WSDL-like** : le projet reste une API REST/HTTP et non un service SOAP. Il liste les routes disponibles, méthodes HTTP, paramètres, valeurs autorisées connues, types de réponse et commentaires fonctionnels.
+
+`ApiWsdlHandler` ne déclenche aucune acquisition et ne contient aucune logique métier. Il dépend uniquement de `CameraResolutionController` pour publier dynamiquement la liste courante des résolutions autorisées.
+
+**Règle de maintenance :** toute modification d'une API doit modifier ce descripteur dans le même changement Git.
+
 ### `CameraApiHandler`
 
 Responsabilité : interface HTTP de l'application uniquement.
@@ -159,6 +186,16 @@ Responsabilité : interface HTTP de l'application uniquement.
 Elle dépend directement de `CameraManager` et `MeasurementManager`, pas de toute l'application.
 
 Les diagnostics caméra ne sont volontairement pas ajoutés dans cette classe.
+
+### `CameraResolutionController`
+
+Responsabilité : connaître le capteur caméra actif et piloter les changements de résolution à chaud.
+
+- lit le PID du capteur via le driver Espressif ;
+- expose le nom du capteur et sa résolution maximale connue ;
+- maintient la résolution active ;
+- valide les résolutions autorisées avant application ;
+- applique `set_framesize()` au capteur.
 
 ### `GrayscaleDiagnostic`
 
@@ -191,7 +228,7 @@ Responsabilité : HTTP du diagnostic GRAYSCALE uniquement.
 Routes temporaires :
 
 ```text
-GET /diagnostic/capture
+GET /diagnostic/capture?resolution=<optionnel>
 GET /diagnostic/status
 GET /diagnostic/raw.bmp
 ```
@@ -214,7 +251,7 @@ Cette classe prépare la future stratégie à deux régimes : recherche pleine i
 Routes de validation de la chaîne cible :
 
 ```text
-GET /target/search
+GET /target/search?resolution=<optionnel>
 GET /target/status
 GET /target/image.bmp
 ```
@@ -265,5 +302,6 @@ Avant de coder une nouvelle fonctionnalité, répondre à ces questions :
 4. Faut-il créer une nouvelle classe ou interface ?
 5. La logique peut-elle être testée sans ESP32 ni matériel ?
 6. Quels tests unitaires devront être ajoutés ou modifiés ?
+7. Si l'API HTTP change, le descripteur `GET /api/wsdl` a-t-il été mis à jour dans le même changement ?
 
 Cette revue doit être signalée avant l'implémentation lorsqu'une évolution change l'architecture.
