@@ -1,5 +1,6 @@
 #include "grayscale_diagnostic.h"
 
+#include <algorithm>
 #include <cstring>
 
 #include "esp_heap_caps.h"
@@ -16,6 +17,8 @@ constexpr size_t BMP_FILE_HEADER_SIZE = 14;
 constexpr size_t BMP_INFO_HEADER_SIZE = 40;
 constexpr size_t BMP_PALETTE_SIZE = 256 * 4;
 constexpr size_t BMP_PIXEL_OFFSET = BMP_FILE_HEADER_SIZE + BMP_INFO_HEADER_SIZE + BMP_PALETTE_SIZE;
+constexpr uint8_t GREEN_OVERLAY_INDEX = 254;
+constexpr uint8_t GREEN_REMAP_INDEX = 253;
 
 void write_u16_le(uint8_t *buffer, size_t offset, uint16_t value) {
   buffer[offset] = static_cast<uint8_t>(value & 0xFF);
@@ -116,19 +119,16 @@ void GrayscaleDiagnostic::on_camera_image(const std::shared_ptr<camera::CameraIm
 
   this->calculate_statistics_(frame->buf, expected_pixels);
 
-  if (!this->build_bmp_(frame->buf, frame->len, frame->width, frame->height)) {
+  if (!this->update_visualization(frame->buf, frame->len, frame->width, frame->height, false)) {
     ESP_LOGE(TAG, "Construction BMP diagnostic impossible");
     this->capture_pending_ = false;
     return;
   }
 
-  this->width_ = frame->width;
-  this->height_ = frame->height;
   this->capture_count_++;
   this->last_capture_ms_ = millis();
   this->diagnostic_processing_ms_ = this->last_capture_ms_ - processing_started_ms;
   this->total_cycle_ms_ = this->last_capture_ms_ - this->request_started_ms_;
-  this->ready_ = true;
   this->capture_pending_ = false;
 
   ESP_LOGI(TAG, "Capture brute recue: %ux%u, %u octets source, BMP %u octets",
@@ -144,84 +144,90 @@ void GrayscaleDiagnostic::on_camera_image(const std::shared_ptr<camera::CameraIm
            static_cast<unsigned>(this->raw_full_count_), static_cast<unsigned>(this->raw_pixel_count_));
 }
 
-bool GrayscaleDiagnostic::ready() const {
-  return this->ready_;
+bool GrayscaleDiagnostic::update_visualization(const uint8_t *grayscale, size_t grayscale_size, uint16_t width,
+                                               uint16_t height, bool reserve_green_overlay) {
+  if (!this->build_bmp_(grayscale, grayscale_size, width, height, reserve_green_overlay)) {
+    return false;
+  }
+
+  this->width_ = width;
+  this->height_ = height;
+  this->ready_ = true;
+  return true;
 }
 
-bool GrayscaleDiagnostic::capture_pending() const {
-  return this->capture_pending_;
+bool GrayscaleDiagnostic::annotate_box_green(uint16_t x, uint16_t y, uint16_t width, uint16_t height,
+                                              uint8_t thickness) {
+  if (!this->ready_ || this->bmp_buffer_ == nullptr || width == 0 || height == 0 || thickness == 0) {
+    return false;
+  }
+
+  if (x >= this->width_ || y >= this->height_) {
+    return false;
+  }
+
+  const uint16_t x2 = std::min<uint16_t>(this->width_ - 1U, static_cast<uint16_t>(x + width - 1U));
+  const uint16_t y2 = std::min<uint16_t>(this->height_ - 1U, static_cast<uint16_t>(y + height - 1U));
+  const size_t row_stride = (static_cast<size_t>(this->width_) + 3U) & ~static_cast<size_t>(3U);
+  uint8_t *pixels = this->bmp_buffer_ + BMP_PIXEL_OFFSET;
+
+  uint8_t *palette = this->bmp_buffer_ + BMP_FILE_HEADER_SIZE + BMP_INFO_HEADER_SIZE;
+  const size_t palette_offset = static_cast<size_t>(GREEN_OVERLAY_INDEX) * 4U;
+  palette[palette_offset] = 0;
+  palette[palette_offset + 1U] = 255;
+  palette[palette_offset + 2U] = 0;
+  palette[palette_offset + 3U] = 0;
+
+  const uint8_t effective_thickness = std::min<uint8_t>(thickness, 8);
+  for (uint8_t t = 0; t < effective_thickness; t++) {
+    if (x + t > x2 || y + t > y2 || x2 < t || y2 < t) {
+      break;
+    }
+
+    const uint16_t left = static_cast<uint16_t>(x + t);
+    const uint16_t right = static_cast<uint16_t>(x2 - t);
+    const uint16_t top = static_cast<uint16_t>(y + t);
+    const uint16_t bottom = static_cast<uint16_t>(y2 - t);
+
+    for (uint16_t px = left; px <= right; px++) {
+      const size_t top_row = static_cast<size_t>(this->height_ - 1U - top) * row_stride;
+      const size_t bottom_row = static_cast<size_t>(this->height_ - 1U - bottom) * row_stride;
+      pixels[top_row + px] = GREEN_OVERLAY_INDEX;
+      pixels[bottom_row + px] = GREEN_OVERLAY_INDEX;
+    }
+
+    for (uint16_t py = top; py <= bottom; py++) {
+      const size_t row = static_cast<size_t>(this->height_ - 1U - py) * row_stride;
+      pixels[row + left] = GREEN_OVERLAY_INDEX;
+      pixels[row + right] = GREEN_OVERLAY_INDEX;
+    }
+  }
+
+  return true;
 }
 
-uint32_t GrayscaleDiagnostic::capture_count() const {
-  return this->capture_count_;
-}
-
-uint32_t GrayscaleDiagnostic::last_capture_ms() const {
-  return this->last_capture_ms_;
-}
-
-uint16_t GrayscaleDiagnostic::width() const {
-  return this->width_;
-}
-
-uint16_t GrayscaleDiagnostic::height() const {
-  return this->height_;
-}
-
-const uint8_t *GrayscaleDiagnostic::bmp_data() const {
-  return this->bmp_buffer_;
-}
-
-size_t GrayscaleDiagnostic::bmp_size() const {
-  return this->bmp_size_;
-}
-
-uint32_t GrayscaleDiagnostic::request_started_ms() const {
-  return this->request_started_ms_;
-}
-
-uint32_t GrayscaleDiagnostic::frame_received_ms() const {
-  return this->frame_received_ms_;
-}
-
-uint32_t GrayscaleDiagnostic::acquisition_ms() const {
-  return this->acquisition_ms_;
-}
-
-uint32_t GrayscaleDiagnostic::diagnostic_processing_ms() const {
-  return this->diagnostic_processing_ms_;
-}
-
-uint32_t GrayscaleDiagnostic::total_cycle_ms() const {
-  return this->total_cycle_ms_;
-}
-
-uint8_t GrayscaleDiagnostic::raw_min() const {
-  return this->raw_min_;
-}
-
-uint8_t GrayscaleDiagnostic::raw_max() const {
-  return this->raw_max_;
-}
-
-float GrayscaleDiagnostic::raw_mean() const {
-  return this->raw_mean_;
-}
-
-uint32_t GrayscaleDiagnostic::raw_zero_count() const {
-  return this->raw_zero_count_;
-}
-
-uint32_t GrayscaleDiagnostic::raw_full_count() const {
-  return this->raw_full_count_;
-}
-
-size_t GrayscaleDiagnostic::raw_pixel_count() const {
-  return this->raw_pixel_count_;
-}
+bool GrayscaleDiagnostic::ready() const { return this->ready_; }
+bool GrayscaleDiagnostic::capture_pending() const { return this->capture_pending_; }
+uint32_t GrayscaleDiagnostic::capture_count() const { return this->capture_count_; }
+uint32_t GrayscaleDiagnostic::last_capture_ms() const { return this->last_capture_ms_; }
+uint16_t GrayscaleDiagnostic::width() const { return this->width_; }
+uint16_t GrayscaleDiagnostic::height() const { return this->height_; }
+const uint8_t *GrayscaleDiagnostic::bmp_data() const { return this->bmp_buffer_; }
+size_t GrayscaleDiagnostic::bmp_size() const { return this->bmp_size_; }
+uint32_t GrayscaleDiagnostic::request_started_ms() const { return this->request_started_ms_; }
+uint32_t GrayscaleDiagnostic::frame_received_ms() const { return this->frame_received_ms_; }
+uint32_t GrayscaleDiagnostic::acquisition_ms() const { return this->acquisition_ms_; }
+uint32_t GrayscaleDiagnostic::diagnostic_processing_ms() const { return this->diagnostic_processing_ms_; }
+uint32_t GrayscaleDiagnostic::total_cycle_ms() const { return this->total_cycle_ms_; }
+uint8_t GrayscaleDiagnostic::raw_min() const { return this->raw_min_; }
+uint8_t GrayscaleDiagnostic::raw_max() const { return this->raw_max_; }
+float GrayscaleDiagnostic::raw_mean() const { return this->raw_mean_; }
+uint32_t GrayscaleDiagnostic::raw_zero_count() const { return this->raw_zero_count_; }
+uint32_t GrayscaleDiagnostic::raw_full_count() const { return this->raw_full_count_; }
+size_t GrayscaleDiagnostic::raw_pixel_count() const { return this->raw_pixel_count_; }
 
 bool GrayscaleDiagnostic::build_bmp_(const uint8_t *grayscale, size_t grayscale_size, uint16_t width,
-                                     uint16_t height) {
+                                     uint16_t height, bool reserve_green_overlay) {
   if (grayscale == nullptr || width == 0 || height == 0) {
     return false;
   }
@@ -242,12 +248,10 @@ bool GrayscaleDiagnostic::build_bmp_(const uint8_t *grayscale, size_t grayscale_
   }
 
   std::memset(this->bmp_buffer_, 0, file_size);
-
   this->bmp_buffer_[0] = 'B';
   this->bmp_buffer_[1] = 'M';
   write_u32_le(this->bmp_buffer_, 2, static_cast<uint32_t>(file_size));
   write_u32_le(this->bmp_buffer_, 10, static_cast<uint32_t>(BMP_PIXEL_OFFSET));
-
   write_u32_le(this->bmp_buffer_, 14, static_cast<uint32_t>(BMP_INFO_HEADER_SIZE));
   write_u32_le(this->bmp_buffer_, 18, static_cast<uint32_t>(width));
   write_u32_le(this->bmp_buffer_, 22, static_cast<uint32_t>(height));
@@ -272,7 +276,16 @@ bool GrayscaleDiagnostic::build_bmp_(const uint8_t *grayscale, size_t grayscale_
     const size_t destination_y = static_cast<size_t>(height) - 1U - source_y;
     uint8_t *destination = pixels + destination_y * row_stride;
     const uint8_t *source = grayscale + source_y * static_cast<size_t>(width);
-    std::memcpy(destination, source, width);
+
+    if (!reserve_green_overlay) {
+      std::memcpy(destination, source, width);
+      continue;
+    }
+
+    for (size_t x = 0; x < width; x++) {
+      const uint8_t value = source[x];
+      destination[x] = value == GREEN_OVERLAY_INDEX ? GREEN_REMAP_INDEX : value;
+    }
   }
 
   this->bmp_size_ = file_size;
@@ -297,18 +310,10 @@ void GrayscaleDiagnostic::calculate_statistics_(const uint8_t *grayscale, size_t
 
   for (size_t i = 0; i < pixel_count; i++) {
     const uint8_t value = grayscale[i];
-    if (value < minimum) {
-      minimum = value;
-    }
-    if (value > maximum) {
-      maximum = value;
-    }
-    if (value == 0) {
-      this->raw_zero_count_++;
-    }
-    if (value == 255) {
-      this->raw_full_count_++;
-    }
+    minimum = std::min(minimum, value);
+    maximum = std::max(maximum, value);
+    if (value == 0) this->raw_zero_count_++;
+    if (value == 255) this->raw_full_count_++;
     sum += value;
   }
 
@@ -323,7 +328,6 @@ bool GrayscaleDiagnostic::ensure_buffer_(size_t required_size) {
   }
 
   this->clear_buffer_();
-
   this->bmp_buffer_ = static_cast<uint8_t *>(heap_caps_malloc(required_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   if (this->bmp_buffer_ == nullptr) {
     ESP_LOGW(TAG, "Allocation PSRAM BMP impossible, tentative heap 8-bit");
@@ -343,7 +347,6 @@ void GrayscaleDiagnostic::clear_buffer_() {
   if (this->bmp_buffer_ != nullptr) {
     heap_caps_free(this->bmp_buffer_);
   }
-
   this->bmp_buffer_ = nullptr;
   this->bmp_size_ = 0;
   this->bmp_capacity_ = 0;
