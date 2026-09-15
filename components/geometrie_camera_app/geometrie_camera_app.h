@@ -13,6 +13,8 @@
 #include "placeholder_image_provider.h"
 #include "rgb565_diagnostic.h"
 #include "rgb565_diagnostic_api.h"
+#include "target_search_diagnostic.h"
+#include "target_search_diagnostic_api.h"
 #include "types.h"
 
 namespace esphome {
@@ -42,6 +44,7 @@ class GeometrieCameraApp : public Component {
   GeometryMeasurementEngine &measurement_engine();
   GrayscaleDiagnostic &grayscale_diagnostic();
   Rgb565Diagnostic &rgb565_diagnostic();
+  TargetSearchDiagnostic &target_search_diagnostic();
   Ov3660CameraConfigurator &camera_configurator();
 
  private:
@@ -52,10 +55,12 @@ class GeometrieCameraApp : public Component {
   MeasurementManager measurement_manager_;
   GrayscaleDiagnostic grayscale_diagnostic_;
   Rgb565Diagnostic rgb565_diagnostic_;
+  TargetSearchDiagnostic target_search_diagnostic_;
   Ov3660CameraConfigurator camera_configurator_;
   CameraApiHandler api_handler_;
   GrayscaleDiagnosticApiHandler diagnostic_api_handler_;
   Rgb565DiagnosticApiHandler rgb565_diagnostic_api_handler_;
+  TargetSearchDiagnosticApiHandler target_search_diagnostic_api_handler_;
   bool api_registered_;
 };
 
