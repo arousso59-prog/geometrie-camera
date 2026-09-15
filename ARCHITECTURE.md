@@ -44,6 +44,8 @@ GeometrieCameraApp
 ├── ApiWsdlHandler
 ├── CameraApiHandler
 ├── CameraResolutionController
+├── CameraSettingsController
+│   └── CameraSettingsApiHandler
 ├── Ov3660CameraConfigurator
 └── Diagnostics camera temporaires
     ├── GrayscaleDiagnostic
@@ -196,6 +198,37 @@ Responsabilité : connaître le capteur caméra actif et piloter les changements
 - maintient la résolution active ;
 - valide les résolutions autorisées avant application ;
 - applique `set_framesize()` au capteur.
+
+### `CameraSettingsController`
+
+Responsabilité : lire et appliquer les réglages d'acquisition du capteur, indépendamment du HTTP et du traitement d'image.
+
+Réglages actuellement exposés :
+
+- `brightness` ;
+- `contrast` ;
+- activation de l'exposition automatique `exposure_ctrl` ;
+- compensation automatique `ae_level` ;
+- exposition manuelle `aec_value` ;
+- activation du gain automatique `gain_ctrl` ;
+- gain manuel `agc_gain`.
+
+Le contrôleur valide les plages avant d'appeler les fonctions du driver Espressif. Il ne modifie ni le framebuffer ni l'image BMP de diagnostic.
+
+**Tests à prévoir :** validation des plages, rejet des valeurs invalides, comportement sans capteur, lecture d'un snapshot cohérent et application d'un réglage avec un adaptateur capteur simulé si l'accès matériel est abstrait ultérieurement.
+
+### `CameraSettingsApiHandler`
+
+Responsabilité : exposer les réglages d'acquisition par HTTP pendant la phase de mise au point.
+
+Routes :
+
+```text
+GET /api/camera/settings
+GET /api/camera/settings/set?<parametres>
+```
+
+La route `set` est volontairement une route GET temporaire cohérente avec l'API de développement actuelle. Lors de la stabilisation future de l'API v1, elle pourra devenir une opération REST de type `PUT` ou `PATCH` avec corps JSON.
 
 ### `GrayscaleDiagnostic`
 
