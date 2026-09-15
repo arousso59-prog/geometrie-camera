@@ -13,14 +13,16 @@ GeometrieCameraApp::GeometrieCameraApp()
     : placeholder_image_provider_(),
       camera_manager_(&this->placeholder_image_provider_),
       measurement_manager_(),
+      resolution_controller_(),
       grayscale_diagnostic_(),
       rgb565_diagnostic_(),
       target_search_diagnostic_(&this->measurement_manager_.target_detector(), &this->grayscale_diagnostic_),
       camera_configurator_(),
       api_handler_(&this->camera_manager_, &this->measurement_manager_),
-      diagnostic_api_handler_(&this->grayscale_diagnostic_),
+      diagnostic_api_handler_(&this->grayscale_diagnostic_, &this->resolution_controller_),
       rgb565_diagnostic_api_handler_(&this->rgb565_diagnostic_),
-      target_search_diagnostic_api_handler_(&this->target_search_diagnostic_, &this->grayscale_diagnostic_),
+      target_search_diagnostic_api_handler_(&this->target_search_diagnostic_, &this->grayscale_diagnostic_,
+                                            &this->resolution_controller_),
       api_registered_(false) {}
 
 void GeometrieCameraApp::setup() {
@@ -29,6 +31,7 @@ void GeometrieCameraApp::setup() {
   this->measurement_manager_.setup();
   this->camera_manager_.setup();
   this->camera_configurator_.setup();
+  this->resolution_controller_.sync_from_sensor();
   this->register_api_if_possible_();
 }
 
@@ -47,6 +50,7 @@ void GeometrieCameraApp::dump_config() {
   ESP_LOGCONFIG(TAG, "  Camera service ready: %s", this->camera_manager_.ready() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Physical camera ready: %s", this->camera_manager_.physical_camera_ready() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Placeholder mode: %s", this->camera_manager_.placeholder_mode() ? "YES" : "NO");
+  ESP_LOGCONFIG(TAG, "  Resolution active: %s", this->resolution_controller_.active_resolution().c_str());
   ESP_LOGCONFIG(TAG, "  Grayscale diagnostic ready: %s", this->grayscale_diagnostic_.ready() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  RGB565 diagnostic ready: %s", this->rgb565_diagnostic_.ready() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Target search diagnostic ready: %s", this->target_search_diagnostic_.ready() ? "YES" : "NO");
@@ -97,6 +101,7 @@ CameraManager &GeometrieCameraApp::camera_manager() { return this->camera_manage
 MeasurementManager &GeometrieCameraApp::measurement_manager() { return this->measurement_manager_; }
 TargetDetector &GeometrieCameraApp::target_detector() { return this->measurement_manager_.target_detector(); }
 GeometryMeasurementEngine &GeometrieCameraApp::measurement_engine() { return this->measurement_manager_.measurement_engine(); }
+CameraResolutionController &GeometrieCameraApp::resolution_controller() { return this->resolution_controller_; }
 GrayscaleDiagnostic &GeometrieCameraApp::grayscale_diagnostic() { return this->grayscale_diagnostic_; }
 Rgb565Diagnostic &GeometrieCameraApp::rgb565_diagnostic() { return this->rgb565_diagnostic_; }
 TargetSearchDiagnostic &GeometrieCameraApp::target_search_diagnostic() { return this->target_search_diagnostic_; }
