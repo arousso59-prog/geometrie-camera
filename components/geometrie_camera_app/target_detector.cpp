@@ -1,9 +1,16 @@
 #include "target_detector.h"
 
+#include "esphome/core/log.h"
+
 namespace esphome {
 namespace geometrie_camera_app {
 
-TargetDetector::TargetDetector() : candidate_finder_(), code_decoder_(), candidates_() {}
+namespace {
+static const char *const TAG = "target_detector";
+}
+
+TargetDetector::TargetDetector()
+    : candidate_finder_(), corner_refiner_(), code_decoder_(), candidates_() {}
 
 TargetObservation TargetDetector::detect(const GrayFrameView &frame) {
   TargetObservation best;
@@ -14,9 +21,26 @@ TargetObservation TargetDetector::detect(const GrayFrameView &frame) {
   }
 
   for (size_t index = 0; index < this->candidates_.count; ++index) {
-    const TargetObservation observation = this->code_decoder_.decode(frame, this->candidates_.candidates[index]);
-    if (observation.quality > best.quality) {
-      best = observation;
+    const TargetCandidate &candidate = this->candidates_.candidates[index];
+
+    // Toujours conserver le decodage du candidat brut comme filet de securite.
+    // Le raffinement pleine resolution ne doit jamais rendre une detection
+    // auparavant valide moins robuste.
+    const TargetObservation coarse_observation = this->code_decoder_.decode(frame, candidate);
+    if (coarse_observation.quality > best.quality) {
+      best = coarse_observation;
+    }
+
+    TargetCandidate refined_candidate = candidate;
+    if (this->corner_refiner_.refine(frame, candidate, refined_candidate)) {
+      const TargetObservation refined_observation = this->code_decoder_.decode(frame, refined_candidate);
+      ESP_LOGD(TAG,
+               "V5.4 candidate[%u] coarse=%.4f refined=%.4f refined_valid=%s",
+               static_cast<unsigned>(index), coarse_observation.quality,
+               refined_observation.quality, refined_observation.valid ? "YES" : "NO");
+      if (refined_observation.quality > best.quality) {
+        best = refined_observation;
+      }
     }
   }
 
