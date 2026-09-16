@@ -7,6 +7,13 @@ namespace geometrie_camera_app {
 
 namespace {
 static const char *const TAG = "target_detector";
+
+void copy_geometry(const TargetObservation &source, TargetObservation &destination) {
+  destination.top_left_px = source.top_left_px;
+  destination.top_right_px = source.top_right_px;
+  destination.bottom_right_px = source.bottom_right_px;
+  destination.bottom_left_px = source.bottom_left_px;
+}
 }
 
 TargetDetector::TargetDetector()
@@ -23,13 +30,9 @@ TargetObservation TargetDetector::detect(const GrayFrameView &frame) {
   for (size_t index = 0; index < this->candidates_.count; ++index) {
     const TargetCandidate &candidate = this->candidates_.candidates[index];
 
-    // Toujours conserver le decodage du candidat brut comme filet de securite.
-    // Le raffinement pleine resolution ne doit jamais rendre une detection
-    // auparavant valide moins robuste.
+    // Le candidat brut reste le filet de securite pour le decodage.
     const TargetObservation coarse_observation = this->code_decoder_.decode(frame, candidate);
-    if (coarse_observation.quality > best.quality) {
-      best = coarse_observation;
-    }
+    TargetObservation candidate_best = coarse_observation;
 
     TargetCandidate refined_candidate = candidate;
     if (this->corner_refiner_.refine(frame, candidate, refined_candidate)) {
@@ -38,9 +41,21 @@ TargetObservation TargetDetector::detect(const GrayFrameView &frame) {
                "V5.4 candidate[%u] coarse=%.4f refined=%.4f refined_valid=%s",
                static_cast<unsigned>(index), coarse_observation.quality,
                refined_observation.quality, refined_observation.valid ? "YES" : "NO");
-      if (refined_observation.quality > best.quality) {
-        best = refined_observation;
+
+      if (refined_observation.quality > candidate_best.quality) {
+        candidate_best = refined_observation;
+      } else if (coarse_observation.valid && refined_observation.valid &&
+                 coarse_observation.rotation_deg == refined_observation.rotation_deg) {
+        // Le score du code peut etre legerement meilleur sur le quadrilatere
+        // brut alors que les coins pleine resolution sont geometriquement plus
+        // precis. Garder le score/validation du brut mais utiliser les coins
+        // raffines pour la future distance et la pose.
+        copy_geometry(refined_observation, candidate_best);
       }
+    }
+
+    if (candidate_best.quality > best.quality) {
+      best = candidate_best;
     }
   }
 
