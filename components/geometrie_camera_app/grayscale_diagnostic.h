@@ -35,6 +35,12 @@ class GrayscaleDiagnostic : public camera::CameraListener {
   const uint8_t *bmp_data() const;
   size_t bmp_size() const;
 
+  bool preview_ready() const;
+  uint16_t preview_width() const;
+  uint16_t preview_height() const;
+  const uint8_t *preview_bmp_data() const;
+  size_t preview_bmp_size() const;
+
   uint32_t request_started_ms() const;
   uint32_t frame_received_ms() const;
   uint32_t acquisition_ms() const;
@@ -51,9 +57,12 @@ class GrayscaleDiagnostic : public camera::CameraListener {
  private:
   bool build_bmp_(const uint8_t *grayscale, size_t grayscale_size, uint16_t width, uint16_t height,
                   bool reserve_green_overlay);
+  bool build_preview_bmp_(const uint8_t *grayscale, size_t grayscale_size, uint16_t width, uint16_t height);
   void calculate_statistics_(const uint8_t *grayscale, size_t pixel_count);
   bool ensure_buffer_(size_t required_size);
+  bool ensure_preview_buffer_(size_t required_size);
   void clear_buffer_();
+  void clear_preview_buffer_();
 
   esp32_camera::ESP32Camera *camera_;
   uint8_t *bmp_buffer_;
@@ -61,6 +70,14 @@ class GrayscaleDiagnostic : public camera::CameraListener {
   size_t bmp_capacity_;
   uint16_t width_;
   uint16_t height_;
+
+  uint8_t *preview_bmp_buffer_;
+  size_t preview_bmp_size_;
+  size_t preview_bmp_capacity_;
+  uint16_t preview_width_;
+  uint16_t preview_height_;
+  bool preview_ready_;
+
   uint32_t capture_count_;
   uint32_t last_capture_ms_;
   bool capture_pending_;
