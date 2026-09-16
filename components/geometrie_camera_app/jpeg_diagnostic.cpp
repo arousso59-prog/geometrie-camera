@@ -25,10 +25,15 @@ JpegDiagnostic::JpegDiagnostic()
       has_soi_(false),
       has_eoi_(false),
       capture_count_(0),
+      discarded_frame_count_(0),
       last_capture_ms_(0),
       capture_pending_(false),
+      discard_next_frame_(false),
+      fresh_request_pending_(false),
       ready_(false),
       request_started_ms_(0),
+      stale_frame_received_ms_(0),
+      fresh_request_started_ms_(0),
       frame_received_ms_(0),
       acquisition_ms_(0),
       copy_ms_(0),
@@ -54,14 +59,38 @@ bool JpegDiagnostic::request_capture() {
   }
 
   this->request_started_ms_ = millis();
+  this->stale_frame_received_ms_ = 0;
+  this->fresh_request_started_ms_ = 0;
   this->frame_received_ms_ = 0;
   this->acquisition_ms_ = 0;
   this->copy_ms_ = 0;
   this->total_cycle_ms_ = 0;
   this->capture_pending_ = true;
+  this->discard_next_frame_ = true;
+  this->fresh_request_pending_ = false;
+
+  // ESPHome pre-acquires one framebuffer in its dedicated camera task. The
+  // first image delivered after request_image() can therefore predate this
+  // HTTP request (and can even have the previous framesize). We explicitly
+  // consume that queued frame first, then request the useful fresh frame from
+  // loop(), after ESPHome has finished the listener callback and returned the
+  // stale framebuffer to the driver.
   this->camera_->request_image(camera::WEB_REQUESTER);
-  ESP_LOGD(TAG, "Capture JPEG demandee a %u ms", static_cast<unsigned>(this->request_started_ms_));
+  ESP_LOGD(TAG, "Capture JPEG demandee a %u ms; purge de la frame en attente",
+           static_cast<unsigned>(this->request_started_ms_));
   return true;
+}
+
+void JpegDiagnostic::loop() {
+  if (!this->capture_pending_ || !this->fresh_request_pending_ || this->camera_ == nullptr) {
+    return;
+  }
+
+  this->fresh_request_pending_ = false;
+  this->fresh_request_started_ms_ = millis();
+  this->camera_->request_image(camera::WEB_REQUESTER);
+  ESP_LOGD(TAG, "Frame JPEG fraiche demandee a %u ms",
+           static_cast<unsigned>(this->fresh_request_started_ms_));
 }
 
 void JpegDiagnostic::on_camera_image(const std::shared_ptr<camera::CameraImage> &image) {
@@ -69,21 +98,41 @@ void JpegDiagnostic::on_camera_image(const std::shared_ptr<camera::CameraImage> 
     return;
   }
 
-  this->frame_received_ms_ = millis();
-  this->acquisition_ms_ = this->frame_received_ms_ - this->request_started_ms_;
-
   auto esp_image = std::static_pointer_cast<esp32_camera::ESP32CameraImage>(image);
   camera_fb_t *frame = esp_image->get_raw_buffer();
   if (frame == nullptr || frame->buf == nullptr || frame->len == 0) {
     ESP_LOGE(TAG, "Framebuffer JPEG indisponible");
     this->capture_pending_ = false;
+    this->discard_next_frame_ = false;
+    this->fresh_request_pending_ = false;
     return;
   }
 
   if (frame->format != PIXFORMAT_JPEG) {
     ESP_LOGE(TAG, "Format inattendu pour le diagnostic JPEG: %d", static_cast<int>(frame->format));
     this->capture_pending_ = false;
+    this->discard_next_frame_ = false;
+    this->fresh_request_pending_ = false;
     return;
+  }
+
+  if (this->discard_next_frame_) {
+    this->stale_frame_received_ms_ = millis();
+    this->discard_next_frame_ = false;
+    this->fresh_request_pending_ = true;
+    this->discarded_frame_count_++;
+
+    ESP_LOGD(TAG, "Frame JPEG en attente purgee: %ux%u, %u octets",
+             static_cast<unsigned>(frame->width), static_cast<unsigned>(frame->height),
+             static_cast<unsigned>(frame->len));
+    return;
+  }
+
+  this->frame_received_ms_ = millis();
+  if (this->fresh_request_started_ms_ != 0) {
+    this->acquisition_ms_ = this->frame_received_ms_ - this->fresh_request_started_ms_;
+  } else {
+    this->acquisition_ms_ = this->frame_received_ms_ - this->request_started_ms_;
   }
 
   const uint32_t copy_started_ms = millis();
@@ -107,9 +156,10 @@ void JpegDiagnostic::on_camera_image(const std::shared_ptr<camera::CameraImage> 
   this->total_cycle_ms_ = this->last_capture_ms_ - this->request_started_ms_;
   this->ready_ = true;
   this->capture_pending_ = false;
+  this->fresh_request_pending_ = false;
 
   ESP_LOGI(TAG,
-           "JPEG recu: %ux%u, %u octets, SOI=%s EOI=%s, acquisition=%u ms, copie=%u ms, total=%u ms",
+           "JPEG frais recu: %ux%u, %u octets, SOI=%s EOI=%s, acquisition=%u ms, copie=%u ms, total=%u ms",
            static_cast<unsigned>(this->width_), static_cast<unsigned>(this->height_),
            static_cast<unsigned>(this->jpeg_size_), this->has_soi_ ? "OK" : "NON",
            this->has_eoi_ ? "OK" : "NON", static_cast<unsigned>(this->acquisition_ms_),
@@ -119,6 +169,7 @@ void JpegDiagnostic::on_camera_image(const std::shared_ptr<camera::CameraImage> 
 bool JpegDiagnostic::ready() const { return this->ready_; }
 bool JpegDiagnostic::capture_pending() const { return this->capture_pending_; }
 uint32_t JpegDiagnostic::capture_count() const { return this->capture_count_; }
+uint32_t JpegDiagnostic::discarded_frame_count() const { return this->discarded_frame_count_; }
 uint32_t JpegDiagnostic::last_capture_ms() const { return this->last_capture_ms_; }
 uint16_t JpegDiagnostic::width() const { return this->width_; }
 uint16_t JpegDiagnostic::height() const { return this->height_; }
@@ -127,6 +178,8 @@ size_t JpegDiagnostic::jpeg_size() const { return this->jpeg_size_; }
 bool JpegDiagnostic::has_soi() const { return this->has_soi_; }
 bool JpegDiagnostic::has_eoi() const { return this->has_eoi_; }
 uint32_t JpegDiagnostic::request_started_ms() const { return this->request_started_ms_; }
+uint32_t JpegDiagnostic::stale_frame_received_ms() const { return this->stale_frame_received_ms_; }
+uint32_t JpegDiagnostic::fresh_request_started_ms() const { return this->fresh_request_started_ms_; }
 uint32_t JpegDiagnostic::frame_received_ms() const { return this->frame_received_ms_; }
 uint32_t JpegDiagnostic::acquisition_ms() const { return this->acquisition_ms_; }
 uint32_t JpegDiagnostic::copy_ms() const { return this->copy_ms_; }
