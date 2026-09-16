@@ -54,12 +54,16 @@ GeometrieCameraApp
 ├── MeasurementManager
 │   └── GeometryMeasurementEngine
 ├── MeasurementApiHandler
+├── ContinuousMeasurementController
+│   └── ContinuousMeasurementApiHandler
 ├── RuntimeDiagnostics
 │   └── RuntimeDiagnosticsApiHandler
 └── ApiWsdlHandler
 ```
 
 Le `TargetDetector` appartient directement à l'application. `MeasurementManager` ne contient pas de second détecteur : la mesure réutilise exactement le `TargetObservation` déjà validé par `TargetDetectionService`.
+
+`ContinuousMeasurementController` ne contient aucune logique de vision ni de géométrie. Il orchestre uniquement les briques existantes dans le temps.
 
 ## Chaîne image et mesure actuelle
 
@@ -109,11 +113,30 @@ GeometryMeasurement
   - yaw / pitch / roll seulement si pose cohérente
 ```
 
+En mode continu, cette chaîne est appelée par l'automate :
+
+```text
+REQUEST_CAPTURE
+      ↓
+WAIT_CAPTURE
+      ↓
+FILTER
+      ↓
+DETECT
+      ↓ cible trouvée
+COMPUTE
+      ↓
+WAIT_INTERVAL
+      ↺
+```
+
+Aucun cycle n'est empilé. Si le traitement dure plus longtemps que l'intervalle demandé, le cycle suivant repart dès que le précédent est terminé.
+
 ## Responsabilités
 
 ### `GeometrieCameraApp`
 
-Orchestration uniquement : initialisation, injection de la caméra ESPHome, boucle légère, possession des sous-systèmes et enregistrement des handlers HTTP.
+Orchestration uniquement : initialisation, injection de la caméra ESPHome, possession des sous-systèmes, appel léger des boucles et enregistrement des handlers HTTP.
 
 ### `JpegDiagnostic`
 
@@ -142,7 +165,7 @@ correction_ms  ≈ 553 ms
 total_ms       ≈ 2036 ms
 ```
 
-Les essais répétés restent du même ordre de grandeur et la détection de cible n'a pas montré de régression. Cette V2 devient donc la base de travail actuelle ; les optimisations supplémentaires sont reportées après validation de la mesure.
+Les essais répétés restent du même ordre de grandeur et la détection de cible n'a pas montré de régression. Cette V2 reste la base de travail actuelle.
 
 ### `JpegArtifactCorrector`
 
@@ -336,7 +359,7 @@ GET /measurement/status
 
 `/measurement/calibrate` et `/measurement/compute` exigent une détection correspondant à la dernière image filtrée. Ils ne relancent ni capture, ni filtre, ni détection.
 
-Le JSON expose désormais :
+Le JSON expose notamment :
 
 ```text
 calibration.locked
@@ -347,13 +370,72 @@ measurement.pose_z_mm
 measurement.pose_scale_error_pct
 ```
 
+### `ContinuousMeasurementController`
+
+Responsabilité : automatiser la chaîne déjà validée sans la dupliquer.
+
+Il dépend uniquement de :
+
+```text
+JpegDiagnostic
+JpegFilteredDiagnostic
+TargetDetectionService
+MeasurementManager
+```
+
+Règles :
+
+- `start()` est refusé si `GeometryMeasurementEngine::has_calibration()` est faux ;
+- si la calibration disparaît pendant l'exécution, l'automate s'arrête avec `calibration_lost` ;
+- une seule capture/chaîne est active à la fois ;
+- l'intervalle admissible est actuellement `200..10000 ms` ;
+- l'intervalle est une période minimale entre débuts de cycles, sans backlog ;
+- une cible absente termine normalement le cycle puis relance la recherche ;
+- les erreurs techniques d'un cycle sont comptées mais ne stoppent pas la session, sauf perte de calibration.
+
+État exposé :
+
+```text
+running
+state
+interval_ms
+cycle_count
+target_found_count
+valid_measurement_count
+last_cycle_ms
+target_found
+measurement_valid
+last_error
+```
+
+**Frontière de test :** calibration absente -> démarrage refusé ; calibration valide -> enchaînement des états ; cible absente -> cycle suivant ; invalidation calibration -> arrêt ; intervalle inférieur au temps de traitement -> aucun empilement.
+
+### `ContinuousMeasurementApiHandler`
+
+```text
+GET /continuous/start?interval_ms=<optionnel>
+GET /continuous/stop
+GET /continuous/status
+```
+
 ### `CameraResolutionController`
 
-Maintient l'identité capteur et les résolutions supportées. Capteur confirmé : OV5640 PID `0x5640`, matrice physique 2592×1944 ; ESPHome 2026.7.3 expose QSXGA 2560×1920 comme mode maximal.
+Maintient l'identité capteur et les résolutions supportées. Capteur confirmé : OV5640 PID `0x5640`, matrice physique 2592×1944 ; ESPHome expose QSXGA 2560×1920 comme mode maximal.
+
+La résolution de travail **reste la responsabilité de cette classe**. Elle est simplement exposée avec les autres réglages caméra pour simplifier le pilotage.
 
 ### `CameraSettingsController` / `CameraSettingsApiHandler`
 
-Réglages exposition, gain, luminosité et contraste.
+`CameraSettingsController` conserve la responsabilité des paramètres du capteur : exposition, gain, luminosité et contraste.
+
+`CameraSettingsApiHandler` agrège désormais aussi la résolution via `CameraResolutionController` :
+
+```text
+GET /api/camera/settings
+GET /api/camera/settings/set?resolution=800x600
+```
+
+Cette agrégation HTTP ne transfère pas la responsabilité de la résolution au contrôleur de réglages.
 
 ### `RuntimeDiagnostics` / `RuntimeDiagnosticsApiHandler`
 
@@ -367,7 +449,7 @@ Catalogue des routes HTTP réellement compilées :
 GET /api/wsdl
 ```
 
-Le WSDL-like est en version **11** depuis le verrouillage de calibration et la distance V2 robuste.
+Le WSDL-like est en version **12** depuis l'ajout de la mesure continue et de la résolution dans l'API de réglages caméra.
 
 ## API actuelle
 
@@ -375,7 +457,7 @@ Le WSDL-like est en version **11** depuis le verrouillage de calibration et la d
 GET /api/wsdl
 GET /api/runtime/status
 GET /api/camera/settings
-GET /api/camera/settings/set?<parametres>
+GET /api/camera/settings/set?<parametres>&resolution=<optionnel>
 GET /diagnostic-jpeg/capture?resolution=<optionnel>
 GET /diagnostic-jpeg/status
 GET /diagnostic-jpeg/image.jpg
@@ -390,6 +472,9 @@ GET /measurement/config/set?target_size_mm=<mm>
 GET /measurement/calibrate?distance_mm=<mm>&target_size_mm=<optionnel>&force=<0|1>
 GET /measurement/compute
 GET /measurement/status
+GET /continuous/start?interval_ms=<optionnel>
+GET /continuous/stop
+GET /continuous/status
 ```
 
 ## État matériel / image retenu
@@ -404,18 +489,19 @@ XCLK = 8 MHz
 idle_framerate = 0
 ```
 
+La résolution de **travail** peut ensuite être choisie par API ; `800x600` est actuellement utile pour les essais rapides. Une évolution haute résolution + ROI est prévue après validation fonctionnelle du mode continu.
+
 ## Feuille de route immédiate
 
-1. compiler/flasher la distance V2 robuste ;
-2. calibrer une seule fois à une distance précisément connue ;
-3. vérifier que `calibration.locked=true` et qu'un deuxième calibrage sans `force=1` est refusé ;
-4. déplacer la cible à plusieurs distances sans recalibrer ;
-5. comparer `z_from_width_mm`, `z_from_height_mm`, `z_mm` et la distance réelle ;
-6. vérifier `bearing_yaw/pitch` par déplacement de la cible ;
-7. observer `pose_valid` avant de retravailler le raffinement des coins ;
-8. améliorer ensuite calibration optique/distorsion et pose si nécessaire ;
-9. passer à l'acquisition continue ;
-10. revenir ensuite sur ROI et performances.
+1. compiler/flasher le mode continu V1 ;
+2. choisir la résolution de travail via `/api/camera/settings/set?resolution=...` ;
+3. calibrer une fois à distance connue ;
+4. vérifier qu'un démarrage continu avant calibration est refusé et qu'après calibration il est accepté ;
+5. observer plusieurs dizaines de cycles immobiles pour mesurer la répétabilité ;
+6. valider `bearing_yaw/pitch` par déplacements connus ;
+7. retravailler ensuite la pose `yaw/pitch/roll` et le raffinement des coins ;
+8. tester 1600×1200 puis haute résolution + ROI pour améliorer la précision sans traiter toute l'image ;
+9. intégrer la console PC sur les mêmes API.
 
 ## Revue obligatoire avant nouvelle fonctionnalité
 
