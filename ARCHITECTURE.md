@@ -46,6 +46,8 @@ GeometrieCameraApp
 ├── CameraResolutionController
 ├── CameraSettingsController
 │   └── CameraSettingsApiHandler
+├── RuntimeDiagnostics
+│   └── RuntimeDiagnosticsApiHandler
 ├── Ov3660CameraConfigurator
 └── Diagnostics camera temporaires
     ├── GrayscaleDiagnostic
@@ -230,6 +232,32 @@ GET /api/camera/settings/set?<parametres>
 
 La route `set` est volontairement une route GET temporaire cohérente avec l'API de développement actuelle. Lors de la stabilisation future de l'API v1, elle pourra devenir une opération REST de type `PUT` ou `PATCH` avec corps JSON.
 
+### `RuntimeDiagnostics`
+
+Responsabilité : instrumentation légère de la réactivité de la boucle ESPHome et de la mémoire disponible.
+
+- `GeometrieCameraApp::loop()` appelle uniquement `record_loop()` ;
+- mesure l'intervalle courant, moyen et maximal entre deux passages de la boucle applicative ;
+- expose la mémoire interne libre et son plus gros bloc ;
+- expose la PSRAM libre et son plus gros bloc ;
+- ne déclenche aucune capture et ne traite aucune image.
+
+Le maximum d'intervalle est conservé depuis le démarrage afin de mettre en évidence les blocages provoqués par une capture ou une recherche de cible.
+
+**Tests à prévoir :** calcul de moyenne/max sur une source temporelle injectable si le diagnostic devient permanent. Les lectures de heap restent des tests d'intégration ESP32.
+
+### `RuntimeDiagnosticsApiHandler`
+
+Responsabilité : sérialisation HTTP du diagnostic d'exécution uniquement.
+
+Route :
+
+```text
+GET /api/runtime/status
+```
+
+La réponse expose les statistiques de boucle, la mémoire disponible et les drapeaux `capture_pending` / `target_search_pending`. Le handler dépend directement de `RuntimeDiagnostics`, `GrayscaleDiagnostic` et `TargetSearchDiagnostic`, pas de toute l'application.
+
 ### `GrayscaleDiagnostic`
 
 Responsabilité : acquisition brute et stockage de l'unique image de diagnostic GRAYSCALE.
@@ -237,7 +265,8 @@ Responsabilité : acquisition brute et stockage de l'unique image de diagnostic 
 - reçoit la vraie `ESP32Camera` par injection ;
 - demande une frame uniquement sur ordre explicite ;
 - accepte uniquement une frame `PIXFORMAT_GRAYSCALE` ;
-- copie la frame brute dans un BMP 8 bits non compressé stocké en PSRAM ;
+- copie la frame brute dans un BMP 8 bits non compressé stocké en PSRAM lorsque la résolution le permet ;
+- à haute résolution, conserve uniquement un preview réduit afin de ne pas dupliquer plusieurs mégaoctets en PSRAM ;
 - calcule quelques statistiques brutes pour vérifier la dynamique reçue ;
 - expose ce même buffer BMP au diagnostic de recherche de cible afin d'éviter un second buffer image persistant ;
 - sait réserver une entrée de palette et tracer un cadre vert directement dans le BMP existant.
@@ -264,6 +293,7 @@ Routes temporaires :
 GET /diagnostic/capture?resolution=<optionnel>
 GET /diagnostic/status
 GET /diagnostic/raw.bmp
+GET /diagnostic/preview.bmp
 ```
 
 ### `TargetSearchDiagnostic`
