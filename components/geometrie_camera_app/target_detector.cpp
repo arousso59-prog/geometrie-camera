@@ -18,27 +18,26 @@ constexpr uint8_t TARGET_GRID[7][7] = {
 };
 
 constexpr uint16_t MIN_TARGET_SIZE_ABSOLUTE_PX = 14;
-
-// V3 : la cible reelle observee represente quelques pourcents du petit cote.
-// On exclut les tres grands carres qui ont produit le faux positif V2 a 190 px
-// sur une image 1600x1200. A QSXGA, cette borne monte naturellement a 192 px.
 constexpr uint16_t MIN_TARGET_SIZE_DIVISOR = 100;
 constexpr uint16_t MAX_TARGET_SIZE_DIVISOR = 10;
 
-// Balayage global grossier, puis raffinement local autour du meilleur candidat.
 constexpr uint16_t MIN_SPATIAL_STEP_PX = 6;
 constexpr uint16_t SPATIAL_STEP_DIVISOR = 8;
 constexpr uint16_t MIN_SCALE_STEP_PX = 5;
 constexpr uint16_t SCALE_STEP_DIVISOR = 10;
 constexpr uint16_t REFINE_STEP_PX = 1;
 
-// Le motif 7x7 porte maintenant l'essentiel de la validation. Le contraste est
-// seulement un garde-fou car l'image JPEG corrigee est volontairement douce.
-constexpr float MIN_ACCEPTED_SCORE = 0.86f;
+// V4 : le motif, son cadre noir et le fond clair immediat autour du marqueur
+// participent tous au classement. Un sous-motif interne ne peut donc plus devenir
+// le meilleur candidat uniquement grace a son score 7x7.
+constexpr float MIN_ACCEPTED_SCORE = 0.82f;
 constexpr float MIN_BORDER_BLACK_RATIO = 0.88f;
+constexpr float MIN_OUTER_LIGHT_RATIO = 0.67f;
 constexpr int MIN_CONTRAST = 10;
 constexpr int MIN_PREFILTER_CONTRAST = 10;
+constexpr int OUTER_PREFILTER_MARGIN = 6;
 constexpr uint8_t MIN_PREFILTER_BRIGHT_CELLS = 3;
+constexpr uint8_t MIN_OUTER_PREFILTER_LIGHT_POINTS = 7;
 }
 
 TargetDetector::TargetDetector() {}
@@ -120,7 +119,8 @@ TargetObservation TargetDetector::detect(const GrayFrameView &frame) const {
     }
   }
 
-  // Raffinement local fin autour du meilleur candidat du balayage global.
+  // Raffinement fin uniquement autour du meilleur candidat deja valide
+  // structurellement par score_candidate_.
   if (best_size != 0) {
     const uint16_t coarse_spatial_step =
         std::max<uint16_t>(MIN_SPATIAL_STEP_PX, static_cast<uint16_t>(best_size / SPATIAL_STEP_DIVISOR));
@@ -171,8 +171,6 @@ TargetObservation TargetDetector::detect(const GrayFrameView &frame) const {
     return best;
   }
 
-  // Toujours exposer le meilleur candidat pour le diagnostic, meme s'il est
-  // refuse. Le champ valid/target_found reste la seule indication d'acceptation.
   best.valid = best_score >= MIN_ACCEPTED_SCORE;
   best.center_x_px = static_cast<float>(best_x) + static_cast<float>(best_size) * 0.5f;
   best.center_y_px = static_cast<float>(best_y) + static_cast<float>(best_size) * 0.5f;
@@ -184,17 +182,20 @@ TargetObservation TargetDetector::detect(const GrayFrameView &frame) const {
 }
 
 bool TargetDetector::passes_prefilter_(const GrayFrameView &frame, uint16_t x, uint16_t y, uint16_t size) const {
+  // Le prefiltre doit rester tres bon marche : V3 utilisait ici la moyenne 3x3/5x5
+  // et faisait exploser le temps de recherche. On revient donc a un seul pixel
+  // par point pour le balayage global ; la moyenne locale est reservee au score final.
   uint32_t border_sum = 0;
   uint8_t border_count = 0;
 
   for (uint8_t column = 0; column < 7; column += 2) {
-    border_sum += this->sample_cell_(frame, x, y, size, 0, column);
-    border_sum += this->sample_cell_(frame, x, y, size, 6, column);
+    border_sum += this->sample_point_(frame, x, y, size, 0, column);
+    border_sum += this->sample_point_(frame, x, y, size, 6, column);
     border_count += 2;
   }
   for (uint8_t row = 2; row <= 4; row += 2) {
-    border_sum += this->sample_cell_(frame, x, y, size, row, 0);
-    border_sum += this->sample_cell_(frame, x, y, size, row, 6);
+    border_sum += this->sample_point_(frame, x, y, size, row, 0);
+    border_sum += this->sample_point_(frame, x, y, size, row, 6);
     border_count += 2;
   }
 
@@ -207,17 +208,61 @@ bool TargetDetector::passes_prefilter_(const GrayFrameView &frame, uint16_t x, u
 
   for (uint8_t row = 1; row <= 5; row++) {
     for (uint8_t column = 1; column <= 5; column++) {
-      const int value = static_cast<int>(this->sample_cell_(frame, x, y, size, row, column));
+      const int value = static_cast<int>(this->sample_point_(frame, x, y, size, row, column));
       if (value - border_mean >= MIN_PREFILTER_CONTRAST) {
         bright_inner_cells++;
         if (bright_inner_cells >= MIN_PREFILTER_BRIGHT_CELLS) {
-          return true;
+          return this->passes_outer_prefilter_(frame, x, y, size, border_mean);
         }
       }
     }
   }
 
   return false;
+}
+
+bool TargetDetector::passes_outer_prefilter_(const GrayFrameView &frame, uint16_t x, uint16_t y,
+                                              uint16_t size, int border_mean) const {
+  const uint16_t margin = std::max<uint16_t>(2, static_cast<uint16_t>(size / 14U));
+  if (x < margin || y < margin ||
+      static_cast<uint32_t>(x) + size + margin >= frame.width ||
+      static_cast<uint32_t>(y) + size + margin >= frame.height) {
+    return false;
+  }
+
+  const uint32_t q1 = static_cast<uint32_t>(size) / 4U;
+  const uint32_t q2 = static_cast<uint32_t>(size) / 2U;
+  const uint32_t q3 = (static_cast<uint32_t>(size) * 3U) / 4U;
+  const uint32_t left = static_cast<uint32_t>(x) - margin;
+  const uint32_t right = static_cast<uint32_t>(x) + size + margin;
+  const uint32_t top = static_cast<uint32_t>(y) - margin;
+  const uint32_t bottom = static_cast<uint32_t>(y) + size + margin;
+  const int minimum_light = std::min(255, border_mean + OUTER_PREFILTER_MARGIN);
+
+  uint8_t light_points = 0;
+  const uint32_t horizontal_positions[3] = {static_cast<uint32_t>(x) + q1,
+                                            static_cast<uint32_t>(x) + q2,
+                                            static_cast<uint32_t>(x) + q3};
+  const uint32_t vertical_positions[3] = {static_cast<uint32_t>(y) + q1,
+                                          static_cast<uint32_t>(y) + q2,
+                                          static_cast<uint32_t>(y) + q3};
+
+  for (uint8_t i = 0; i < 3; ++i) {
+    if (frame.data[top * frame.stride + horizontal_positions[i]] >= minimum_light) {
+      light_points++;
+    }
+    if (frame.data[bottom * frame.stride + horizontal_positions[i]] >= minimum_light) {
+      light_points++;
+    }
+    if (frame.data[vertical_positions[i] * frame.stride + left] >= minimum_light) {
+      light_points++;
+    }
+    if (frame.data[vertical_positions[i] * frame.stride + right] >= minimum_light) {
+      light_points++;
+    }
+  }
+
+  return light_points >= MIN_OUTER_PREFILTER_LIGHT_POINTS;
 }
 
 float TargetDetector::score_candidate_(const GrayFrameView &frame, uint16_t x, uint16_t y, uint16_t size,
@@ -293,10 +338,13 @@ float TargetDetector::score_candidate_(const GrayFrameView &frame, uint16_t x, u
       continue;
     }
 
+    const float outer_ratio = this->outer_light_ratio_(frame, x, y, size, threshold);
+    if (outer_ratio < MIN_OUTER_LIGHT_RATIO) {
+      continue;
+    }
+
     const float pattern_score = static_cast<float>(correct) / 49.0f;
-    // Le cadre noir fait partie du code et sert de garde-fou anti-faux-positifs.
-    // On donne encore 85 % du poids au motif complet et 15 % a la coherence du cadre.
-    const float score = 0.85f * pattern_score + 0.15f * border_ratio;
+    const float score = 0.80f * pattern_score + 0.10f * border_ratio + 0.10f * outer_ratio;
 
     if (score > best_score) {
       best_score = score;
@@ -305,6 +353,50 @@ float TargetDetector::score_candidate_(const GrayFrameView &frame, uint16_t x, u
   }
 
   return best_score;
+}
+
+float TargetDetector::outer_light_ratio_(const GrayFrameView &frame, uint16_t x, uint16_t y,
+                                         uint16_t size, int threshold) const {
+  const uint16_t margin = std::max<uint16_t>(2, static_cast<uint16_t>(size / 14U));
+  if (x < margin || y < margin ||
+      static_cast<uint32_t>(x) + size + margin >= frame.width ||
+      static_cast<uint32_t>(y) + size + margin >= frame.height) {
+    return 0.0f;
+  }
+
+  const uint32_t q1 = static_cast<uint32_t>(size) / 4U;
+  const uint32_t q2 = static_cast<uint32_t>(size) / 2U;
+  const uint32_t q3 = (static_cast<uint32_t>(size) * 3U) / 4U;
+  const uint32_t left = static_cast<uint32_t>(x) - margin;
+  const uint32_t right = static_cast<uint32_t>(x) + size + margin;
+  const uint32_t top = static_cast<uint32_t>(y) - margin;
+  const uint32_t bottom = static_cast<uint32_t>(y) + size + margin;
+  const uint32_t horizontal_positions[3] = {static_cast<uint32_t>(x) + q1,
+                                            static_cast<uint32_t>(x) + q2,
+                                            static_cast<uint32_t>(x) + q3};
+  const uint32_t vertical_positions[3] = {static_cast<uint32_t>(y) + q1,
+                                          static_cast<uint32_t>(y) + q2,
+                                          static_cast<uint32_t>(y) + q3};
+
+  uint8_t light_points = 0;
+  uint8_t total_points = 0;
+  for (uint8_t i = 0; i < 3; ++i) {
+    const uint8_t values[4] = {
+        frame.data[top * frame.stride + horizontal_positions[i]],
+        frame.data[bottom * frame.stride + horizontal_positions[i]],
+        frame.data[vertical_positions[i] * frame.stride + left],
+        frame.data[vertical_positions[i] * frame.stride + right],
+    };
+    for (uint8_t value : values) {
+      total_points++;
+      if (static_cast<int>(value) >= threshold) {
+        light_points++;
+      }
+    }
+  }
+
+  return total_points == 0 ? 0.0f
+                           : static_cast<float>(light_points) / static_cast<float>(total_points);
 }
 
 uint8_t TargetDetector::expected_cell_(uint8_t row, uint8_t column, uint8_t rotation_quarters) const {
@@ -322,6 +414,17 @@ uint8_t TargetDetector::expected_cell_(uint8_t row, uint8_t column, uint8_t rota
   }
 }
 
+uint8_t TargetDetector::sample_point_(const GrayFrameView &frame, uint16_t x, uint16_t y, uint16_t size,
+                                      uint8_t row, uint8_t column) const {
+  const uint32_t sample_x = static_cast<uint32_t>(x) +
+                            (static_cast<uint32_t>(2U * column + 1U) * size) / 14U;
+  const uint32_t sample_y = static_cast<uint32_t>(y) +
+                            (static_cast<uint32_t>(2U * row + 1U) * size) / 14U;
+  const uint32_t clamped_x = std::min<uint32_t>(sample_x, frame.width - 1U);
+  const uint32_t clamped_y = std::min<uint32_t>(sample_y, frame.height - 1U);
+  return frame.data[clamped_y * frame.stride + clamped_x];
+}
+
 uint8_t TargetDetector::sample_cell_(const GrayFrameView &frame, uint16_t x, uint16_t y, uint16_t size,
                                      uint8_t row, uint8_t column) const {
   const uint32_t sample_x = static_cast<uint32_t>(x) +
@@ -329,9 +432,6 @@ uint8_t TargetDetector::sample_cell_(const GrayFrameView &frame, uint16_t x, uin
   const uint32_t sample_y = static_cast<uint32_t>(y) +
                             (static_cast<uint32_t>(2U * row + 1U) * size) / 14U;
 
-  // V3 : un pixel unique est trop sensible au flou JPEG, au bruit residuel et aux
-  // petits artefacts. On moyenne une zone 3x3 ou 5x5 qui reste largement a
-  // l'interieur de la cellule 7x7.
   const uint16_t cell_size = std::max<uint16_t>(1, static_cast<uint16_t>(size / 7U));
   const uint16_t radius = std::min<uint16_t>(2, std::max<uint16_t>(1, static_cast<uint16_t>(cell_size / 5U)));
 
