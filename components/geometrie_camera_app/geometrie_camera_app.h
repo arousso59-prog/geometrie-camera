@@ -10,6 +10,7 @@
 #include "camera_settings_controller.h"
 #include "continuous_measurement_api.h"
 #include "continuous_measurement_controller.h"
+#include "image_sharpness_evaluator.h"
 #include "jpeg_diagnostic.h"
 #include "jpeg_diagnostic_api.h"
 #include "jpeg_filtered_diagnostic.h"
@@ -74,6 +75,7 @@ class GeometrieCameraApp : public Component {
   CameraResolutionController resolution_controller_;
   CameraSettingsController settings_controller_;
   JpegDiagnostic jpeg_diagnostic_;
+  ImageSharpnessEvaluator image_sharpness_evaluator_;
   JpegFilteredDiagnostic jpeg_filtered_diagnostic_;
   TargetDetectionService target_detection_service_;
   TargetDetectionPreview target_detection_preview_;
