@@ -84,7 +84,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
 
   xml += "  <method name=\"diagnostic_capture\" http=\"GET\" path=\"/diagnostic/capture\">\n";
-  xml += "    <comment>Declenche une capture brute GRAYSCALE. En 2592x1944 le diagnostic conserve les statistiques et le preview, sans dupliquer la frame en BMP pleine resolution.</comment>\n";
+  xml += "    <comment>Declenche une capture brute GRAYSCALE. Le capteur OV5640 est physiquement 2592x1944, mais ESPHome 2026.7.3 expose au maximum QSXGA 2560x1920. A cette resolution le diagnostic conserve les statistiques et le preview sans dupliquer la frame en BMP pleine resolution.</comment>\n";
   xml += "    <parameter name=\"resolution\" location=\"query\" required=\"false\" type=\"string\" allowed=\"";
   xml += allowed_resolutions;
   xml += "\">Resolution a appliquer avant la capture. Si absente, conserve la resolution active.</parameter>\n";
@@ -99,7 +99,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
 
   xml += "  <method name=\"diagnostic_image\" http=\"GET\" path=\"/diagnostic/raw.bmp\">\n";
-  xml += "    <comment>Retourne le BMP 8 bits pleine resolution lorsqu il est disponible. A 5 MP il est volontairement omis pour economiser la PSRAM.</comment>\n";
+  xml += "    <comment>Retourne le BMP 8 bits pleine resolution lorsqu il est disponible. En QSXGA il est volontairement omis pour economiser la PSRAM.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"image/bmp\"/>\n";
   xml += "    <response code=\"404\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
