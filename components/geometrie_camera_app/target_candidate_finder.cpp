@@ -78,12 +78,7 @@ bool TargetCandidateFinder::build_reduced_image_(const GrayFrameView &frame, uin
       (static_cast<uint32_t>(frame.height) + scale - 1U) / scale);
 
   const size_t pixel_count = static_cast<size_t>(this->reduced_width_) * this->reduced_height_;
-  try {
-    this->reduced_.assign(pixel_count, 0);
-  } catch (...) {
-    this->reduced_.clear();
-    return false;
-  }
+  this->reduced_.assign(pixel_count, 0);
 
   for (uint16_t ry = 0; ry < this->reduced_height_; ++ry) {
     const uint32_t source_y0 = static_cast<uint32_t>(ry) * scale;
