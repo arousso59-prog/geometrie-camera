@@ -122,7 +122,7 @@ void ContinuousMeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *requ
                                                        const char *status,
                                                        const char *error) const {
   std::string json;
-  json.reserve(1200);
+  json.reserve(1400);
   json += "{\"status\":\"";
   json += status;
   json += "\"";
@@ -164,6 +164,12 @@ void ContinuousMeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *requ
     json += this->controller_->last_sharpness_ok() ? "true" : "false";
     json += ",\"capture_retries\":" + std::to_string(this->controller_->last_capture_retry_count());
     json += ",\"blur_retry_count\":" + std::to_string(this->controller_->blur_retry_count());
+    json += ",\"roi_active\":";
+    json += this->controller_->sharpness_roi_valid() ? "true" : "false";
+    json += ",\"roi_x\":" + std::to_string(this->controller_->sharpness_roi_x());
+    json += ",\"roi_y\":" + std::to_string(this->controller_->sharpness_roi_y());
+    json += ",\"roi_width\":" + std::to_string(this->controller_->sharpness_roi_width());
+    json += ",\"roi_height\":" + std::to_string(this->controller_->sharpness_roi_height());
     json += "}";
 
     json += ",\"last_error\":\"";
