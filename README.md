@@ -46,7 +46,11 @@ JpegArtifactCorrector V3
    ↓
 buffer grayscale corrigé
    ↓
+TargetDetectionService
+   ↓
 TargetDetector
+   ↓
+TargetObservation
    ↓
 distance / orientation / géométrie
 ```
@@ -63,7 +67,8 @@ Sous-systèmes conservés :
 - `JpegDiagnostic` : acquisition JPEG fraîche et stockage persistant ;
 - `JpegFilteredDiagnostic` : décodage grayscale et préparation de l'image corrigée ;
 - `JpegArtifactCorrector` : correction pure des artefacts ;
-- `TargetDetector` : recherche de la cible ;
+- `TargetDetectionService` : adaptation sans copie du buffer corrigé vers le détecteur ;
+- `TargetDetector` : recherche de la cible 7×7 ;
 - `MeasurementManager` / `GeometryMeasurementEngine` : future chaîne distance/orientation/angles ;
 - `CameraResolutionController` ;
 - `CameraSettingsController` / API ;
@@ -87,18 +92,26 @@ GET /diagnostic-jpeg/image.jpg
 GET /diagnostic-jpeg/filter
 GET /diagnostic-jpeg/filter-status
 GET /diagnostic-jpeg/filtered.bmp
+
+GET /target/detect
+GET /target/status
 ```
+
+`/target/detect` lance la recherche sur la dernière image déjà filtrée. Il ne déclenche volontairement ni nouvelle capture ni nouveau filtrage pendant la phase de validation.
+
+Le résultat contient : cible trouvée ou non, centre en pixels, taille, rotation discrète 0/90/180/270 degrés, qualité et temps de détection.
 
 `/api/wsdl` reste la référence du contrat HTTP et doit être mis à jour dans le même changement que toute évolution d'API.
 
-## Étape suivante
+## Étape actuelle
 
 Valider la cible réelle sur la voie JPEG corrigée :
 
-1. recherche pleine image ;
-2. validation de la position et du score ;
-3. estimation de distance ;
-4. estimation d'orientation ;
-5. calibration optique et comparaison aux données constructeur.
+1. capture et filtrage de l'image ;
+2. recherche pleine image avec `/target/detect` ;
+3. validation de la position, de la taille, de la rotation discrète et du score ;
+4. estimation de distance ;
+5. estimation d'orientation fine ;
+6. calibration optique et comparaison aux données constructeur.
 
 Les optimisations de vitesse seront faites après cette validation fonctionnelle. La stratégie prévue est de mémoriser la dernière boîte de cible et, après la première recherche globale, de limiter autant que possible le décodage/correction et la recherche à une ROI autour de la cible. En cas de perte de cible, retour automatique à une recherche globale.
