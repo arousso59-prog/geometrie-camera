@@ -15,11 +15,13 @@ GeometrieCameraApp::GeometrieCameraApp()
       resolution_controller_(),
       settings_controller_(),
       jpeg_diagnostic_(),
+      image_sharpness_evaluator_(&this->jpeg_diagnostic_),
       jpeg_filtered_diagnostic_(&this->jpeg_diagnostic_),
       target_detection_service_(&this->jpeg_filtered_diagnostic_, &this->target_detector_),
       target_detection_preview_(),
-      continuous_measurement_controller_(&this->jpeg_diagnostic_, &this->jpeg_filtered_diagnostic_,
-                                         &this->target_detection_service_, &this->measurement_manager_),
+      continuous_measurement_controller_(&this->jpeg_diagnostic_, &this->image_sharpness_evaluator_,
+                                         &this->jpeg_filtered_diagnostic_, &this->target_detection_service_,
+                                         &this->measurement_manager_),
       runtime_diagnostics_(),
       api_wsdl_handler_(&this->resolution_controller_),
       settings_api_handler_(&this->settings_controller_, &this->resolution_controller_),
@@ -66,6 +68,7 @@ void GeometrieCameraApp::dump_config() {
   ESP_LOGCONFIG(TAG, "  Resolution active: %s", this->resolution_controller_.active_resolution().c_str());
   ESP_LOGCONFIG(TAG, "  Continuous interval: %u ms",
                 static_cast<unsigned>(this->continuous_measurement_controller_.interval_ms()));
+  ESP_LOGCONFIG(TAG, "  Sharpness guard: JPEG 1/8, maximum 2 recaptures");
   ESP_LOGCONFIG(TAG, "  JPEG ready: %s", this->jpeg_diagnostic_.ready() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  JPEG filtered ready: %s", this->jpeg_filtered_diagnostic_.ready() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Target detection ready: %s", this->target_detection_service_.ready() ? "YES" : "NO");
