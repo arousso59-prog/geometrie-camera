@@ -22,10 +22,10 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
                                         : "unknown";
 
   std::string xml;
-  xml.reserve(22000);
+  xml.reserve(23000);
   xml += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-  xml += "<api name=\"geometrie-camera\" version=\"12\" style=\"REST-over-HTTP\">\n";
-  xml += "  <description>API camera OV5640 : capture JPEG, correction grayscale, detection cible, calibration optique verrouillee, distance robuste et acquisition continue.</description>\n";
+  xml += "<api name=\"geometrie-camera\" version=\"13\" style=\"REST-over-HTTP\">\n";
+  xml += "  <description>API camera OV5640 : capture JPEG, controle nettete, correction grayscale, detection cible, calibration optique verrouillee, distance robuste et acquisition continue.</description>\n";
   xml += "  <conventions>\n";
   xml += "    <item>Les routes de commande de mise au point utilisent encore HTTP GET.</item>\n";
   xml += "    <item>La detection cible travaille uniquement sur la derniere image grayscale corrigee.</item>\n";
@@ -35,7 +35,8 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "    <item>L homographie ne pilote plus la distance et ne valide yaw/pitch/roll que si pose_z_mm reste a moins de 25 pourcent de z_mm.</item>\n";
   xml += "    <item>La calibration est stockee pour une resolution de reference et redimensionnee proportionnellement pour les autres resolutions de meme cadrage.</item>\n";
   xml += "    <item>Le mode continu est interdit sans calibration valide. Si la calibration est invalidee pendant son fonctionnement, il s arrete.</item>\n";
-  xml += "    <item>Le mode continu reutilise la resolution camera active et enchaine capture, filtre, detection et mesure sans empiler les cycles.</item>\n";
+  xml += "    <item>Le mode continu reutilise la resolution camera active et enchaine capture, controle nettete, filtre, detection et mesure sans empiler les cycles.</item>\n";
+  xml += "    <item>Le controle nettete decode le JPEG en 1/8. Une image nettement moins nette que la reference de session peut etre recapturee immediatement, au maximum deux fois par cycle. Apres deux recaptures, le pipeline continue afin de ne pas se bloquer.</item>\n";
   xml += "  </conventions>\n";
 
   xml += "  <method name=\"api_wsdl\" http=\"GET\" path=\"/api/wsdl\">\n";
@@ -108,7 +109,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  <method name=\"measurement_status\" http=\"GET\" path=\"/measurement/status\"><response code=\"200\" content_type=\"application/json\"/></method>\n";
 
   xml += "  <method name=\"continuous_start\" http=\"GET\" path=\"/continuous/start\">\n";
-  xml += "    <comment>Demarre l automate capture-filtre-detection-mesure. Refuse le demarrage si aucune calibration valide n est presente. Un nouvel appel redemarre les compteurs de session.</comment>\n";
+  xml += "    <comment>Demarre l automate capture-nettete-filtre-detection-mesure. Refuse le demarrage si aucune calibration valide n est presente. Un nouvel appel redemarre les compteurs de session et la reference de nettete.</comment>\n";
   xml += "    <parameter name=\"interval_ms\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"200..10000\" default=\"valeur_courante\"/>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"400\" content_type=\"application/json\">interval_ms invalide.</response>\n";
@@ -122,7 +123,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
 
   xml += "  <method name=\"continuous_status\" http=\"GET\" path=\"/continuous/status\">\n";
-  xml += "    <comment>Expose running, state, interval_ms, cycle_count, target_found_count, valid_measurement_count, last_cycle_ms, target_found, measurement_valid et last_error.</comment>\n";
+  xml += "    <comment>Expose running, state, interval_ms, compteurs et dernier etat cible. timing contient capture_ms, sharpness_ms, filter_ms, detect_ms, compute_ms et cycle_ms. sharpness contient score_x100, reference_x100, ok, capture_retries et blur_retry_count. L etat peut prendre la valeur sharpness pendant le controle de nettete.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
