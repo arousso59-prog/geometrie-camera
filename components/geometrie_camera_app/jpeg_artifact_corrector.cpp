@@ -2,14 +2,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
+
+#include "esp_heap_caps.h"
 
 namespace esphome {
 namespace geometrie_camera_app {
 
 namespace {
-constexpr uint8_t GREEN_MIN_VALUE = 48;
-constexpr uint8_t GREEN_DOMINANCE_DELTA = 28;
-constexpr uint8_t GREEN_MEAN_DELTA = 22;
 constexpr uint8_t THIN_GREEN_VERTICAL_RADIUS = 2;
 constexpr uint8_t CANDIDATE_VERTICAL_RADIUS = 1;
 constexpr uint8_t REFERENCE_SEARCH_RADIUS = 5;
@@ -40,6 +40,10 @@ inline bool mask_get(const uint8_t *mask, uint16_t width, uint16_t height, int x
   return (mask[index >> 3] & static_cast<uint8_t>(1U << (index & 7U))) != 0;
 }
 
+inline void mask_set_linear(uint8_t *mask, size_t index) {
+  mask[index >> 3] |= static_cast<uint8_t>(1U << (index & 7U));
+}
+
 uint8_t mask_window_byte(const uint8_t *mask, uint16_t width, uint16_t height,
                          int y, uint16_t x_base) {
   if (mask == nullptr || y < 0 || y >= height || x_base >= width) {
@@ -65,39 +69,10 @@ uint8_t mask_window_byte(const uint8_t *mask, uint16_t width, uint16_t height,
   return value;
 }
 
-bool is_thin_green(const uint8_t *mask, uint16_t width, uint16_t height, int x, int y) {
-  if (!mask_get(mask, width, height, x, y)) {
-    return false;
-  }
-
-  uint8_t vertical_neighbors = 0;
-  for (int dy = -THIN_GREEN_VERTICAL_RADIUS; dy <= THIN_GREEN_VERTICAL_RADIUS; ++dy) {
-    if (dy == 0) {
-      continue;
-    }
-    if (mask_get(mask, width, height, x, y + dy)) {
-      vertical_neighbors++;
-    }
-  }
-
-  // The observed defect is made of one/two-pixel-high dashes. Continuous
-  // green objects are intentionally rejected here.
-  return vertical_neighbors <= 1;
-}
-
-bool has_thin_green_near_row(const uint8_t *mask, uint16_t width, uint16_t height,
-                             int x, int y) {
-  for (int dy = -CANDIDATE_VERTICAL_RADIUS; dy <= CANDIDATE_VERTICAL_RADIUS; ++dy) {
-    if (is_thin_green(mask, width, height, x, y + dy)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-int find_next_thin_green_x(const uint8_t *mask, uint16_t width, uint16_t height,
-                           int y, int start_x) {
-  if (mask == nullptr || width == 0 || height == 0 || y < 0 || y >= height || start_x >= width) {
+int find_next_thin_green_x(const uint8_t *thin_green_mask, uint16_t width,
+                           uint16_t height, int y, int start_x) {
+  if (thin_green_mask == nullptr || width == 0 || height == 0 || y < 0 || y >= height ||
+      start_x >= width) {
     return -1;
   }
 
@@ -107,7 +82,7 @@ int find_next_thin_green_x(const uint8_t *mask, uint16_t width, uint16_t height,
   while (x_base < width) {
     uint8_t candidates = 0;
     for (int dy = -CANDIDATE_VERTICAL_RADIUS; dy <= CANDIDATE_VERTICAL_RADIUS; ++dy) {
-      candidates |= mask_window_byte(mask, width, height, y + dy, x_base);
+      candidates |= mask_window_byte(thin_green_mask, width, height, y + dy, x_base);
     }
 
     if (search_x > x_base) {
@@ -115,13 +90,12 @@ int find_next_thin_green_x(const uint8_t *mask, uint16_t width, uint16_t height,
       candidates &= static_cast<uint8_t>(0xFFU << skip);
     }
 
-    while (candidates != 0) {
+    if (candidates != 0) {
       const uint8_t bit = static_cast<uint8_t>(__builtin_ctz(static_cast<unsigned>(candidates)));
       const int candidate_x = static_cast<int>(x_base) + bit;
-      if (candidate_x < width && has_thin_green_near_row(mask, width, height, candidate_x, y)) {
+      if (candidate_x < width) {
         return candidate_x;
       }
-      candidates &= static_cast<uint8_t>(candidates - 1U);
     }
 
     x_base = static_cast<uint16_t>(x_base + 8U);
@@ -131,20 +105,10 @@ int find_next_thin_green_x(const uint8_t *mask, uint16_t width, uint16_t height,
   return -1;
 }
 
-bool has_green_seed_near_x(const uint8_t *mask, uint16_t width, uint16_t height,
-                           int x, int y) {
-  for (int dx = -GREEN_NEIGHBOR_X; dx <= GREEN_NEIGHBOR_X; ++dx) {
-    if (mask_get(mask, width, height, x + dx, y)) {
-      return true;
-    }
-  }
-  return false;
-}
-
 bool find_reference_value(const uint8_t *grayscale, size_t row_stride,
-                          const uint8_t *green_mask, uint16_t width, uint16_t height,
+                          const uint8_t *near_green_mask, uint16_t width, uint16_t height,
                           int x, int y, int direction, uint8_t *value) {
-  if (grayscale == nullptr || green_mask == nullptr || value == nullptr || x < 0 ||
+  if (grayscale == nullptr || near_green_mask == nullptr || value == nullptr || x < 0 ||
       x >= width || direction == 0) {
     return false;
   }
@@ -155,8 +119,7 @@ bool find_reference_value(const uint8_t *grayscale, size_t row_stride,
       break;
     }
 
-    // Never use an obviously corrupted green sample as a reference.
-    if (has_green_seed_near_x(green_mask, width, height, x, yy)) {
+    if (mask_get(near_green_mask, width, height, x, yy)) {
       continue;
     }
 
@@ -167,7 +130,7 @@ bool find_reference_value(const uint8_t *grayscale, size_t row_stride,
 }
 
 bool get_reference_sample(const uint8_t *grayscale, size_t row_stride,
-                          const uint8_t *green_mask, uint16_t width, uint16_t height,
+                          const uint8_t *near_green_mask, uint16_t width, uint16_t height,
                           int x, int y, ReferenceSample *sample) {
   if (sample == nullptr) {
     return false;
@@ -175,9 +138,9 @@ bool get_reference_sample(const uint8_t *grayscale, size_t row_stride,
 
   sample->above = 0;
   sample->below = 0;
-  sample->have_above = find_reference_value(grayscale, row_stride, green_mask,
+  sample->have_above = find_reference_value(grayscale, row_stride, near_green_mask,
                                             width, height, x, y, -1, &sample->above);
-  sample->have_below = find_reference_value(grayscale, row_stride, green_mask,
+  sample->have_below = find_reference_value(grayscale, row_stride, near_green_mask,
                                             width, height, x, y, +1, &sample->below);
   if (!sample->have_above && !sample->have_below) {
     return false;
@@ -219,28 +182,20 @@ bool is_dark_edge(uint8_t current, const ReferenceSample &sample) {
 }
 
 uint16_t horizontal_expansion(uint16_t width) {
-  // V3 searches a little farther around each green dash because the black
-  // component can be displaced from the chroma corruption. This is still a
-  // very small local window: 16 px at 1600 and 25 px at 2560.
   return std::max<uint16_t>(8, width / 100);
 }
 
 uint16_t maximum_dark_run_length(uint16_t width) {
-  // The defect scales with image resolution. Reject long dark structures so
-  // genuine target edges or scene objects are not repaired as artefacts.
   return std::max<uint16_t>(8, width / 64);
 }
 }
 
-JpegArtifactCorrector::JpegArtifactCorrector() { this->reset_stats_(); }
-
-bool JpegArtifactCorrector::is_green_seed(uint8_t red, uint8_t green, uint8_t blue) const {
-  const int max_other = std::max<int>(red, blue);
-  const int mean_other = (static_cast<int>(red) + static_cast<int>(blue)) / 2;
-  return green >= GREEN_MIN_VALUE &&
-         static_cast<int>(green) - max_other >= GREEN_DOMINANCE_DELTA &&
-         static_cast<int>(green) - mean_other >= GREEN_MEAN_DELTA;
+JpegArtifactCorrector::JpegArtifactCorrector()
+    : near_green_mask_(nullptr), thin_green_mask_(nullptr), mask_capacity_(0) {
+  this->reset_stats_();
 }
+
+JpegArtifactCorrector::~JpegArtifactCorrector() { this->clear_workspace_(); }
 
 bool JpegArtifactCorrector::correct(uint8_t *grayscale, size_t row_stride,
                                     const uint8_t *green_mask, uint16_t width,
@@ -251,9 +206,11 @@ bool JpegArtifactCorrector::correct(uint8_t *grayscale, size_t row_stride,
     return false;
   }
 
-  // V4 sparse: the JPEG decoder already counted the raw green seeds while
-  // building the bit mask, so there is no second full-frame counting pass.
   this->stats_.green_seed_pixels = green_seed_count;
+
+  if (!this->build_fast_masks_(green_mask, width, height)) {
+    return false;
+  }
 
   const uint16_t expand_x = horizontal_expansion(width);
   const uint16_t max_dark_run = maximum_dark_run_length(width);
@@ -263,18 +220,16 @@ bool JpegArtifactCorrector::correct(uint8_t *grayscale, size_t row_stride,
     int search_x = 0;
 
     while (search_x < width) {
-      // V4 sparse: scan packed mask bytes and jump directly to actual seed
-      // positions instead of testing every x coordinate in the image.
-      const int first_seed = find_next_thin_green_x(green_mask, width, height, y, search_x);
+      const int first_seed = find_next_thin_green_x(this->thin_green_mask_, width, height, y, search_x);
       if (first_seed < 0) {
         break;
       }
 
       int last_seed = first_seed;
-      int next_seed = find_next_thin_green_x(green_mask, width, height, y, last_seed + 1);
+      int next_seed = find_next_thin_green_x(this->thin_green_mask_, width, height, y, last_seed + 1);
       while (next_seed >= 0 && next_seed - last_seed <= static_cast<int>(MAX_DASH_GAP) + 1) {
         last_seed = next_seed;
-        next_seed = find_next_thin_green_x(green_mask, width, height, y, last_seed + 1);
+        next_seed = find_next_thin_green_x(this->thin_green_mask_, width, height, y, last_seed + 1);
       }
 
       search_x = next_seed >= 0 ? next_seed : width;
@@ -283,19 +238,17 @@ bool JpegArtifactCorrector::correct(uint8_t *grayscale, size_t row_stride,
       const int interval_end = std::min<int>(width - 1, last_seed + expand_x);
       row_affected = true;
 
-      // First pass: repair the green component. It is strongly identified by
-      // chroma and can therefore be corrected independently of black dashes.
       for (int px = interval_start; px <= interval_end; ++px) {
-        if (is_thin_green(green_mask, width, height, px, y)) {
+        if (mask_get(this->thin_green_mask_, width, height, px, y)) {
           this->stats_.thin_green_pixels++;
         }
 
-        if (!has_green_seed_near_x(green_mask, width, height, px, y)) {
+        if (!mask_get(this->near_green_mask_, width, height, px, y)) {
           continue;
         }
 
         ReferenceSample sample{};
-        if (!get_reference_sample(grayscale, row_stride, green_mask,
+        if (!get_reference_sample(grayscale, row_stride, this->near_green_mask_,
                                   width, height, px, y, &sample)) {
           continue;
         }
@@ -305,17 +258,12 @@ bool JpegArtifactCorrector::correct(uint8_t *grayscale, size_t row_stride,
         this->stats_.corrected_total_pixels++;
       }
 
-      // Second pass: detect complete short dark runs. The centre must be a
-      // strong vertical luminance impulse, while up to two softer edge pixels
-      // are accepted on either side. A real black feature generally continues
-      // vertically, making the above/below references dark as well and thus
-      // failing this impulse test.
       int px = interval_start;
       while (px <= interval_end) {
         ReferenceSample core_sample{};
         const size_t core_index = static_cast<size_t>(y) * row_stride + static_cast<size_t>(px);
-        if (has_green_seed_near_x(green_mask, width, height, px, y) ||
-            !get_reference_sample(grayscale, row_stride, green_mask,
+        if (mask_get(this->near_green_mask_, width, height, px, y) ||
+            !get_reference_sample(grayscale, row_stride, this->near_green_mask_,
                                   width, height, px, y, &core_sample) ||
             !is_dark_core(grayscale[core_index], core_sample)) {
           ++px;
@@ -325,13 +273,12 @@ bool JpegArtifactCorrector::correct(uint8_t *grayscale, size_t row_stride,
         int run_start = px;
         int run_end = px;
 
-        // Grow through contiguous core-dark pixels first.
         int probe = px + 1;
         while (probe <= interval_end) {
           ReferenceSample sample{};
           const size_t index = static_cast<size_t>(y) * row_stride + static_cast<size_t>(probe);
-          if (has_green_seed_near_x(green_mask, width, height, probe, y) ||
-              !get_reference_sample(grayscale, row_stride, green_mask,
+          if (mask_get(this->near_green_mask_, width, height, probe, y) ||
+              !get_reference_sample(grayscale, row_stride, this->near_green_mask_,
                                     width, height, probe, y, &sample) ||
               !is_dark_core(grayscale[index], sample)) {
             break;
@@ -340,13 +287,12 @@ bool JpegArtifactCorrector::correct(uint8_t *grayscale, size_t row_stride,
           ++probe;
         }
 
-        // Include antialiased/ringing edges that are less dark than the core.
         for (uint8_t edge = 0; edge < DARK_EDGE_EXPANSION && run_start > interval_start; ++edge) {
           const int candidate = run_start - 1;
           ReferenceSample sample{};
           const size_t index = static_cast<size_t>(y) * row_stride + static_cast<size_t>(candidate);
-          if (has_green_seed_near_x(green_mask, width, height, candidate, y) ||
-              !get_reference_sample(grayscale, row_stride, green_mask,
+          if (mask_get(this->near_green_mask_, width, height, candidate, y) ||
+              !get_reference_sample(grayscale, row_stride, this->near_green_mask_,
                                     width, height, candidate, y, &sample) ||
               !is_dark_edge(grayscale[index], sample)) {
             break;
@@ -358,8 +304,8 @@ bool JpegArtifactCorrector::correct(uint8_t *grayscale, size_t row_stride,
           const int candidate = run_end + 1;
           ReferenceSample sample{};
           const size_t index = static_cast<size_t>(y) * row_stride + static_cast<size_t>(candidate);
-          if (has_green_seed_near_x(green_mask, width, height, candidate, y) ||
-              !get_reference_sample(grayscale, row_stride, green_mask,
+          if (mask_get(this->near_green_mask_, width, height, candidate, y) ||
+              !get_reference_sample(grayscale, row_stride, this->near_green_mask_,
                                     width, height, candidate, y, &sample) ||
               !is_dark_edge(grayscale[index], sample)) {
             break;
@@ -371,7 +317,7 @@ bool JpegArtifactCorrector::correct(uint8_t *grayscale, size_t row_stride,
         if (run_length <= max_dark_run) {
           for (int repair_x = run_start; repair_x <= run_end; ++repair_x) {
             ReferenceSample sample{};
-            if (!get_reference_sample(grayscale, row_stride, green_mask,
+            if (!get_reference_sample(grayscale, row_stride, this->near_green_mask_,
                                       width, height, repair_x, y, &sample)) {
               continue;
             }
@@ -394,6 +340,94 @@ bool JpegArtifactCorrector::correct(uint8_t *grayscale, size_t row_stride,
 }
 
 const JpegArtifactCorrectionStats &JpegArtifactCorrector::stats() const { return this->stats_; }
+
+bool JpegArtifactCorrector::ensure_workspace_(size_t mask_size) {
+  if (this->near_green_mask_ != nullptr && this->thin_green_mask_ != nullptr &&
+      this->mask_capacity_ >= mask_size) {
+    return true;
+  }
+
+  auto *new_near = static_cast<uint8_t *>(
+      heap_caps_malloc(mask_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (new_near == nullptr) {
+    return false;
+  }
+
+  auto *new_thin = static_cast<uint8_t *>(
+      heap_caps_malloc(mask_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (new_thin == nullptr) {
+    heap_caps_free(new_near);
+    return false;
+  }
+
+  this->clear_workspace_();
+  this->near_green_mask_ = new_near;
+  this->thin_green_mask_ = new_thin;
+  this->mask_capacity_ = mask_size;
+  return true;
+}
+
+bool JpegArtifactCorrector::build_fast_masks_(const uint8_t *green_mask,
+                                               uint16_t width, uint16_t height) {
+  const size_t pixel_count = static_cast<size_t>(width) * height;
+  const size_t mask_size = (pixel_count + 7U) / 8U;
+  if (!this->ensure_workspace_(mask_size)) {
+    return false;
+  }
+
+  std::memset(this->near_green_mask_, 0, mask_size);
+  std::memset(this->thin_green_mask_, 0, mask_size);
+
+  for (size_t byte_index = 0; byte_index < mask_size; ++byte_index) {
+    uint8_t bits = green_mask[byte_index];
+    while (bits != 0) {
+      const uint8_t bit = static_cast<uint8_t>(__builtin_ctz(static_cast<unsigned>(bits)));
+      const size_t index = (byte_index << 3) + bit;
+      if (index >= pixel_count) {
+        break;
+      }
+
+      const uint16_t y = static_cast<uint16_t>(index / width);
+      const uint16_t x = static_cast<uint16_t>(index - static_cast<size_t>(y) * width);
+
+      const int start_x = std::max<int>(0, static_cast<int>(x) - GREEN_NEIGHBOR_X);
+      const int end_x = std::min<int>(width - 1, static_cast<int>(x) + GREEN_NEIGHBOR_X);
+      const size_t row_base = static_cast<size_t>(y) * width;
+      for (int xx = start_x; xx <= end_x; ++xx) {
+        mask_set_linear(this->near_green_mask_, row_base + static_cast<size_t>(xx));
+      }
+
+      uint8_t vertical_neighbors = 0;
+      for (int dy = -THIN_GREEN_VERTICAL_RADIUS; dy <= THIN_GREEN_VERTICAL_RADIUS; ++dy) {
+        if (dy == 0) {
+          continue;
+        }
+        if (mask_get(green_mask, width, height, x, static_cast<int>(y) + dy)) {
+          vertical_neighbors++;
+        }
+      }
+      if (vertical_neighbors <= 1) {
+        mask_set_linear(this->thin_green_mask_, index);
+      }
+
+      bits &= static_cast<uint8_t>(bits - 1U);
+    }
+  }
+
+  return true;
+}
+
+void JpegArtifactCorrector::clear_workspace_() {
+  if (this->near_green_mask_ != nullptr) {
+    heap_caps_free(this->near_green_mask_);
+  }
+  if (this->thin_green_mask_ != nullptr) {
+    heap_caps_free(this->thin_green_mask_);
+  }
+  this->near_green_mask_ = nullptr;
+  this->thin_green_mask_ = nullptr;
+  this->mask_capacity_ = 0;
+}
 
 void JpegArtifactCorrector::reset_stats_() {
   this->stats_.green_seed_pixels = 0;
