@@ -27,6 +27,7 @@ constexpr ResolutionEntry RESOLUTIONS[] = {
     {"1600x1200", FRAMESIZE_UXGA, 1600, 1200},
     {"1920x1080", FRAMESIZE_FHD, 1920, 1080},
     {"2048x1536", FRAMESIZE_QXGA, 2048, 1536},
+    {"2592x1944", FRAMESIZE_5MP, 2592, 1944},
 };
 
 const ResolutionEntry *find_by_name(const std::string &name) {
@@ -96,6 +97,11 @@ bool CameraResolutionController::apply(const std::string &resolution) {
 
   this->update_sensor_identity_();
 
+  if (entry->frame_size == FRAMESIZE_5MP && this->sensor_pid_ != OV5640_PID) {
+    ESP_LOGE(TAG, "Resolution 2592x1944 reservee au capteur OV5640");
+    return false;
+  }
+
   if (sensor->set_framesize(sensor, entry->frame_size) != 0) {
     ESP_LOGE(TAG, "Echec application resolution %s", resolution.c_str());
     return false;
@@ -164,7 +170,7 @@ void CameraResolutionController::update_sensor_identity_() {
 }
 
 const char *CameraResolutionController::allowed_resolutions_text() {
-  return "320x240,640x480,800x600,1024x768,1280x720,1280x1024,1600x1200,1920x1080,2048x1536";
+  return "320x240,640x480,800x600,1024x768,1280x720,1280x1024,1600x1200,1920x1080,2048x1536,2592x1944";
 }
 
 }  // namespace geometrie_camera_app
