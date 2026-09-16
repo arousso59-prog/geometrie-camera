@@ -23,9 +23,9 @@ constexpr uint8_t TARGET_GRID[7][7] = {
 
 constexpr float EXPANSION_FACTORS[] = {0.92f, 1.00f, 1.08f, 1.16f, 1.24f, 1.32f};
 
-// V5.3 : la cible reelle est localisee de facon repetable par la V5.2 avec un
-// score observe autour de 0.824. Les gardes structurelles restent independantes
-// (contraste, bord noir, fond exterieur) ; seul le seuil final est ajuste.
+// V5.3/V5.4 : la cible reelle est localisee de facon repetable avec un score
+// autour de 0.824. Les gardes structurelles restent independantes ; V5.4
+// ajoute le raffinement des coins et une projection projective du quadrilatere.
 constexpr float MIN_ACCEPTED_SCORE = 0.82f;
 constexpr float MIN_BORDER_BLACK_RATIO = 0.84f;
 constexpr int MIN_CODE_CONTRAST = 8;
@@ -180,7 +180,7 @@ TargetObservation TargetCodeDecoder::decode(const GrayFrameView &frame,
 
   if (best_score > 0.0f) {
     ESP_LOGD(TAG,
-             "V5.3 candidate center=(%.1f,%.1f) size=%.1fx%.1f rot=%u score=%.4f valid=%s "
+             "V5.4 candidate center=(%.1f,%.1f) size=%.1fx%.1f rot=%u score=%.4f valid=%s "
              "pattern=%.4f border=%.4f contrast=%d outside=%.1f black=%d expansion=%.2f",
              candidate.center_x, candidate.center_y, best.width_px, best.height_px,
              static_cast<unsigned>(best_rotation) * 90U, best_score, best.valid ? "YES" : "NO",
@@ -192,12 +192,52 @@ TargetObservation TargetCodeDecoder::decode(const GrayFrameView &frame,
 }
 
 TargetPoint TargetCodeDecoder::project_(const TargetCandidate &candidate, float u, float v) const {
-  const float top_x = candidate.top_left.x + (candidate.top_right.x - candidate.top_left.x) * u;
-  const float top_y = candidate.top_left.y + (candidate.top_right.y - candidate.top_left.y) * u;
-  const float bottom_x = candidate.bottom_left.x + (candidate.bottom_right.x - candidate.bottom_left.x) * u;
-  const float bottom_y = candidate.bottom_left.y + (candidate.bottom_right.y - candidate.bottom_left.y) * u;
+  const float x0 = candidate.top_left.x;
+  const float y0 = candidate.top_left.y;
+  const float x1 = candidate.top_right.x;
+  const float y1 = candidate.top_right.y;
+  const float x2 = candidate.bottom_right.x;
+  const float y2 = candidate.bottom_right.y;
+  const float x3 = candidate.bottom_left.x;
+  const float y3 = candidate.bottom_left.y;
+
+  // Homographie directe carre unite -> quadrilatere. Contrairement a
+  // l'interpolation bilineaire, elle respecte la perspective d'une cible plane.
+  const float sx = x0 - x1 + x2 - x3;
+  const float sy = y0 - y1 + y2 - y3;
+  const float dx1 = x1 - x2;
+  const float dx2 = x3 - x2;
+  const float dy1 = y1 - y2;
+  const float dy2 = y3 - y2;
+
+  float g = 0.0f;
+  float h = 0.0f;
+  const float denominator = dx1 * dy2 - dx2 * dy1;
+  if ((std::fabs(sx) > 0.0001f || std::fabs(sy) > 0.0001f) && std::fabs(denominator) > 0.0001f) {
+    g = (sx * dy2 - dx2 * sy) / denominator;
+    h = (dx1 * sy - sx * dy1) / denominator;
+  }
+
+  const float a = x1 - x0 + g * x1;
+  const float b = x3 - x0 + h * x3;
+  const float c = x0;
+  const float d = y1 - y0 + g * y1;
+  const float e = y3 - y0 + h * y3;
+  const float f = y0;
+  const float w = g * u + h * v + 1.0f;
 
   TargetPoint point;
+  if (std::fabs(w) > 0.0001f) {
+    point.x = (a * u + b * v + c) / w;
+    point.y = (d * u + e * v + f) / w;
+    return point;
+  }
+
+  // Repli de securite pour un quadrilatere pathologique.
+  const float top_x = x0 + (x1 - x0) * u;
+  const float top_y = y0 + (y1 - y0) * u;
+  const float bottom_x = x3 + (x2 - x3) * u;
+  const float bottom_y = y3 + (y2 - y3) * u;
   point.x = top_x + (bottom_x - top_x) * v;
   point.y = top_y + (bottom_y - top_y) * v;
   return point;
