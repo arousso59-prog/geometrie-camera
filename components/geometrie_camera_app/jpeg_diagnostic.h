@@ -12,10 +12,10 @@ class ESP32Camera;
 }
 namespace geometrie_camera_app {
 
-class JpegDiagnostic : public camera::CameraImageListener {
+class JpegDiagnostic : public camera::CameraListener {
  public:
   JpegDiagnostic();
-  ~JpegDiagnostic() override;
+  ~JpegDiagnostic();
 
   void set_camera(esp32_camera::ESP32Camera *camera);
   bool request_capture();
