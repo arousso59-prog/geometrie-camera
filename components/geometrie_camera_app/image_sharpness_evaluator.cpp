@@ -15,7 +15,7 @@ namespace geometrie_camera_app {
 namespace {
 static const char *const TAG = "image_sharpness";
 constexpr size_t JPEG_WORK_BUFFER_SIZE = 4096;
-constexpr uint8_t JPEG_SCALE = 3;  // 1/8 dans chaque dimension.
+constexpr uint8_t JPEG_SCALE = 2;  // 1/4 dans chaque dimension pour conserver du detail sur la cible.
 
 struct SharpnessDecodeContext {
   const uint8_t *jpeg;
@@ -89,13 +89,19 @@ ImageSharpnessEvaluator::ImageSharpnessEvaluator(JpegDiagnostic *source)
 
 ImageSharpnessEvaluator::~ImageSharpnessEvaluator() { this->clear_buffers_(); }
 
-bool ImageSharpnessEvaluator::evaluate() {
+bool ImageSharpnessEvaluator::evaluate_region(uint16_t x, uint16_t y, uint16_t width, uint16_t height) {
   this->ready_ = false;
   this->score_x100_ = 0;
   this->evaluation_ms_ = 0;
 
   if (this->source_ == nullptr || !this->source_->ready() || this->source_->jpeg_data() == nullptr ||
       this->source_->jpeg_size() == 0 || !this->source_->has_soi() || !this->source_->has_eoi()) {
+    return false;
+  }
+
+  const uint16_t source_width = this->source_->width();
+  const uint16_t source_height = this->source_->height();
+  if (source_width == 0 || source_height == 0 || width == 0 || height == 0 || x >= source_width || y >= source_height) {
     return false;
   }
 
@@ -123,31 +129,47 @@ bool ImageSharpnessEvaluator::evaluate() {
     return false;
   }
 
-  const uint16_t width = static_cast<uint16_t>(decoder.width >> JPEG_SCALE);
-  const uint16_t height = static_cast<uint16_t>(decoder.height >> JPEG_SCALE);
-  if (width < 3 || height < 3 || !this->ensure_buffers_(width, height)) {
+  const uint16_t reduced_width = static_cast<uint16_t>(decoder.width >> JPEG_SCALE);
+  const uint16_t reduced_height = static_cast<uint16_t>(decoder.height >> JPEG_SCALE);
+  if (reduced_width < 3 || reduced_height < 3 || !this->ensure_buffers_(reduced_width, reduced_height)) {
     return false;
   }
 
   context.pixels = this->grayscale_buffer_;
-  context.width = width;
-  context.height = height;
-  std::memset(this->grayscale_buffer_, 0, static_cast<size_t>(width) * height);
+  context.width = reduced_width;
+  context.height = reduced_height;
+  std::memset(this->grayscale_buffer_, 0, static_cast<size_t>(reduced_width) * reduced_height);
 
   result = jd_decomp(&decoder, sharpness_output_callback, JPEG_SCALE);
   if (result != JDR_OK) {
-    ESP_LOGW(TAG, "Evaluation nettete: decodage JPEG reduit en echec (%d)", static_cast<int>(result));
+    ESP_LOGW(TAG, "Evaluation nettete ROI: decodage JPEG reduit en echec (%d)", static_cast<int>(result));
     return false;
   }
 
-  this->width_ = width;
-  this->height_ = height;
-  this->score_x100_ = this->compute_score_x100_();
+  this->width_ = reduced_width;
+  this->height_ = reduced_height;
+
+  const uint32_t scale = 1U << JPEG_SCALE;
+  uint16_t roi_x = static_cast<uint16_t>(x / scale);
+  uint16_t roi_y = static_cast<uint16_t>(y / scale);
+  uint16_t roi_right = static_cast<uint16_t>(std::min<uint32_t>(
+      reduced_width, (static_cast<uint32_t>(x) + width + scale - 1U) / scale));
+  uint16_t roi_bottom = static_cast<uint16_t>(std::min<uint32_t>(
+      reduced_height, (static_cast<uint32_t>(y) + height + scale - 1U) / scale));
+
+  if (roi_right <= roi_x + 2U || roi_bottom <= roi_y + 2U) {
+    return false;
+  }
+
+  this->score_x100_ = this->compute_score_x100_(
+      roi_x, roi_y, static_cast<uint16_t>(roi_right - roi_x), static_cast<uint16_t>(roi_bottom - roi_y));
   this->evaluation_ms_ = millis() - started_ms;
   this->ready_ = true;
 
-  ESP_LOGD(TAG, "Nettete JPEG reduite %ux%u: score_x100=%u, temps=%u ms",
+  ESP_LOGD(TAG, "Nettete ROI reduite %ux%u @(%u,%u) %ux%u: score_x100=%u, temps=%u ms",
            static_cast<unsigned>(this->width_), static_cast<unsigned>(this->height_),
+           static_cast<unsigned>(roi_x), static_cast<unsigned>(roi_y),
+           static_cast<unsigned>(roi_right - roi_x), static_cast<unsigned>(roi_bottom - roi_y),
            static_cast<unsigned>(this->score_x100_), static_cast<unsigned>(this->evaluation_ms_));
   return true;
 }
@@ -192,8 +214,19 @@ void ImageSharpnessEvaluator::clear_buffers_() {
   this->jpeg_work_buffer_ = nullptr;
 }
 
-uint32_t ImageSharpnessEvaluator::compute_score_x100_() const {
-  if (this->grayscale_buffer_ == nullptr || this->width_ < 3 || this->height_ < 3) {
+uint32_t ImageSharpnessEvaluator::compute_score_x100_(uint16_t x, uint16_t y,
+                                                       uint16_t width, uint16_t height) const {
+  if (this->grayscale_buffer_ == nullptr || this->width_ < 3 || this->height_ < 3 || width < 3 || height < 3) {
+    return 0;
+  }
+
+  const uint16_t start_x = std::max<uint16_t>(1, x);
+  const uint16_t start_y = std::max<uint16_t>(1, y);
+  const uint16_t end_x = std::min<uint16_t>(static_cast<uint16_t>(this->width_ - 1U),
+                                            static_cast<uint16_t>(x + width));
+  const uint16_t end_y = std::min<uint16_t>(static_cast<uint16_t>(this->height_ - 1U),
+                                            static_cast<uint16_t>(y + height));
+  if (end_x <= start_x || end_y <= start_y) {
     return 0;
   }
 
@@ -201,13 +234,13 @@ uint32_t ImageSharpnessEvaluator::compute_score_x100_() const {
   uint32_t count = 0;
   const size_t stride = this->width_;
 
-  for (uint16_t y = 1; y + 1 < this->height_; ++y) {
-    const uint8_t *row = this->grayscale_buffer_ + static_cast<size_t>(y) * stride;
+  for (uint16_t py = start_y; py < end_y; ++py) {
+    const uint8_t *row = this->grayscale_buffer_ + static_cast<size_t>(py) * stride;
     const uint8_t *row_up = row - stride;
     const uint8_t *row_down = row + stride;
-    for (uint16_t x = 1; x + 1 < this->width_; ++x) {
-      const int center = row[x];
-      int laplacian = 4 * center - row[x - 1] - row[x + 1] - row_up[x] - row_down[x];
+    for (uint16_t px = start_x; px < end_x; ++px) {
+      const int center = row[px];
+      int laplacian = 4 * center - row[px - 1] - row[px + 1] - row_up[px] - row_down[px];
       if (laplacian < 0) {
         laplacian = -laplacian;
       }
