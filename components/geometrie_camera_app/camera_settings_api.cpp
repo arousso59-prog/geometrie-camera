@@ -106,7 +106,7 @@ void CameraSettingsApiHandler::send_snapshot_(AsyncWebServerRequest *request, bo
   json += ",\"aec_value\":" + std::to_string(snapshot.aec_value);
   json += ",\"gain_ctrl\":" + std::string(snapshot.gain_ctrl ? "true" : "false");
   json += ",\"agc_gain\":" + std::to_string(snapshot.agc_gain);
-  json += "},\"ranges":{";
+  json += "},\"ranges\":{";
   json += "\"brightness\":\"-2..2\",\"contrast\":\"-2..2\",\"exposure_ctrl\":\"0|1\",\"ae_level\":\"-2..2\",\"aec_value\":\"0..1200\",\"gain_ctrl\":\"0|1\",\"agc_gain\":\"0..30\"}}";
 
   auto *response = request->beginResponse(200, "application/json", json);
