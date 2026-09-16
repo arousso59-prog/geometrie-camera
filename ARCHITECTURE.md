@@ -105,27 +105,35 @@ GET /api/camera/settings/set?<parametres>
 
 ### `Ov5640TimingController` / `Ov5640TimingApiHandler`
 
-Diagnostic bas niveau du timing DVP spécifique au vrai capteur OV5640.
+Diagnostic bas niveau du timing DVP et du timing de trame spécifique au vrai capteur OV5640.
 
 Le contrôleur :
 
 - refuse toute écriture si le PID n'est pas `OV5640` ;
-- lit le registre `PCLK_RATIO` `0x3824` ;
+- lit et peut modifier le registre `PCLK_RATIO` `0x3824` ;
 - lit `VFIFO_CTRL0C` `0x460C` pour vérifier que le PCLK manuel est actif ;
-- modifie uniquement les 5 bits du diviseur PCLK ;
-- relit immédiatement le registre et refuse l'opération si la valeur appliquée ne correspond pas à la demande ;
+- lit `HTS` via `0x380C/0x380D` et `VTS` via `0x380E/0x380F` ;
+- permet de modifier HTS et VTS avec relecture immédiate de contrôle ;
+- mémorise automatiquement les valeurs HTS/VTS courantes avant la première modification d'une série de tests ;
+- peut restaurer cette référence sans reflasher ;
+- n'expose pas d'écriture arbitraire vers les autres registres du capteur ;
 - n'effectue aucune capture et ne traite aucune image.
 
 Routes temporaires de mise au point :
 
 ```text
 GET /api/camera/timing
-GET /api/camera/timing/set?pclk_divider=<1..31>
+GET /api/camera/timing/set?pclk_divider=<1..31>&hts=<optionnel>&vts=<optionnel>
+GET /api/camera/timing/restore
 ```
 
-**Important :** le driver OV5640 peut reprogrammer la PLL/PCLK lorsqu'un changement de `framesize` est appliqué. Pour un test reproductible : choisir d'abord la résolution, puis appliquer le `pclk_divider`, puis effectuer les captures suivantes sans changer de résolution.
+Les valeurs `hts` et `vts` peuvent être données en décimal ou en notation `0x...`.
 
-**Tests à prévoir :** plage 1..31, rejet d'un PID différent, échec si accès registres absent, vérification du readback et sérialisation HTTP cohérente. L'accès réel aux registres reste un test d'intégration matériel tant qu'il n'est pas abstrait derrière une interface capteur.
+**Important :** un changement de `framesize` peut reprogrammer les registres de timing du driver. Pour un test reproductible : choisir d'abord la résolution, lire le timing de référence, appliquer HTS/VTS, puis effectuer les captures sans changer de résolution. La restauration mémorisée est destinée à cette même série de tests.
+
+Le test HTS/VTS actuel est motivé par le correctif expérimental Espressif/OV5640 connu pour les lignes verticales : commencer par `HTS=0x1FFF`, puis, uniquement si nécessaire, ajouter `VTS=0x2FFF`.
+
+**Tests à prévoir :** rejet d'un PID différent, échec si accès registres absent, validation des plages, capture unique de la référence, vérification des readbacks HTS/VTS/PCLK, restauration de la référence et sérialisation HTTP cohérente. L'accès réel aux registres reste un test d'intégration matériel tant qu'il n'est pas abstrait derrière une interface capteur.
 
 ### `RuntimeDiagnostics` / `RuntimeDiagnosticsApiHandler`
 
@@ -187,7 +195,7 @@ GET /diagnostic-jpeg/status
 GET /diagnostic-jpeg/image.jpg
 ```
 
-**But du test courant :** comparer la qualité native JPEG avec la voie GRAYSCALE bruitée et isoler les artefacts verts sans être faussé par une frame précédente. Le test courant fait varier le diviseur PCLK de l'OV5640 pour déterminer si les artefacts sont dus à une marge de timing DVP insuffisante.
+**But du test courant :** conserver la bonne qualité générale et le faible bruit du JPEG natif tout en supprimant les lignes vertes périodiques. Les essais de diviseur PCLK 4/8/10 et de XCLK 20/16/10/8 MHz n'ont pas supprimé le défaut. La piste active est maintenant HTS/VTS, d'après le correctif expérimental connu sur OV5640.
 
 **Tests à prévoir :** rejet d'un format non JPEG, première frame non publiée, seconde frame publiée, compteur utile/purge, changement de résolution suivi d'une purge, copie exacte d'un buffer connu, détection SOI/EOI, réutilisation/allocation du buffer, état en cas d'échec mémoire.
 
@@ -240,7 +248,7 @@ OV5640
 2560×1920 QSXGA
 PIXFORMAT_JPEG
 jpeg_quality = 10
-XCLK = 16 MHz
+XCLK = 8 MHz
 1 framebuffer en PSRAM
 idle_framerate = 0
 ```
