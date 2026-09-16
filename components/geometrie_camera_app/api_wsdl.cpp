@@ -25,7 +25,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
                                         : "unknown";
 
   std::string xml;
-  xml.reserve(17408);
+  xml.reserve(17920);
   xml += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
   xml += "<api name=\"geometrie-camera\" version=\"1\" style=\"REST-over-HTTP\">\n";
   xml += "  <description>Catalogue WSDL-like des routes HTTP du projet. Ce document doit etre maintenu avec toute evolution d API.</description>\n";
@@ -117,19 +117,24 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
 
   xml += "  <method name=\"jpeg_capture\" http=\"GET\" path=\"/diagnostic-jpeg/capture\">\n";
-  xml += "    <comment>Demande une nouvelle frame JPEG produite directement par l ISP du capteur. Utilisee pour valider qualite, artefacts, taille et latence sans conversion logicielle.</comment>\n";
+  xml += "    <comment>Purge la frame pre-acquise par ESPHome puis demande une frame JPEG fraiche produite par l ISP du capteur. La frame publiee correspond donc a la requete courante et non a la capture precedente.</comment>\n";
+  xml += "    <parameter name=\"resolution\" location=\"query\" required=\"false\" type=\"string\" allowed=\"";
+  xml += allowed_resolutions;
+  xml += "\">Resolution a appliquer avant la capture JPEG. La frame en attente est purgee apres le changement de resolution.</parameter>\n";
   xml += "    <response code=\"202\" content_type=\"application/json\"/>\n";
+  xml += "    <response code=\"400\" content_type=\"application/json\"/>\n";
+  xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"503\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
   xml += "  <method name=\"jpeg_status\" http=\"GET\" path=\"/diagnostic-jpeg/status\">\n";
-  xml += "    <comment>Expose dimensions, taille JPEG, presence des marqueurs SOI/EOI et timings acquisition/copie/cycle.</comment>\n";
+  xml += "    <comment>Expose resolution active, dimensions, taille JPEG, marqueurs SOI/EOI, nombre de frames purgees et timings de la demande fraiche.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
   xml += "  <method name=\"jpeg_image\" http=\"GET\" path=\"/diagnostic-jpeg/image.jpg\">\n";
-  xml += "    <comment>Retourne sans recompression la derniere frame JPEG native copiee depuis le framebuffer camera.</comment>\n";
+  xml += "    <comment>Retourne sans recompression la derniere frame JPEG fraiche copiee depuis le framebuffer camera.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"image/jpeg\"/>\n";
   xml += "    <response code=\"404\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
