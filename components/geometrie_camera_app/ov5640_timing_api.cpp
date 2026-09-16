@@ -3,6 +3,7 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 
 #include "ov5640_timing_controller.h"
 
@@ -62,7 +63,7 @@ void Ov5640TimingApiHandler::handle_set_(AsyncWebServerRequest *request) const {
     return;
   }
 
-  const String raw = request->getParam("pclk_divider")->value();
+  const std::string raw = request->getParam("pclk_divider")->value();
   errno = 0;
   char *end = nullptr;
   const long parsed = std::strtol(raw.c_str(), &end, 10);
