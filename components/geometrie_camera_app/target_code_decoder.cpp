@@ -23,9 +23,6 @@ constexpr uint8_t TARGET_GRID[7][7] = {
 
 constexpr float EXPANSION_FACTORS[] = {0.92f, 1.00f, 1.08f, 1.16f, 1.24f, 1.32f};
 
-// V5.3/V5.4 : la cible reelle est localisee de facon repetable avec un score
-// autour de 0.824. Les gardes structurelles restent independantes ; V5.4
-// ajoute le raffinement des coins et une projection projective du quadrilatere.
 constexpr float MIN_ACCEPTED_SCORE = 0.82f;
 constexpr float MIN_BORDER_BLACK_RATIO = 0.84f;
 constexpr int MIN_CODE_CONTRAST = 8;
@@ -166,6 +163,14 @@ TargetObservation TargetCodeDecoder::decode(const GrayFrameView &frame,
         best.height_px = adjusted.height;
         best.rotation_deg = static_cast<float>(rotation) * 90.0f;
         best.quality = score;
+        best.top_left_px.x = adjusted.top_left.x;
+        best.top_left_px.y = adjusted.top_left.y;
+        best.top_right_px.x = adjusted.top_right.x;
+        best.top_right_px.y = adjusted.top_right.y;
+        best.bottom_right_px.x = adjusted.bottom_right.x;
+        best.bottom_right_px.y = adjusted.bottom_right.y;
+        best.bottom_left_px.x = adjusted.bottom_left.x;
+        best.bottom_left_px.y = adjusted.bottom_left.y;
 
         best_pattern_score = pattern_score;
         best_border_ratio = border_ratio;
@@ -201,8 +206,6 @@ TargetPoint TargetCodeDecoder::project_(const TargetCandidate &candidate, float 
   const float x3 = candidate.bottom_left.x;
   const float y3 = candidate.bottom_left.y;
 
-  // Homographie directe carre unite -> quadrilatere. Contrairement a
-  // l'interpolation bilineaire, elle respecte la perspective d'une cible plane.
   const float sx = x0 - x1 + x2 - x3;
   const float sy = y0 - y1 + y2 - y3;
   const float dx1 = x1 - x2;
@@ -233,7 +236,6 @@ TargetPoint TargetCodeDecoder::project_(const TargetCandidate &candidate, float 
     return point;
   }
 
-  // Repli de securite pour un quadrilatere pathologique.
   const float top_x = x0 + (x1 - x0) * u;
   const float top_y = y0 + (y1 - y0) * u;
   const float bottom_x = x3 + (x2 - x3) * u;
