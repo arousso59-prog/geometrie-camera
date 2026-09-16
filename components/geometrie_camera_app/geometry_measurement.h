@@ -11,12 +11,26 @@ class GeometryMeasurementEngine {
  public:
   GeometryMeasurementEngine();
 
+  bool set_target_size_mm(float target_size_mm);
+  float target_size_mm() const;
+
   void set_calibration(const CameraCalibration &calibration);
+  void clear_calibration();
+  bool has_calibration() const;
   const CameraCalibration &calibration() const;
-  GeometryMeasurement compute(const TargetObservation &observation, uint32_t timestamp_ms) const;
+  CameraCalibration effective_calibration(uint16_t frame_width, uint16_t frame_height) const;
+
+  bool calibrate_from_known_distance(const TargetObservation &observation,
+                                     uint16_t frame_width, uint16_t frame_height,
+                                     float known_distance_mm);
+
+  GeometryMeasurement compute(const TargetObservation &observation,
+                              uint16_t frame_width, uint16_t frame_height,
+                              uint32_t timestamp_ms) const;
 
  private:
   CameraCalibration calibration_;
+  float target_size_mm_;
 };
 
 }  // namespace geometrie_camera_app
