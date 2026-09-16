@@ -3,7 +3,6 @@
 #include <cstdint>
 
 #include "geometry_measurement.h"
-#include "target_detector.h"
 #include "types.h"
 
 namespace esphome {
@@ -15,15 +14,16 @@ class MeasurementManager {
 
   void setup();
   void reset();
-  bool process(const GrayFrameView &frame, uint32_t timestamp_ms);
+  bool process(const TargetObservation &observation,
+               uint16_t frame_width, uint16_t frame_height,
+               uint32_t timestamp_ms);
 
   uint32_t valid_measurement_count() const;
   const GeometryMeasurement &last_measurement() const;
-  TargetDetector &target_detector();
   GeometryMeasurementEngine &measurement_engine();
+  const GeometryMeasurementEngine &measurement_engine() const;
 
  private:
-  TargetDetector target_detector_;
   GeometryMeasurementEngine measurement_engine_;
   GeometryMeasurement last_measurement_;
   uint32_t valid_measurement_count_;
