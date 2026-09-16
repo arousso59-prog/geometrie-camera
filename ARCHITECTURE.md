@@ -51,7 +51,10 @@ GeometrieCameraApp
     ├── GrayscaleDiagnostic
     │   └── GrayscaleDiagnosticApiHandler
     ├── JpegDiagnostic
-    │   └── JpegDiagnosticApiHandler
+    │   ├── JpegDiagnosticApiHandler
+    │   └── JpegFilteredDiagnostic
+    │       ├── JpegArtifactCorrector
+    │       └── JpegFilteredDiagnosticApiHandler
     ├── Rgb565Diagnostic
     │   └── Rgb565DiagnosticApiHandler
     └── TargetSearchDiagnostic
@@ -135,7 +138,7 @@ Les valeurs numériques peuvent être données en décimal ou en notation `0x...
 
 **Important :** un changement de `framesize` peut reprogrammer plusieurs paramètres du driver. Pour un test reproductible : choisir d'abord la résolution, lire la référence, appliquer XCLK ou les paramètres de registre, puis effectuer les captures sans changer de résolution. Après un changement de XCLK, `JpegDiagnostic` purge de toute façon la frame pré-acquise avant de publier la frame fraîche suivante. La restauration mémorisée est destinée à cette même série de tests.
 
-Les essais PCLK 4/8/10, XCLK YAML 20/16/10/8 MHz, HTS/VTS, HREF blanking 0x40/0x60/0x80/0xC0 et JPEG mode 2/3 n'ont pas supprimé les lignes vertes. Le test actif consiste à descendre XCLK dynamiquement à 7, 6 puis 5 MHz, sans modifier le reste de la configuration.
+Les essais PCLK 4/8/10, XCLK 20/16/10/8 MHz puis XCLK runtime 7/6/5 MHz, HTS/VTS, HREF blanking 0x40/0x60/0x80/0xC0 et JPEG mode 2/3 n'ont pas supprimé les lignes vertes/noires. Les timings peuvent modifier la netteté/exposition et le temps de capture, mais pas le motif parasite. La piste active n'est donc plus le timing : elle est maintenant la correction logicielle sélective du JPEG natif.
 
 **Tests à prévoir :** rejet d'un PID différent, absence de callback `set_xclk`, validation de la plage XCLK 5..8, validation des autres plages, capture unique de la référence, vérification des readbacks HTS/VTS/PCLK/JPEG/HREF, restauration XCLK et registres, sérialisation HTTP cohérente. L'accès réel au capteur reste un test d'intégration matériel tant qu'il n'est pas abstrait derrière une interface capteur.
 
@@ -199,9 +202,43 @@ GET /diagnostic-jpeg/status
 GET /diagnostic-jpeg/image.jpg
 ```
 
-**But du test courant :** conserver la bonne qualité générale et le faible bruit du JPEG natif tout en supprimant les lignes vertes périodiques. Les essais PCLK, XCLK jusqu'à 8 MHz, HTS/VTS, HREF et JPEG mode 2/3 n'ont pas supprimé le défaut. La piste active est un test XCLK runtime à 7, 6 et 5 MHz, valeurs non acceptées directement par le validateur YAML ESPHome sous 8 MHz.
+**But courant :** conserver la bonne qualité générale et le faible bruit du JPEG natif, puis retirer le motif vert/noir de manière sélective après décodage. Les essais matériels/timing n'ayant pas supprimé le défaut, ils ne sont plus la piste principale.
 
 **Tests à prévoir :** rejet d'un format non JPEG, première frame non publiée, seconde frame publiée, compteur utile/purge, changement de résolution suivi d'une purge, copie exacte d'un buffer connu, détection SOI/EOI, réutilisation/allocation du buffer, état en cas d'échec mémoire.
+
+### `JpegFilteredDiagnostic` / `JpegArtifactCorrector`
+
+Chaîne de validation de la correction logicielle du JPEG natif, séparée de `JpegDiagnostic` et de `TargetDetector`.
+
+`JpegFilteredDiagnostic` :
+
+- ne déclenche aucune capture et consomme uniquement le dernier JPEG frais conservé par `JpegDiagnostic` ;
+- ne tourne pas en arrière-plan : le traitement est lancé explicitement par `GET /diagnostic-jpeg/filter` ;
+- décode le JPEG avec TJpgDec par blocs RGB, afin de ne jamais allouer une image RGB pleine résolution ;
+- écrit directement la luminance dans un BMP grayscale 8 bits pleine résolution en PSRAM ;
+- alloue un masque binaire d'environ un bit par pixel pour mémoriser les candidats chromatiques verts ;
+- mesure séparément le temps de décodage, le temps de correction et le total ;
+- conserve le BMP corrigé pour validation visuelle et, si la méthode est validée, comme future source possible de `GrayFrameView`.
+
+`JpegArtifactCorrector` contient uniquement la logique de correction :
+
+- un candidat vert doit présenter une forte dominance de G sur R/B ;
+- une vraie surface verte continue verticalement est rejetée : la signature visée est une impulsion verte fine d'une à deux lignes ;
+- une ligne n'est considérée affectée que si elle contient plusieurs impulsions fines, ce qui évite un filtre global ;
+- autour de ces lignes uniquement, les pixels verts et les petits creux noirs isolés sont remplacés par interpolation verticale depuis des lignes non affectées ;
+- aucune moyenne/flou n'est appliqué au reste de l'image.
+
+Routes :
+
+```text
+GET /diagnostic-jpeg/filter
+GET /diagnostic-jpeg/filter-status
+GET /diagnostic-jpeg/filtered.bmp
+```
+
+Cette V1 est volontairement diagnostique et synchrone. Elle sert d'abord à vérifier visuellement que les traits sont supprimés sans détériorer les vrais contours. Si elle est validée, la logique pure de `JpegArtifactCorrector` pourra être conservée et l'exécution lourde pourra être déplacée vers un worker dédié avant intégration à la mesure.
+
+**Frontière de test :** `JpegArtifactCorrector` doit pouvoir être testé hors ESP32 avec des images synthétiques contenant une surface verte réelle, des impulsions vertes fines, des tirets noirs isolés et des contours noir/blanc de cible. Le décodeur TJpgDec et l'allocation PSRAM restent des tests d'intégration matériel.
 
 ### `Rgb565Diagnostic`
 
@@ -227,7 +264,7 @@ GET /target/status
 GET /target/image.bmp
 ```
 
-Il n'est pas utilisé pendant le test JPEG natif actuel.
+Il n'est pas utilisé pendant le test JPEG filtré actuel.
 
 ### `ApiWsdlHandler`
 
@@ -257,9 +294,9 @@ XCLK = 8 MHz
 idle_framerate = 0
 ```
 
-Le YAML reste à 8 MHz pour démarrer dans une configuration acceptée par ESPHome. Les essais à 7/6/5 MHz sont appliqués uniquement à chaud par le contrôleur de timing et disparaissent au redémarrage.
+Le YAML reste à 8 MHz : cette valeur donne actuellement une image plus fine visuellement que les fréquences supérieures, même si elle ne supprime pas les artefacts. Les essais à 7/6/5 MHz peuvent toujours être appliqués à chaud pour diagnostic et disparaissent au redémarrage.
 
-Cette configuration sert uniquement à valider la piste JPEG native. Le code GRAYSCALE et RGB565 reste présent pour permettre un retour rapide sans réécriture.
+Cette configuration sert à valider la piste JPEG native puis son filtre de correction. Le code GRAYSCALE et RGB565 reste présent pour permettre un retour rapide sans réécriture.
 
 ## Revue obligatoire avant nouvelle fonctionnalité
 
