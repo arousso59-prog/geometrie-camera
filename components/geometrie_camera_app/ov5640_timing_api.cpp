@@ -95,22 +95,32 @@ void Ov5640TimingApiHandler::handle_set_(AsyncWebServerRequest *request) const {
     return;
   }
 
+  const bool has_xclk = request->hasParam("xclk_mhz");
   const bool has_pclk = request->hasParam("pclk_divider");
   const bool has_hts = request->hasParam("hts");
   const bool has_vts = request->hasParam("vts");
   const bool has_jpeg_mode = request->hasParam("jpeg_mode");
   const bool has_href_blanking = request->hasParam("href_blanking");
-  if (!has_pclk && !has_hts && !has_vts && !has_jpeg_mode && !has_href_blanking) {
+  if (!has_xclk && !has_pclk && !has_hts && !has_vts && !has_jpeg_mode && !has_href_blanking) {
     request->send(400, "application/json",
                   "{\"status\":\"error\",\"error\":\"missing_timing_parameter\"}");
     return;
   }
 
+  long xclk_mhz = 0;
   long pclk = 0;
   long hts = 0;
   long vts = 0;
   long jpeg_mode = 0;
   long href_blanking = 0;
+
+  if (has_xclk &&
+      !parse_integer_parameter(request, "xclk_mhz", Ov5640TimingController::min_xclk_mhz(),
+                               Ov5640TimingController::max_xclk_mhz(), &xclk_mhz)) {
+    request->send(400, "application/json",
+                  "{\"status\":\"error\",\"error\":\"invalid_xclk_mhz\",\"allowed\":\"5..8\"}");
+    return;
+  }
 
   if (has_pclk &&
       !parse_integer_parameter(request, "pclk_divider", Ov5640TimingController::min_pclk_divider(),
@@ -147,6 +157,11 @@ void Ov5640TimingApiHandler::handle_set_(AsyncWebServerRequest *request) const {
                                Ov5640TimingController::max_href_blanking(), &href_blanking)) {
     request->send(400, "application/json",
                   "{\"status\":\"error\",\"error\":\"invalid_href_blanking\",\"allowed\":\"0..255\"}");
+    return;
+  }
+
+  if (has_xclk && !this->controller_->set_xclk_mhz(static_cast<uint8_t>(xclk_mhz))) {
+    this->send_snapshot_(request, false, "apply_failed", 500);
     return;
   }
 
@@ -205,7 +220,7 @@ void Ov5640TimingApiHandler::send_snapshot_(AsyncWebServerRequest *request, bool
   const Ov5640TimingSnapshot snapshot = this->controller_->snapshot();
 
   std::string json;
-  json.reserve(896);
+  json.reserve(1024);
   json += "{\"status\":\"";
   json += status;
   json += "\",\"applied\":";
@@ -216,7 +231,9 @@ void Ov5640TimingApiHandler::send_snapshot_(AsyncWebServerRequest *request, bool
   json += snapshot.sensor_is_ov5640 ? "true" : "false";
   json += ",\"pid\":\"0x";
   append_hex_word(&json, snapshot.sensor_pid);
-  json += "\"},\"timing\":{\"pclk_divider\":";
+  json += "\"},\"timing\":{\"xclk_mhz\":";
+  json += std::to_string(snapshot.xclk_mhz);
+  json += ",\"pclk_divider\":";
   json += std::to_string(snapshot.pclk_divider);
   json += ",\"vfifo_ctrl0c\":";
   json += std::to_string(snapshot.vfifo_ctrl0c);
@@ -240,6 +257,8 @@ void Ov5640TimingApiHandler::send_snapshot_(AsyncWebServerRequest *request, bool
   append_hex_byte(&json, snapshot.href_blanking);
   json += "\"},\"baseline\":{\"available\":";
   json += snapshot.baseline_available ? "true" : "false";
+  json += ",\"xclk_mhz\":";
+  json += std::to_string(snapshot.baseline_xclk_mhz);
   json += ",\"hts\":";
   json += std::to_string(snapshot.baseline_hts);
   json += ",\"vts\":";
@@ -256,8 +275,9 @@ void Ov5640TimingApiHandler::send_snapshot_(AsyncWebServerRequest *request, bool
   json += std::to_string(snapshot.baseline_href_blanking);
   json += ",\"href_blanking_hex\":\"0x";
   append_hex_byte(&json, snapshot.baseline_href_blanking);
-  json += "\"},\"ranges\":{\"pclk_divider\":\"1..31\",\"hts\":\"1..65535\",";
-  json += "\"vts\":\"1..65535\",\"jpeg_mode\":\"2,3\",\"href_blanking\":\"0..255\"}}";
+  json += "\"},\"ranges\":{\"xclk_mhz\":\"5..8\",\"pclk_divider\":\"1..31\",";
+  json += "\"hts\":\"1..65535\",\"vts\":\"1..65535\",\"jpeg_mode\":\"2,3\",";
+  json += "\"href_blanking\":\"0..255\"}}";
 
   auto *response = request->beginResponse(response_code, "application/json", json);
   response->addHeader("Cache-Control", "no-store");
