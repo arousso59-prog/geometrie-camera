@@ -151,9 +151,9 @@ text_sensor:
     name: "04 Pose cible"
     update_interval: 1s
     lambda: |-
-      const auto &app = id(geometrie_camera_app_id);
-      const auto &m = app.last_measurement();
-      if (!m.valid || (app.continuous_running() && !app.continuous_measurement_valid())) {
+      auto *app = id(geometrie_camera_app_id);
+      const auto &m = app->last_measurement();
+      if (!m.valid || (app->continuous_running() && !app->continuous_measurement_valid())) {
         return {"indisponible"};
       }
       return {m.pose_valid ? "valide" : "rejetee"};
@@ -165,9 +165,9 @@ sensor:
     accuracy_decimals: 1
     update_interval: 1s
     lambda: |-
-      const auto &app = id(geometrie_camera_app_id);
-      const auto &m = app.last_measurement();
-      if (!m.valid || (app.continuous_running() && !app.continuous_measurement_valid())) return NAN;
+      auto *app = id(geometrie_camera_app_id);
+      const auto &m = app->last_measurement();
+      if (!m.valid || (app->continuous_running() && !app->continuous_measurement_valid())) return NAN;
       return m.distance_mm;
 
   - platform: template
@@ -176,9 +176,9 @@ sensor:
     accuracy_decimals: 1
     update_interval: 1s
     lambda: |-
-      const auto &app = id(geometrie_camera_app_id);
-      const auto &m = app.last_measurement();
-      if (!m.valid || (app.continuous_running() && !app.continuous_measurement_valid())) return NAN;
+      auto *app = id(geometrie_camera_app_id);
+      const auto &m = app->last_measurement();
+      if (!m.valid || (app->continuous_running() && !app->continuous_measurement_valid())) return NAN;
       return m.z_mm;
 
   - platform: template
@@ -187,9 +187,9 @@ sensor:
     accuracy_decimals: 1
     update_interval: 1s
     lambda: |-
-      const auto &app = id(geometrie_camera_app_id);
-      const auto &m = app.last_measurement();
-      if (!m.valid || (app.continuous_running() && !app.continuous_measurement_valid())) return NAN;
+      auto *app = id(geometrie_camera_app_id);
+      const auto &m = app->last_measurement();
+      if (!m.valid || (app->continuous_running() && !app->continuous_measurement_valid())) return NAN;
       return m.x_mm;
 
   - platform: template
@@ -198,9 +198,9 @@ sensor:
     accuracy_decimals: 1
     update_interval: 1s
     lambda: |-
-      const auto &app = id(geometrie_camera_app_id);
-      const auto &m = app.last_measurement();
-      if (!m.valid || (app.continuous_running() && !app.continuous_measurement_valid())) return NAN;
+      auto *app = id(geometrie_camera_app_id);
+      const auto &m = app->last_measurement();
+      if (!m.valid || (app->continuous_running() && !app->continuous_measurement_valid())) return NAN;
       return m.y_mm;
 
   - platform: template
@@ -209,9 +209,9 @@ sensor:
     accuracy_decimals: 4
     update_interval: 1s
     lambda: |-
-      const auto &app = id(geometrie_camera_app_id);
-      const auto &m = app.last_measurement();
-      if (!m.valid || (app.continuous_running() && !app.continuous_measurement_valid())) return NAN;
+      auto *app = id(geometrie_camera_app_id);
+      const auto &m = app->last_measurement();
+      if (!m.valid || (app->continuous_running() && !app->continuous_measurement_valid())) return NAN;
       return m.bearing_yaw_deg;
 
   - platform: template
@@ -220,9 +220,9 @@ sensor:
     accuracy_decimals: 4
     update_interval: 1s
     lambda: |-
-      const auto &app = id(geometrie_camera_app_id);
-      const auto &m = app.last_measurement();
-      if (!m.valid || (app.continuous_running() && !app.continuous_measurement_valid())) return NAN;
+      auto *app = id(geometrie_camera_app_id);
+      const auto &m = app->last_measurement();
+      if (!m.valid || (app->continuous_running() && !app->continuous_measurement_valid())) return NAN;
       return m.bearing_pitch_deg;
 
   - platform: template
@@ -230,9 +230,9 @@ sensor:
     accuracy_decimals: 3
     update_interval: 1s
     lambda: |-
-      const auto &app = id(geometrie_camera_app_id);
-      const auto &m = app.last_measurement();
-      if (!m.valid || (app.continuous_running() && !app.continuous_measurement_valid())) return NAN;
+      auto *app = id(geometrie_camera_app_id);
+      const auto &m = app->last_measurement();
+      if (!m.valid || (app->continuous_running() && !app->continuous_measurement_valid())) return NAN;
       return m.quality;
 
   - platform: template
