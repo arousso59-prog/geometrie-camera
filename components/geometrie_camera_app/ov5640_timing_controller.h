@@ -9,6 +9,7 @@ struct Ov5640TimingSnapshot {
   bool sensor_available;
   bool sensor_is_ov5640;
   uint16_t sensor_pid;
+  int xclk_mhz;
   int pclk_divider;
   int vfifo_ctrl0c;
   bool pclk_manual;
@@ -17,6 +18,7 @@ struct Ov5640TimingSnapshot {
   int jpeg_mode;
   int href_blanking;
   bool baseline_available;
+  uint8_t baseline_xclk_mhz;
   uint16_t baseline_hts;
   uint16_t baseline_vts;
   uint8_t baseline_jpeg_mode;
@@ -28,6 +30,7 @@ class Ov5640TimingController {
   Ov5640TimingController();
 
   Ov5640TimingSnapshot snapshot() const;
+  bool set_xclk_mhz(uint8_t mhz);
   bool set_pclk_divider(uint8_t divider);
   bool set_hts(uint16_t hts);
   bool set_vts(uint16_t vts);
@@ -36,6 +39,8 @@ class Ov5640TimingController {
   bool restore_baseline();
   bool baseline_available() const;
 
+  static uint8_t min_xclk_mhz();
+  static uint8_t max_xclk_mhz();
   static uint8_t min_pclk_divider();
   static uint8_t max_pclk_divider();
   static uint16_t min_total_timing();
@@ -51,6 +56,7 @@ class Ov5640TimingController {
   bool write_byte_register_(uint16_t reg, uint8_t value) const;
 
   bool baseline_available_;
+  uint8_t baseline_xclk_mhz_;
   uint16_t baseline_hts_;
   uint16_t baseline_vts_;
   uint8_t baseline_jpeg_mode_;
