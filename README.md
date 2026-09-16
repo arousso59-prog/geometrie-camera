@@ -7,7 +7,7 @@ Capteur optique pour appareil de géométrie automobile maison, basé sur ESP32-
 - carte : GOOUUU ESP32-S3-CAM V1.5, ESP32-S3 N16R8 ;
 - capteur confirmé par PID : OV5640 (`0x5640`) ;
 - PSRAM : 8 Mo octal ;
-- résolution de travail maximale exposée par ESPHome 2026.7.3 : 2560×1920 ;
+- résolution maximale exposée par ESPHome 2026.7.3 : 2560×1920 ;
 - XCLK retenu actuellement : 8 MHz.
 
 Brochage caméra :
@@ -31,16 +31,12 @@ PCLK  GPIO13
 
 ## Voie image retenue
 
-Les essais GRAYSCALE brut ont montré davantage de bruit et un coût mémoire élevé. Le JPEG natif de l'OV5640 donne une image nettement moins bruitée mais présente un motif parasite régulier vert/noir.
-
-La méthode retenue est désormais :
-
 ```text
 OV5640 JPEG
    ↓
-frame fraîche (purge de la frame ESPHome pré-acquise)
+frame fraîche
    ↓
-décodage par blocs vers grayscale 8 bits
+décodage grayscale 8 bits
    ↓
 JpegArtifactCorrector V3
    ↓
@@ -48,37 +44,31 @@ buffer grayscale corrigé
    ↓
 TargetDetectionService
    ↓
-TargetDetector V3
+TargetDetector V5
+   ├── TargetCandidateFinder
+   └── TargetCodeDecoder
    ↓
 TargetObservation
    ↓
 distance / orientation / géométrie
 ```
 
-Le correcteur V3 supprime la grande majorité des impulsions vertes et une part importante des petits segments noirs sans appliquer de flou global. Le buffer grayscale corrigé est exposé directement au code C++ ; le BMP n'est qu'une visualisation de diagnostic.
+Le correcteur V3 supprime la grande majorité des artefacts verts/noirs sans appliquer de flou global.
 
-Le `TargetDetector` V3 limite maintenant les tailles irréalistes, moyenne localement les cellules du code 7×7 et vérifie explicitement la cohérence du cadre noir pour réduire les faux positifs.
+La V5 sépare désormais deux problèmes auparavant mélangés :
 
-## Architecture actuelle
+1. **retrouver la petite cible dans toute l'image** ;
+2. **lire le code 7×7 une fois la zone localisée**.
+
+`TargetCandidateFinder` réduit l'image à environ 400 px maximum, applique un seuillage local puis recherche des composantes sombres quasi carrées. Les lignes parasites et objets très allongés sont rejetés. Pour chaque composante retenue, quatre coins approximatifs sont estimés.
+
+`TargetCodeDecoder` revient ensuite sur l'image pleine résolution, projette le motif 7×7 dans le quadrilatère candidat, teste plusieurs petits ajustements de taille et les quatre orientations logiques, puis valide contraste, cadre noir et fond extérieur.
+
+Cette organisation doit être plus robuste aux petites rotations/perspectives et beaucoup moins coûteuse que l'ancien balayage exhaustif du motif 7×7 sur toute l'image.
+
+## Architecture
 
 Les responsabilités détaillées et les règles de développement sont dans [`ARCHITECTURE.md`](ARCHITECTURE.md).
-
-Sous-systèmes conservés :
-
-- `GeometrieCameraApp` : orchestration uniquement ;
-- `JpegDiagnostic` : acquisition JPEG fraîche et stockage persistant ;
-- `JpegFilteredDiagnostic` : décodage grayscale et préparation de l'image corrigée ;
-- `JpegArtifactCorrector` : correction pure des artefacts ;
-- `TargetDetectionService` : adaptation sans copie du buffer corrigé vers le détecteur ;
-- `TargetDetector` : recherche de la cible 7×7 ;
-- `TargetDetectionPreview` : miniature de diagnostic annotée sans modifier le buffer métier ;
-- `MeasurementManager` / `GeometryMeasurementEngine` : future chaîne distance/orientation/angles ;
-- `CameraResolutionController` ;
-- `CameraSettingsController` / API ;
-- `RuntimeDiagnostics` / API ;
-- `ApiWsdlHandler`.
-
-Les anciens chemins de test GRAYSCALE, RGB565, OV3660, registres OV5640, placeholder et TargetSearch GRAYSCALE ont été supprimés après validation de la voie JPEG.
 
 ## API actuelle
 
@@ -101,25 +91,22 @@ GET /target/status
 GET /target/preview.bmp
 ```
 
-`/target/detect` lance la recherche sur la dernière image déjà filtrée. Il ne déclenche volontairement ni nouvelle capture ni nouveau filtrage pendant la phase de validation.
+Les routes de cible restent inchangées avec la V5 :
 
-`/target/preview.bmp` génère une miniature grayscale de largeur maximale 640 px avec un rectangle noir/blanc autour du meilleur candidat, accepté ou non. Cela permet de vérifier visuellement où le détecteur travaille sans dupliquer une image pleine résolution en PSRAM.
-
-Le résultat contient : cible trouvée ou non, centre en pixels, taille, rotation discrète 0/90/180/270 degrés, qualité et temps de détection.
-
-`/api/wsdl` reste la référence du contrat HTTP et doit être mis à jour dans le même changement que toute évolution d'API.
+- `/target/detect` traite la dernière image déjà filtrée ;
+- `/target/status` relit le dernier résultat ;
+- `/target/preview.bmp` affiche une miniature annotée du meilleur résultat/candidat.
 
 ## Étape actuelle
 
-Valider la cible réelle sur la voie JPEG corrigée :
+Valider la V5 sur la cible réelle :
 
-1. capture et filtrage de l'image ;
-2. recherche pleine image avec `/target/detect` ;
-3. contrôle du candidat avec `/target/preview.bmp` ;
-4. validation de la position, de la taille, de la rotation discrète et du score ;
-5. réglage fin de l'image via `/api/camera/settings/set` en comparant objectivement `target.quality` ;
-6. estimation de distance ;
-7. estimation d'orientation fine ;
-8. calibration optique et comparaison aux données constructeur.
+1. capture JPEG en 1600×1200 ;
+2. filtre V3 ;
+3. `/target/detect` ;
+4. vérification visuelle avec `/target/preview.bmp` ;
+5. déplacer la cible à plusieurs endroits ;
+6. tester plusieurs distances et rotations ;
+7. une fois la localisation stable, passer à la distance puis à l'orientation fine.
 
-Les optimisations de vitesse seront faites après cette validation fonctionnelle. La stratégie prévue est de mémoriser la dernière boîte de cible et, après la première recherche globale, de limiter autant que possible le décodage/correction et la recherche à une ROI autour de la cible. En cas de perte de cible, retour automatique à une recherche globale.
+Les optimisations de pipeline restent volontairement reportées : après la première détection globale, la future voie rapide travaillera sur une ROI autour de la dernière cible connue et reviendra à la recherche globale en cas de perte.
