@@ -12,6 +12,8 @@
 #include "camera_settings_controller.h"
 #include "grayscale_diagnostic.h"
 #include "grayscale_diagnostic_api.h"
+#include "jpeg_diagnostic.h"
+#include "jpeg_diagnostic_api.h"
 #include "measurement_manager.h"
 #include "ov3660_camera_configurator.h"
 #include "placeholder_image_provider.h"
@@ -51,6 +53,7 @@ class GeometrieCameraApp : public Component {
   CameraResolutionController &resolution_controller();
   CameraSettingsController &settings_controller();
   GrayscaleDiagnostic &grayscale_diagnostic();
+  JpegDiagnostic &jpeg_diagnostic();
   Rgb565Diagnostic &rgb565_diagnostic();
   TargetSearchDiagnostic &target_search_diagnostic();
   Ov3660CameraConfigurator &camera_configurator();
@@ -64,6 +67,7 @@ class GeometrieCameraApp : public Component {
   CameraResolutionController resolution_controller_;
   CameraSettingsController settings_controller_;
   GrayscaleDiagnostic grayscale_diagnostic_;
+  JpegDiagnostic jpeg_diagnostic_;
   Rgb565Diagnostic rgb565_diagnostic_;
   TargetSearchDiagnostic target_search_diagnostic_;
   Ov3660CameraConfigurator camera_configurator_;
@@ -72,6 +76,7 @@ class GeometrieCameraApp : public Component {
   CameraApiHandler api_handler_;
   CameraSettingsApiHandler settings_api_handler_;
   GrayscaleDiagnosticApiHandler diagnostic_api_handler_;
+  JpegDiagnosticApiHandler jpeg_diagnostic_api_handler_;
   Rgb565DiagnosticApiHandler rgb565_diagnostic_api_handler_;
   TargetSearchDiagnosticApiHandler target_search_diagnostic_api_handler_;
   RuntimeDiagnosticsApiHandler runtime_diagnostics_api_handler_;
