@@ -40,6 +40,8 @@ GeometrieCameraApp
 ├── CameraResolutionController
 ├── CameraSettingsController
 │   └── CameraSettingsApiHandler
+├── Ov5640TimingController
+│   └── Ov5640TimingApiHandler
 ├── RuntimeDiagnostics
 │   └── RuntimeDiagnosticsApiHandler
 ├── ApiWsdlHandler
@@ -101,6 +103,30 @@ GET /api/camera/settings
 GET /api/camera/settings/set?<parametres>
 ```
 
+### `Ov5640TimingController` / `Ov5640TimingApiHandler`
+
+Diagnostic bas niveau du timing DVP spécifique au vrai capteur OV5640.
+
+Le contrôleur :
+
+- refuse toute écriture si le PID n'est pas `OV5640` ;
+- lit le registre `PCLK_RATIO` `0x3824` ;
+- lit `VFIFO_CTRL0C` `0x460C` pour vérifier que le PCLK manuel est actif ;
+- modifie uniquement les 5 bits du diviseur PCLK ;
+- relit immédiatement le registre et refuse l'opération si la valeur appliquée ne correspond pas à la demande ;
+- n'effectue aucune capture et ne traite aucune image.
+
+Routes temporaires de mise au point :
+
+```text
+GET /api/camera/timing
+GET /api/camera/timing/set?pclk_divider=<1..31>
+```
+
+**Important :** le driver OV5640 peut reprogrammer la PLL/PCLK lorsqu'un changement de `framesize` est appliqué. Pour un test reproductible : choisir d'abord la résolution, puis appliquer le `pclk_divider`, puis effectuer les captures suivantes sans changer de résolution.
+
+**Tests à prévoir :** plage 1..31, rejet d'un PID différent, échec si accès registres absent, vérification du readback et sérialisation HTTP cohérente. L'accès réel aux registres reste un test d'intégration matériel tant qu'il n'est pas abstrait derrière une interface capteur.
+
 ### `RuntimeDiagnostics` / `RuntimeDiagnosticsApiHandler`
 
 Instrumentation légère des intervalles entre passages de la boucle ESPHome et de la mémoire interne/PSRAM disponible. Aucun traitement d'image n'est effectué ici.
@@ -161,7 +187,7 @@ GET /diagnostic-jpeg/status
 GET /diagnostic-jpeg/image.jpg
 ```
 
-**But du test courant :** comparer la qualité native JPEG avec la voie GRAYSCALE bruitée et isoler les artefacts verts sans être faussé par une frame précédente. Si le JPEG devient exploitable, la piste suivante sera un décodage JPEG vers luminance pour la recherche de cible sans stocker une image RGB pleine résolution.
+**But du test courant :** comparer la qualité native JPEG avec la voie GRAYSCALE bruitée et isoler les artefacts verts sans être faussé par une frame précédente. Le test courant fait varier le diviseur PCLK de l'OV5640 pour déterminer si les artefacts sont dus à une marge de timing DVP insuffisante.
 
 **Tests à prévoir :** rejet d'un format non JPEG, première frame non publiée, seconde frame publiée, compteur utile/purge, changement de résolution suivi d'une purge, copie exacte d'un buffer connu, détection SOI/EOI, réutilisation/allocation du buffer, état en cas d'échec mémoire.
 
