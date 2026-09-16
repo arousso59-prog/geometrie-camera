@@ -13,16 +13,24 @@ constexpr uint16_t PCLK_RATIO_REGISTER = 0x3824;
 constexpr uint16_t VFIFO_CTRL0C_REGISTER = 0x460C;
 constexpr uint16_t HTS_HIGH_REGISTER = 0x380C;
 constexpr uint16_t VTS_HIGH_REGISTER = 0x380E;
+constexpr uint16_t JPEG_MODE_REGISTER = 0x4713;
+constexpr uint16_t DVP_HREF_CTRL_REGISTER = 0x471F;
 constexpr uint8_t PCLK_RATIO_MASK = 0x1F;
 constexpr uint8_t PCLK_MANUAL_ENABLE_MASK = 0x02;
 constexpr uint8_t MIN_PCLK_DIVIDER = 1;
 constexpr uint8_t MAX_PCLK_DIVIDER = PCLK_RATIO_MASK;
 constexpr uint16_t MIN_TOTAL_TIMING = 1;
 constexpr uint16_t MAX_TOTAL_TIMING = 0xFFFF;
+constexpr uint8_t MIN_HREF_BLANKING = 0;
+constexpr uint8_t MAX_HREF_BLANKING = 0xFF;
 }
 
 Ov5640TimingController::Ov5640TimingController()
-    : baseline_available_(false), baseline_hts_(0), baseline_vts_(0) {}
+    : baseline_available_(false),
+      baseline_hts_(0),
+      baseline_vts_(0),
+      baseline_jpeg_mode_(0),
+      baseline_href_blanking_(0) {}
 
 Ov5640TimingSnapshot Ov5640TimingController::snapshot() const {
   Ov5640TimingSnapshot result{};
@@ -34,9 +42,13 @@ Ov5640TimingSnapshot Ov5640TimingController::snapshot() const {
   result.pclk_manual = false;
   result.hts = -1;
   result.vts = -1;
+  result.jpeg_mode = -1;
+  result.href_blanking = -1;
   result.baseline_available = this->baseline_available_;
   result.baseline_hts = this->baseline_hts_;
   result.baseline_vts = this->baseline_vts_;
+  result.baseline_jpeg_mode = this->baseline_jpeg_mode_;
+  result.baseline_href_blanking = this->baseline_href_blanking_;
 
   sensor_t *sensor = esp_camera_sensor_get();
   if (sensor == nullptr) {
@@ -67,6 +79,13 @@ Ov5640TimingSnapshot Ov5640TimingController::snapshot() const {
   if (this->read_total_timing_(&hts, &vts)) {
     result.hts = hts;
     result.vts = vts;
+  }
+
+  uint8_t jpeg_mode = 0;
+  uint8_t href_blanking = 0;
+  if (this->read_jpeg_output_timing_(&jpeg_mode, &href_blanking)) {
+    result.jpeg_mode = jpeg_mode;
+    result.href_blanking = href_blanking;
   }
 
   return result;
@@ -199,36 +218,113 @@ bool Ov5640TimingController::set_vts(uint16_t vts) {
   return true;
 }
 
-bool Ov5640TimingController::restore_total_timing() {
+bool Ov5640TimingController::set_jpeg_mode(uint8_t mode) {
+  if (mode != 2 && mode != 3) {
+    ESP_LOGW(TAG, "Mode JPEG OV5640 non autorise pour ce test: %u", static_cast<unsigned>(mode));
+    return false;
+  }
+
+  if (!this->capture_baseline_if_needed_()) {
+    return false;
+  }
+
+  uint8_t before_mode = 0;
+  uint8_t before_blanking = 0;
+  if (!this->read_jpeg_output_timing_(&before_mode, &before_blanking)) {
+    return false;
+  }
+
+  if (!this->write_byte_register_(JPEG_MODE_REGISTER, mode)) {
+    return false;
+  }
+
+  uint8_t after_mode = 0;
+  uint8_t after_blanking = 0;
+  if (!this->read_jpeg_output_timing_(&after_mode, &after_blanking) || after_mode != mode) {
+    ESP_LOGE(TAG, "Readback JPEG mode inattendu: demande=0x%02X lecture=0x%02X", mode, after_mode);
+    this->write_byte_register_(JPEG_MODE_REGISTER, before_mode);
+    return false;
+  }
+
+  ESP_LOGW(TAG, "OV5640 JPEG mode 0x4713: 0x%02X -> 0x%02X", before_mode, after_mode);
+  return true;
+}
+
+bool Ov5640TimingController::set_href_blanking(uint8_t blanking) {
+  if (!this->capture_baseline_if_needed_()) {
+    return false;
+  }
+
+  uint8_t before_mode = 0;
+  uint8_t before_blanking = 0;
+  if (!this->read_jpeg_output_timing_(&before_mode, &before_blanking)) {
+    return false;
+  }
+
+  if (!this->write_byte_register_(DVP_HREF_CTRL_REGISTER, blanking)) {
+    return false;
+  }
+
+  uint8_t after_mode = 0;
+  uint8_t after_blanking = 0;
+  if (!this->read_jpeg_output_timing_(&after_mode, &after_blanking) || after_blanking != blanking) {
+    ESP_LOGE(TAG, "Readback HREF blanking inattendu: demande=0x%02X lecture=0x%02X",
+             blanking, after_blanking);
+    this->write_byte_register_(DVP_HREF_CTRL_REGISTER, before_blanking);
+    return false;
+  }
+
+  ESP_LOGW(TAG, "OV5640 HREF blanking 0x471F: 0x%02X -> 0x%02X", before_blanking, after_blanking);
+  return true;
+}
+
+bool Ov5640TimingController::restore_baseline() {
   if (!this->baseline_available_) {
-    ESP_LOGW(TAG, "Aucun timing HTS/VTS de reference a restaurer");
+    ESP_LOGW(TAG, "Aucune reference de timing OV5640 a restaurer");
     return false;
   }
 
   uint16_t current_hts = 0;
   uint16_t current_vts = 0;
-  if (!this->read_total_timing_(&current_hts, &current_vts)) {
+  uint8_t current_jpeg_mode = 0;
+  uint8_t current_href_blanking = 0;
+  if (!this->read_total_timing_(&current_hts, &current_vts) ||
+      !this->read_jpeg_output_timing_(&current_jpeg_mode, &current_href_blanking)) {
     return false;
   }
 
-  if (!this->write_total_timing_register_(HTS_HIGH_REGISTER, this->baseline_hts_) ||
-      !this->write_total_timing_register_(VTS_HIGH_REGISTER, this->baseline_vts_)) {
+  const bool writes_ok =
+      this->write_total_timing_register_(HTS_HIGH_REGISTER, this->baseline_hts_) &&
+      this->write_total_timing_register_(VTS_HIGH_REGISTER, this->baseline_vts_) &&
+      this->write_byte_register_(JPEG_MODE_REGISTER, this->baseline_jpeg_mode_) &&
+      this->write_byte_register_(DVP_HREF_CTRL_REGISTER, this->baseline_href_blanking_);
+  if (!writes_ok) {
     return false;
   }
 
   uint16_t restored_hts = 0;
   uint16_t restored_vts = 0;
+  uint8_t restored_jpeg_mode = 0;
+  uint8_t restored_href_blanking = 0;
   if (!this->read_total_timing_(&restored_hts, &restored_vts) ||
-      restored_hts != this->baseline_hts_ || restored_vts != this->baseline_vts_) {
-    ESP_LOGE(TAG, "Restauration HTS/VTS non confirmee");
+      !this->read_jpeg_output_timing_(&restored_jpeg_mode, &restored_href_blanking) ||
+      restored_hts != this->baseline_hts_ || restored_vts != this->baseline_vts_ ||
+      restored_jpeg_mode != this->baseline_jpeg_mode_ ||
+      restored_href_blanking != this->baseline_href_blanking_) {
+    ESP_LOGE(TAG, "Restauration de la reference OV5640 non confirmee");
     return false;
   }
 
-  ESP_LOGW(TAG, "OV5640 timing restaure: HTS 0x%04X -> 0x%04X, VTS 0x%04X -> 0x%04X",
-           current_hts, restored_hts, current_vts, restored_vts);
+  ESP_LOGW(TAG,
+           "OV5640 reference restauree: HTS 0x%04X->0x%04X VTS 0x%04X->0x%04X JPEG 0x%02X->0x%02X HREF 0x%02X->0x%02X",
+           current_hts, restored_hts, current_vts, restored_vts,
+           current_jpeg_mode, restored_jpeg_mode, current_href_blanking, restored_href_blanking);
+
   this->baseline_available_ = false;
   this->baseline_hts_ = 0;
   this->baseline_vts_ = 0;
+  this->baseline_jpeg_mode_ = 0;
+  this->baseline_href_blanking_ = 0;
   return true;
 }
 
@@ -241,14 +337,21 @@ bool Ov5640TimingController::capture_baseline_if_needed_() {
 
   uint16_t hts = 0;
   uint16_t vts = 0;
-  if (!this->read_total_timing_(&hts, &vts)) {
+  uint8_t jpeg_mode = 0;
+  uint8_t href_blanking = 0;
+  if (!this->read_total_timing_(&hts, &vts) ||
+      !this->read_jpeg_output_timing_(&jpeg_mode, &href_blanking)) {
     return false;
   }
 
   this->baseline_hts_ = hts;
   this->baseline_vts_ = vts;
+  this->baseline_jpeg_mode_ = jpeg_mode;
+  this->baseline_href_blanking_ = href_blanking;
   this->baseline_available_ = true;
-  ESP_LOGI(TAG, "Reference HTS/VTS memorisee: HTS=0x%04X VTS=0x%04X", hts, vts);
+  ESP_LOGI(TAG,
+           "Reference OV5640 memorisee: HTS=0x%04X VTS=0x%04X JPEG=0x%02X HREF=0x%02X",
+           hts, vts, jpeg_mode, href_blanking);
   return true;
 }
 
@@ -276,7 +379,31 @@ bool Ov5640TimingController::read_total_timing_(uint16_t *hts, uint16_t *vts) co
   return true;
 }
 
-bool Ov5640TimingController::write_total_timing_register_(uint16_t high_register, uint16_t value) const {
+bool Ov5640TimingController::read_jpeg_output_timing_(uint8_t *jpeg_mode,
+                                                      uint8_t *href_blanking) const {
+  if (jpeg_mode == nullptr || href_blanking == nullptr) {
+    return false;
+  }
+
+  sensor_t *sensor = esp_camera_sensor_get();
+  if (sensor == nullptr || sensor->id.PID != OV5640_PID || sensor->get_reg == nullptr) {
+    return false;
+  }
+
+  const int mode = sensor->get_reg(sensor, JPEG_MODE_REGISTER, 0xFF);
+  const int blanking = sensor->get_reg(sensor, DVP_HREF_CTRL_REGISTER, 0xFF);
+  if (mode < 0 || blanking < 0) {
+    ESP_LOGE(TAG, "Lecture JPEG mode/HREF blanking impossible");
+    return false;
+  }
+
+  *jpeg_mode = static_cast<uint8_t>(mode & 0xFF);
+  *href_blanking = static_cast<uint8_t>(blanking & 0xFF);
+  return true;
+}
+
+bool Ov5640TimingController::write_total_timing_register_(uint16_t high_register,
+                                                          uint16_t value) const {
   sensor_t *sensor = esp_camera_sensor_get();
   if (sensor == nullptr || sensor->id.PID != OV5640_PID || sensor->set_reg == nullptr) {
     return false;
@@ -292,10 +419,26 @@ bool Ov5640TimingController::write_total_timing_register_(uint16_t high_register
   return true;
 }
 
+bool Ov5640TimingController::write_byte_register_(uint16_t reg, uint8_t value) const {
+  sensor_t *sensor = esp_camera_sensor_get();
+  if (sensor == nullptr || sensor->id.PID != OV5640_PID || sensor->set_reg == nullptr) {
+    return false;
+  }
+
+  const int result = sensor->set_reg(sensor, reg, 0xFF, value);
+  if (result != 0) {
+    ESP_LOGE(TAG, "Ecriture registre OV5640 0x%04X impossible: %d", reg, result);
+    return false;
+  }
+  return true;
+}
+
 uint8_t Ov5640TimingController::min_pclk_divider() { return MIN_PCLK_DIVIDER; }
 uint8_t Ov5640TimingController::max_pclk_divider() { return MAX_PCLK_DIVIDER; }
 uint16_t Ov5640TimingController::min_total_timing() { return MIN_TOTAL_TIMING; }
 uint16_t Ov5640TimingController::max_total_timing() { return MAX_TOTAL_TIMING; }
+uint8_t Ov5640TimingController::min_href_blanking() { return MIN_HREF_BLANKING; }
+uint8_t Ov5640TimingController::max_href_blanking() { return MAX_HREF_BLANKING; }
 
 }  // namespace geometrie_camera_app
 }  // namespace esphome
