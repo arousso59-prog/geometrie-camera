@@ -72,9 +72,11 @@ JpegDiagnostic
 JpegFilteredDiagnostic
   - décodage JPEG par blocs
   - conversion immédiate en luminance 8 bits
+  - comptage des graines vertes pendant le décodage
         ↓
-JpegArtifactCorrector V3
+JpegArtifactCorrector V4 sparse
   - correction locale des artefacts verts/noirs
+  - parcours direct du masque compact au lieu d'un scan pixel par pixel
         ↓
 GrayFrameView corrigé
         ↓
@@ -117,7 +119,7 @@ Acquisition JPEG native de l'OV5640. ESPHome conservant une frame pré-acquise, 
 
 ### `JpegFilteredDiagnostic`
 
-Prépare l'image exploitable par la vision : décodage JPEG par blocs, conversion immédiate en luminance 8 bits, application du correcteur d'artefacts, conservation du buffer grayscale corrigé. Le BMP reste uniquement une visualisation de diagnostic.
+Prépare l'image exploitable par la vision : décodage JPEG par blocs, conversion immédiate en luminance 8 bits, construction du masque d'artefacts, application du correcteur et conservation du buffer grayscale corrigé. Le BMP reste uniquement une visualisation de diagnostic.
 
 Accès métier :
 
@@ -128,11 +130,22 @@ width()
 height()
 ```
 
-À 1600×1200, cette étape est actuellement le principal goulot de la chaîne complète : les mesures observées tournent autour de ~1,6 s pour le décodage JPEG et ~2,4 s pour la correction d'artefacts, soit environ 4 s au total, alors que la détection V5 est de l'ordre de quelques dixièmes de seconde. L'optimisation future doit donc porter prioritairement sur cette voie, sans dégrader la robustesse de la correction.
+Avant l'optimisation V1 du filtre, les mesures à 1600×1200 tournaient autour de ~1,6 s pour le décodage JPEG et ~2,4 s pour la correction d'artefacts, soit environ 4 s au total, alors que la détection V5 était déjà de l'ordre de quelques dixièmes de seconde. La V1 supprime plusieurs parcours complets inutiles : les graines vertes sont comptées pendant le décodage, le buffer image n'est plus intégralement remis à zéro avant d'être réécrit, et le correcteur parcourt directement les octets non nuls du masque. Les nouveaux temps doivent être validés sur l'ESP32 avant de fixer une nouvelle référence.
 
 ### `JpegArtifactCorrector`
 
-Algorithme de correction du défaut observé sur la voie JPEG : petits segments verts/noirs périodiques. La V3 corrige localement les défauts reconnus sans flou global.
+Responsabilité : corriger le défaut observé sur la voie JPEG : petits segments verts/noirs périodiques, sans flou global.
+
+La V4 conserve les règles de correction de la V3 mais remplace le balayage horizontal exhaustif par une recherche **sparse** :
+
+- le masque vert reste compact à 1 bit/pixel ;
+- les lignes sont examinées par groupes de 8 pixels ;
+- les groupes sans aucune graine verte sur la ligne ou ses voisines sont sautés immédiatement ;
+- les positions réellement candidates sont ensuite validées avec les mêmes règles de finesse verticale ;
+- les intervalles et les règles de réparation vert/noir restent inchangés ;
+- le nombre brut de graines vertes est fourni directement par le décodeur JPEG, supprimant un second scan complet du masque.
+
+La frontière de test reste simple : à JPEG identique, les statistiques de correction et l'image grayscale corrigée doivent rester équivalentes à la V3, tandis que `correction_ms` doit diminuer sensiblement.
 
 ### `TargetDetector`
 
@@ -285,14 +298,14 @@ XCLK = 8 MHz
 idle_framerate = 0
 ```
 
-Les essais de timing n'ont pas supprimé le motif parasite ; la correction logicielle V3 reste la voie retenue.
+Les essais de timing n'ont pas supprimé le motif parasite ; la correction logicielle V4 sparse reste la voie retenue.
 
 ## Optimisations après validation V5.4
 
-La V5 réduit déjà fortement le coût de détection. Une fois la robustesse aux cibles en biais validée, le principal chantier de performance redevient `JpegFilteredDiagnostic` / `JpegArtifactCorrector` :
+La V5 réduit déjà fortement le coût de détection. Le chantier de performance actuel porte sur `JpegFilteredDiagnostic` / `JpegArtifactCorrector` :
 
-1. mesurer séparément décodage JPEG et correction sur plusieurs frames ;
-2. réduire le coût du correcteur sans changer son résultat fonctionnel ;
+1. **V1 réalisée :** supprimer les scans complets évitables et rendre la correction sparse sans changer ses règles fonctionnelles ;
+2. mesurer les nouveaux temps sur plusieurs frames et comparer les statistiques/images à la V3 ;
 3. après première détection globale, mémoriser la dernière cible ;
 4. recherche suivante dans une ROI ;
 5. correction d'artefacts limitée à cette ROI lorsque l'architecture de décodage le permet ;
