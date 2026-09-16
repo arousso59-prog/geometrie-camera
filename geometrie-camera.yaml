@@ -82,11 +82,10 @@ geometrie_camera_app:
 # ESPHome 2026.7.3 n'expose pas 2592x1944 dans son schema YAML ; le mode maximal
 # directement supporte est QSXGA 2560x1920, soit seulement ~2,5 % de pixels en moins.
 #
-# Test courant : JPEG produit directement par l'ISP OV5640 a QSXGA.
-# Objectif : verifier si le traitement interne du capteur donne une image propre et
-# peu bruitee, puis mesurer les temps avant de decider si la mesure utilisera un
-# decodage JPEG vers luminance.
-# XCLK conserve a 16 MHz pour comparer avec la voie brute precedente.
+# Test courant : JPEG produit directement par l'ISP OV5640.
+# Dernier essai XCLK bas pour verifier si les artefacts verticaux dependent de
+# l'horloge externe. Les essais precedents 20 -> 10 MHz n'avaient pas change le
+# defaut ; ce test a 5 MHz est volontairement isole, sans autre modification.
 # framebuffer unique en PSRAM ; acquisition uniquement sur demande.
 
 i2c:
@@ -102,7 +101,7 @@ esp32_camera:
 
   external_clock:
     pin: GPIO15
-    frequency: 16MHz
+    frequency: 5MHz
 
   i2c_id: camera_i2c
 
