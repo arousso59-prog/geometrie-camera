@@ -27,11 +27,12 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   std::string xml;
   xml.reserve(12288);
   xml += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-  xml += "<api name=\"geometrie-camera\" version=\"3\" style=\"REST-over-HTTP\">\n";
+  xml += "<api name=\"geometrie-camera\" version=\"4\" style=\"REST-over-HTTP\">\n";
   xml += "  <description>API de la voie camera validee : OV5640 JPEG, correction grayscale, detection cible, reglages et diagnostic runtime.</description>\n";
   xml += "  <conventions>\n";
   xml += "    <item>Les routes de commande de mise au point utilisent encore HTTP GET.</item>\n";
   xml += "    <item>La detection cible travaille uniquement sur la derniere image grayscale corrigee.</item>\n";
+  xml += "    <item>target_found indique l acceptation finale ; le bloc target expose le meilleur candidat meme s il reste sous le seuil.</item>\n";
   xml += "  </conventions>\n";
 
   xml += "  <method name=\"api_wsdl\" http=\"GET\" path=\"/api/wsdl\">\n";
@@ -105,14 +106,14 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
 
   xml += "  <method name=\"target_detect\" http=\"GET\" path=\"/target/detect\">\n";
-  xml += "    <comment>Lance TargetDetector sur la derniere image grayscale corrigee. Ne relance ni capture ni filtrage.</comment>\n";
+  xml += "    <comment>Lance TargetDetector V2 sur la derniere image grayscale corrigee. Ne relance ni capture ni filtrage. target_found indique si le meilleur candidat depasse le seuil d acceptation.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"409\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
   xml += "  <method name=\"target_status\" http=\"GET\" path=\"/target/status\">\n";
-  xml += "    <comment>Relit le dernier resultat : trouvee, centre, taille, rotation par quart de tour, qualite et temps de detection.</comment>\n";
+  xml += "    <comment>Relit le dernier resultat. Le bloc target contient toujours le meilleur candidat disponible, meme si target_found vaut false.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
