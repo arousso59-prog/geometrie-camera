@@ -26,6 +26,11 @@
    - changement de méthode, paramètre ou comportement contractuel ;
    - le WSDL-like doit refléter exactement les routes compilées.
 
+6. **Les gros buffers image/vision doivent être explicitement budgétés et placés en PSRAM.**
+   - ne pas utiliser `std::vector` par défaut pour des workspaces pouvant dépasser quelques dizaines de kilo-octets ;
+   - réutiliser les buffers entre appels plutôt que réallouer ;
+   - réserver la RAM interne aux structures légères et aux besoins temps-réel.
+
 ## Architecture actuelle
 
 ```text
@@ -145,7 +150,9 @@ Méthode V5 :
 
 À 1600×1200, la réduction est typiquement ×4 : une cible de 40 px reste donc de l'ordre de 10 px dans la carte de localisation. À 2560×1920, le facteur augmente automatiquement pour garder un coût voisin.
 
-**Frontières de test :** carré sombre sur fond clair, lignes verticales parasites, plusieurs objets, cible déplacée dans l'image, faible contraste local, légère rotation/perspective.
+Le workspace de localisation est persistant et alloué explicitement en PSRAM. À 1600×1200, il représente typiquement environ 120 ko pour l'image réduite et jusqu'à 480 ko pour la file de composantes connexes. Ces buffers ne doivent pas revenir dans le heap interne via des conteneurs STL par défaut.
+
+**Frontières de test :** carré sombre sur fond clair, lignes verticales parasites, plusieurs objets, cible déplacée dans l'image, faible contraste local, légère rotation/perspective, allocation du workspace en PSRAM.
 
 ### `TargetCodeDecoder`
 
