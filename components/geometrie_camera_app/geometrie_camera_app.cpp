@@ -25,7 +25,7 @@ GeometrieCameraApp::GeometrieCameraApp()
       api_handler_(&this->camera_manager_, &this->measurement_manager_),
       settings_api_handler_(&this->settings_controller_),
       diagnostic_api_handler_(&this->grayscale_diagnostic_, &this->resolution_controller_),
-      jpeg_diagnostic_api_handler_(&this->jpeg_diagnostic_),
+      jpeg_diagnostic_api_handler_(&this->jpeg_diagnostic_, &this->resolution_controller_),
       rgb565_diagnostic_api_handler_(&this->rgb565_diagnostic_),
       target_search_diagnostic_api_handler_(&this->target_search_diagnostic_, &this->grayscale_diagnostic_,
                                             &this->resolution_controller_),
@@ -47,6 +47,7 @@ void GeometrieCameraApp::loop() {
   this->runtime_diagnostics_.record_loop();
   this->camera_manager_.loop();
   this->camera_configurator_.loop();
+  this->jpeg_diagnostic_.loop();
 
   if (!this->api_registered_) {
     this->register_api_if_possible_();
