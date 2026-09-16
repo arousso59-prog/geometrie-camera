@@ -29,46 +29,118 @@ Y9    GPIO16
 PCLK  GPIO13
 ```
 
-## Voie image retenue
+## Pipeline actuel
 
 ```text
 OV5640 JPEG
    ↓
 frame fraîche
    ↓
-décodage grayscale 8 bits
+JpegFilteredDiagnostic V2
    ↓
-JpegArtifactCorrector V3
+JpegArtifactCorrector sparse / lookup masks
    ↓
 buffer grayscale corrigé
-   ↓
-TargetDetectionService
    ↓
 TargetDetector V5.4
    ├── TargetCandidateFinder V5.2
    ├── TargetCornerRefiner V5.4
    └── TargetCodeDecoder V5.4
    ↓
-TargetObservation
+TargetObservation + 4 coins
    ↓
-distance / orientation / géométrie
+GeometryMeasurementEngine V1
+   ↓
+distance + X/Y/Z + angles de visée + yaw/pitch/roll cible
 ```
 
-Le correcteur V3 supprime la grande majorité des artefacts verts/noirs sans appliquer de flou global.
+La détection V5.4 combine localisation rapide, raffinement pleine résolution des quatre coins et lecture projective du code 7×7. Le candidat brut reste toujours testé en secours.
 
-La V5 sépare désormais trois problèmes :
+Le filtre V2 est désormais la base de travail. À 1600×1200, un essai représentatif donne :
 
-1. **retrouver rapidement la petite cible dans toute l'image** ;
-2. **raffiner ses quatre coins sur l'image pleine résolution** ;
-3. **lire le code 7×7 dans le quadrilatère obtenu**.
+```text
+decode JPEG   ≈ 1476 ms
+correction    ≈ 553 ms
+total filtre  ≈ 2036 ms
+```
 
-`TargetCandidateFinder` réduit l'image à environ 320 px maximum, applique un seuillage local puis recherche des composantes sombres quasi carrées. Les 8 meilleurs candidats sont conservés dans un buffer persistant afin de limiter le coût CPU et la pile du handler HTTP.
+Les essais répétés sont du même ordre de grandeur et la détection n'a pas montré de régression par rapport à la version précédente.
 
-`TargetCornerRefiner` reprend chaque candidat dans l'image pleine résolution et déplace localement ses quatre coins en recherchant les transitions attendues entre le fond clair et le cadre noir. Si ce raffinement n'est pas suffisamment cohérent, le candidat brut reste utilisé.
+## Mesure V1 : distance et angles
 
-`TargetCodeDecoder` teste le candidat brut et, lorsqu'il existe, le candidat raffiné. Depuis la V5.4, le motif 7×7 est projeté avec une homographie projective plutôt qu'une simple interpolation bilinéaire, afin de mieux supporter une cible vue en biais. Le score final est accepté à partir de `0.82` après les gardes indépendantes de contraste, cadre noir et fond extérieur.
+La taille physique de cible par défaut est :
 
-Sur les essais réels en 1600×1200 avant ajout du raffinement, la localisation/détection complète était de l'ordre de 0,16 s. Le principal goulot de performance reste le filtre JPEG/correction d'artefacts, autour de 4 s au total sur les mesures actuelles.
+```text
+50 mm
+```
+
+La résolution de l'image et la taille apparente de la cible ne suffisent pas à connaître une distance absolue : la focale réelle du module caméra doit être calibrée. Le champ de vision commercial annoncé n'est pas utilisé comme référence de précision.
+
+### Calibration initiale
+
+Placer la cible :
+
+- approximativement de face ;
+- proche du centre de l'image ;
+- à une distance caméra → cible mesurée aussi précisément que possible.
+
+Puis réaliser normalement :
+
+```text
+capture
+→ filtre
+→ /target/detect
+```
+
+et appeler par exemple, pour une cible située à 2000 mm :
+
+```text
+GET /measurement/calibrate?distance_mm=2000&target_size_mm=50
+```
+
+Le firmware estime alors `fx` et `fy` à partir de la taille réelle de 50 mm et de la taille détectée en pixels. La résolution utilisée pendant cette calibration est mémorisée.
+
+Pour les autres résolutions de même cadrage optique, les paramètres intrinsèques sont redimensionnés automatiquement. Par exemple une calibration en 1600×1200 peut servir en 800×600 pour les premiers essais.
+
+### Calcul d'une mesure
+
+Après une nouvelle séquence :
+
+```text
+capture
+→ filtre
+→ /target/detect
+→ /measurement/compute
+```
+
+la réponse de mesure contient notamment :
+
+```text
+distance_mm
+x_mm
+y_mm
+z_mm
+bearing_yaw_deg
+bearing_pitch_deg
+target_yaw_deg
+target_pitch_deg
+target_roll_deg
+quality
+```
+
+Le repère caméra est :
+
+```text
+X positif = droite
+Y positif = bas
+Z positif = avant
+```
+
+`distance_mm` est la distance euclidienne caméra → centre de cible, alors que `z_mm` représente la profondeur suivant l'axe optique.
+
+Les angles `bearing_*` décrivent la direction du centre de la cible. Les angles `target_*` décrivent l'orientation du plan de la cible, obtenue par décomposition de l'homographie des quatre coins.
+
+Cette V1 ne compense pas encore précisément la distorsion radiale de l'objectif. Elle doit d'abord permettre de mesurer l'erreur réelle et la répétabilité avant d'ajouter une calibration optique plus complète.
 
 ## Architecture
 
@@ -93,27 +165,24 @@ GET /diagnostic-jpeg/filtered.bmp
 GET /target/detect
 GET /target/status
 GET /target/preview.bmp
+
+GET /measurement/config
+GET /measurement/config/set?target_size_mm=<mm>
+GET /measurement/calibrate?distance_mm=<mm>&target_size_mm=<optionnel>
+GET /measurement/compute
+GET /measurement/status
 ```
 
-Les routes de cible restent inchangées avec la V5.4 :
-
-- `/target/detect` traite la dernière image déjà filtrée ;
-- `/target/status` relit le dernier résultat ;
-- `/target/preview.bmp` affiche une miniature annotée du meilleur résultat/candidat.
-
-`/api/wsdl` est la référence du contrat HTTP compilé.
+`/api/wsdl` est la référence du contrat HTTP compilé. Version actuelle : **10**.
 
 ## Étape actuelle
 
-Valider la V5.4 sur la cible réelle :
-
-1. capture JPEG en 1600×1200 ;
-2. filtre V3 ;
-3. `/target/detect` ;
-4. tester d'abord la cible presque droite pour vérifier qu'il n'y a pas de régression ;
-5. incliner progressivement la cible et surveiller `target_found`, `quality` et les logs `coarse/refined` ;
-6. tester ensuite 800×600 et 1600×1200 à distance comparable ;
-7. retirer complètement la cible et vérifier `target_found=false` ;
-8. une fois cette robustesse confirmée, passer à la distance puis à l'orientation fine.
-
-Après validation V5.4, la prochaine optimisation de performance doit porter sur `JpegFilteredDiagnostic` / `JpegArtifactCorrector`. La future voie rapide utilisera ensuite une ROI autour de la dernière cible connue et reviendra à la recherche globale en cas de perte.
+1. compiler/flasher la V1 de mesure ;
+2. calibrer avec la cible 50 mm à une distance connue ;
+3. vérifier la distance à plusieurs distances réelles ;
+4. vérifier les angles de visée en déplaçant la cible horizontalement et verticalement ;
+5. vérifier yaw/pitch/roll en inclinant la cible ;
+6. mesurer la répétabilité ;
+7. corriger ensuite la calibration optique/distorsion si nécessaire ;
+8. passer à l'acquisition continue ;
+9. revenir ensuite sur ROI et optimisation de performance.
