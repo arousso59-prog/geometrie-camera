@@ -25,17 +25,20 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
                                         : "unknown";
 
   std::string xml;
-  xml.reserve(18000);
+  xml.reserve(19000);
   xml += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-  xml += "<api name=\"geometrie-camera\" version=\"10\" style=\"REST-over-HTTP\">\n";
-  xml += "  <description>API camera OV5640 : capture JPEG, correction grayscale, detection cible, calibration optique V1, distance et pose 3D.</description>\n";
+  xml += "<api name=\"geometrie-camera\" version=\"11\" style=\"REST-over-HTTP\">\n";
+  xml += "  <description>API camera OV5640 : capture JPEG, correction grayscale, detection cible, calibration optique verrouillee, distance robuste par taille apparente et orientation du plan cible.</description>\n";
   xml += "  <conventions>\n";
   xml += "    <item>Les routes de commande de mise au point utilisent encore HTTP GET.</item>\n";
   xml += "    <item>La detection cible travaille uniquement sur la derniere image grayscale corrigee.</item>\n";
   xml += "    <item>La V5 separe localisation de la cible et lecture du code 7x7 ; target_found indique l acceptation finale.</item>\n";
   xml += "    <item>Depuis la V5.4, les coins des candidats peuvent etre raffines sur l image pleine resolution et le code 7x7 est projete par homographie ; le candidat brut reste teste en secours.</item>\n";
-  xml += "    <item>La mesure V1 exige une calibration de focale a distance connue. La cible doit etre approximativement centree et de face pendant cette calibration.</item>\n";
-  xml += "    <item>Le repere camera de la mesure est X vers la droite, Y vers le bas et Z vers l avant. distance_mm est la distance euclidienne au centre de la cible ; z_mm est la profondeur optique.</item>\n";
+  xml += "    <item>La mesure exige une calibration de focale a distance connue. La cible doit etre approximativement centree et de face pendant cette calibration.</item>\n";
+  xml += "    <item>Une calibration valide est verrouillee contre une nouvelle calibration accidentelle. Le parametre force=1 est requis pour la remplacer explicitement.</item>\n";
+  xml += "    <item>Le repere camera est X vers la droite, Y vers le bas et Z vers l avant. z_mm provient de la taille apparente de la cible ; distance_mm est la distance euclidienne au centre.</item>\n";
+  xml += "    <item>z_from_width_mm et z_from_height_mm exposent les deux estimations independantes. La plus petite est retenue comme z_mm afin de limiter la surestimation due a une dimension raccourcie par perspective.</item>\n";
+  xml += "    <item>La decomposition homographique ne pilote plus la distance. Elle ne valide yaw/pitch/roll que si pose_z_mm reste a moins de 25 pourcent de z_mm ; sinon pose_valid=false.</item>\n";
   xml += "    <item>La calibration est stockee pour la resolution de reference puis fx, fy, cx et cy sont redimensionnes proportionnellement pour les autres resolutions de meme cadrage optique.</item>\n";
   xml += "  </conventions>\n";
 
@@ -110,7 +113,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
 
   xml += "  <method name=\"target_detect\" http=\"GET\" path=\"/target/detect\">\n";
-  xml += "    <comment>Lance TargetDetector V5.4 sur la derniere image grayscale corrigee. Les quatre coins du meilleur code valide sont conserves en interne pour la mesure de pose. Ne relance ni capture ni filtrage.</comment>\n";
+  xml += "    <comment>Lance TargetDetector V5.4 sur la derniere image grayscale corrigee. Les quatre coins du meilleur code valide sont conserves en interne pour la mesure. Ne relance ni capture ni filtrage.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"409\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
@@ -130,36 +133,37 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
 
   xml += "  <method name=\"measurement_config\" http=\"GET\" path=\"/measurement/config\">\n";
-  xml += "    <comment>Expose la taille physique de cible et les intrinseques de calibration actuellement memorises.</comment>\n";
+  xml += "    <comment>Expose la taille physique de cible, la calibration, son verrou et les diagnostics de mesure.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
   xml += "  <method name=\"measurement_config_set\" http=\"GET\" path=\"/measurement/config/set\">\n";
-  xml += "    <comment>Definit la taille physique du carre cible. Modifier cette taille invalide la calibration de focale precedente.</comment>\n";
+  xml += "    <comment>Definit la taille physique du carre cible. Modifier cette taille invalide la calibration de focale precedente et leve son verrou.</comment>\n";
   xml += "    <parameter name=\"target_size_mm\" location=\"query\" required=\"true\" type=\"number\" allowed=\"1..1000\"/>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"400\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
   xml += "  <method name=\"measurement_calibrate\" http=\"GET\" path=\"/measurement/calibrate\">\n";
-  xml += "    <comment>Calibre fx et fy a partir de la derniere cible detectee, placee approximativement de face et centree a une distance connue. La calibration est enregistree a la resolution courante.</comment>\n";
+  xml += "    <comment>Calibre fx et fy a partir de la derniere cible detectee, placee approximativement de face et centree a une distance connue. Une calibration deja valide est protegee contre l ecrasement accidentel ; force=1 autorise explicitement son remplacement.</comment>\n";
   xml += "    <parameter name=\"distance_mm\" location=\"query\" required=\"true\" type=\"number\" allowed=\"50..20000\"/>\n";
   xml += "    <parameter name=\"target_size_mm\" location=\"query\" required=\"false\" type=\"number\" allowed=\"1..1000\"/>\n";
+  xml += "    <parameter name=\"force\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0,1\" default=\"0\"/>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"400\" content_type=\"application/json\"/>\n";
-  xml += "    <response code=\"409\" content_type=\"application/json\"/>\n";
+  xml += "    <response code=\"409\" content_type=\"application/json\">calibration_locked, current_target_detection_required ou target_not_found.</response>\n";
   xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
   xml += "  <method name=\"measurement_compute\" http=\"GET\" path=\"/measurement/compute\">\n";
-  xml += "    <comment>Calcule la distance, X/Y/Z, les angles de visee et yaw/pitch/roll du plan cible par decomposition de l homographie des quatre coins. Reutilise uniquement la derniere detection courante.</comment>\n";
+  xml += "    <comment>Calcule d abord z depuis la taille apparente des quatre coins calibres, puis X/Y et distance depuis le rayon du centre cible. Expose z_from_width_mm et z_from_height_mm. L homographie sert seulement a yaw/pitch/roll et pose_valid reste faux si pose_z_mm differe de plus de 25 pourcent de z_mm.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"409\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
   xml += "  <method name=\"measurement_status\" http=\"GET\" path=\"/measurement/status\">\n";
-  xml += "    <comment>Relit la derniere mesure et la calibration sans nouveau calcul.</comment>\n";
+  xml += "    <comment>Relit la derniere mesure, pose_valid, les deux estimations de profondeur et la calibration verrouillee sans nouveau calcul.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
