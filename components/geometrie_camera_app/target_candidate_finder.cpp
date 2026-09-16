@@ -14,9 +14,10 @@ namespace geometrie_camera_app {
 namespace {
 static const char *const TAG = "target_candidate_finder";
 
-// V5.1 : la localisation doit rester tres legere. A 1600x1200, cette borne
-// produit typiquement une carte d'environ 229x172 pixels (facteur x7).
-constexpr uint16_t MAX_REDUCED_DIMENSION = 256;
+// V5.2 : maintenant que les buffers sont en PSRAM et que la pile du thread HTTP
+// ne porte plus le tableau des candidats, on remonte la resolution de localisation.
+// A 1600x1200, cette borne produit une carte 320x240 pixels (facteur x5).
+constexpr uint16_t MAX_REDUCED_DIMENSION = 320;
 constexpr uint16_t LOCAL_TILE_SIZE = 20;
 constexpr uint8_t LOCAL_DARK_MARGIN = 8;
 constexpr uint32_t MIN_COMPONENT_PIXELS = 4;
@@ -78,28 +79,37 @@ bool TargetCandidateFinder::find(const GrayFrameView &frame, TargetCandidateSet 
                                MAX_REDUCED_DIMENSION));
 
   if (!this->build_reduced_image_(frame, scale)) {
-    ESP_LOGE(TAG, "V5.1 reduction/workspace failed");
+    ESP_LOGE(TAG, "V5.2 reduction/workspace failed");
     return false;
   }
   const uint32_t reduced_ms = millis();
-  ESP_LOGD(TAG, "V5.1 reduced %ux%u -> %ux%u scale=%u in %u ms",
+  ESP_LOGD(TAG, "V5.2 reduced %ux%u -> %ux%u scale=%u in %u ms",
            static_cast<unsigned>(frame.width), static_cast<unsigned>(frame.height),
            static_cast<unsigned>(this->reduced_width_), static_cast<unsigned>(this->reduced_height_),
            static_cast<unsigned>(scale), static_cast<unsigned>(reduced_ms - started_ms));
 
   if (!this->build_local_threshold_map_()) {
-    ESP_LOGE(TAG, "V5.1 local threshold failed");
+    ESP_LOGE(TAG, "V5.2 local threshold failed");
     return false;
   }
   const uint32_t threshold_ms = millis();
-  ESP_LOGD(TAG, "V5.1 threshold in %u ms", static_cast<unsigned>(threshold_ms - reduced_ms));
+  ESP_LOGD(TAG, "V5.2 threshold in %u ms", static_cast<unsigned>(threshold_ms - reduced_ms));
 
   this->collect_components_(frame, scale, result);
   const uint32_t components_ms = millis();
-  ESP_LOGD(TAG, "V5.1 components=%u in %u ms, total=%u ms",
+  ESP_LOGD(TAG, "V5.2 components=%u in %u ms, total=%u ms",
            static_cast<unsigned>(result.count),
            static_cast<unsigned>(components_ms - threshold_ms),
            static_cast<unsigned>(components_ms - started_ms));
+
+  // Diagnostic temporaire de validation V5.2 : permet de distinguer un echec
+  // de localisation d'un rejet ulterieur par TargetCodeDecoder sans changer l'API.
+  for (size_t index = 0; index < result.count; ++index) {
+    const TargetCandidate &candidate = result.candidates[index];
+    ESP_LOGD(TAG, "V5.2 candidate[%u] center=(%.1f,%.1f) size=%.1fx%.1f score=%.3f",
+             static_cast<unsigned>(index), candidate.center_x, candidate.center_y,
+             candidate.width, candidate.height, candidate.localization_score);
+  }
   return true;
 }
 
@@ -192,8 +202,8 @@ bool TargetCandidateFinder::build_reduced_image_(const GrayFrameView &frame, uin
     return false;
   }
 
-  // V5.1 : la carte basse resolution ne sert qu'a localiser des zones sombres.
-  // Une moyenne exhaustive de chaque bloc source faisait des millions d'acces
+  // V5.2 : la carte basse resolution ne sert qu'a localiser des zones sombres.
+  // Une moyenne exhaustive de chaque bloc source ferait des millions d'acces
   // PSRAM. Cinq echantillons suffisent ici ; le decodage 7x7 reste pleine resolution.
   for (uint16_t ry = 0; ry < this->reduced_height_; ++ry) {
     const uint32_t source_y0 = static_cast<uint32_t>(ry) * scale;
