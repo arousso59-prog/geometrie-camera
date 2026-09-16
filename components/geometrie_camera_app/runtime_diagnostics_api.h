@@ -6,12 +6,13 @@ namespace esphome {
 namespace geometrie_camera_app {
 
 class GrayscaleDiagnostic;
+class JpegDiagnostic;
 class RuntimeDiagnostics;
 class TargetSearchDiagnostic;
 
 class RuntimeDiagnosticsApiHandler : public AsyncWebHandler {
  public:
-  RuntimeDiagnosticsApiHandler(RuntimeDiagnostics *runtime, GrayscaleDiagnostic *grayscale,
+  RuntimeDiagnosticsApiHandler(RuntimeDiagnostics *runtime, GrayscaleDiagnostic *grayscale, JpegDiagnostic *jpeg,
                                TargetSearchDiagnostic *target_search);
 
   bool canHandle(AsyncWebServerRequest *request) const override;
@@ -20,6 +21,7 @@ class RuntimeDiagnosticsApiHandler : public AsyncWebHandler {
  private:
   RuntimeDiagnostics *runtime_;
   GrayscaleDiagnostic *grayscale_;
+  JpegDiagnostic *jpeg_;
   TargetSearchDiagnostic *target_search_;
 };
 
