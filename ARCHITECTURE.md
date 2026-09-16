@@ -38,6 +38,9 @@ GeometrieCameraApp
 ├── JpegFilteredDiagnostic
 │   ├── JpegArtifactCorrector
 │   └── JpegFilteredDiagnosticApiHandler
+├── TargetDetectionService
+│   ├── TargetDetector (fourni par MeasurementManager)
+│   └── TargetDetectionApiHandler
 ├── MeasurementManager
 │   ├── TargetDetector
 │   └── GeometryMeasurementEngine
@@ -67,12 +70,14 @@ JpegArtifactCorrector V3
         ↓
 GrayFrameView corrigé
         ↓
+TargetDetectionService
+        ↓
 TargetDetector
         ↓
-MeasurementManager / GeometryMeasurementEngine
+TargetObservation
 ```
 
-La liaison `JpegFilteredDiagnostic -> TargetDetector` est la prochaine étape à implémenter. `JpegFilteredDiagnostic` expose désormais directement `grayscale_data()` et `grayscale_stride()` afin que le détecteur n'ait aucune dépendance au format BMP.
+Une fois la détection de la cible réelle validée, `MeasurementManager / GeometryMeasurementEngine` utiliseront cette observation pour la distance et l'orientation fine.
 
 ## Responsabilités
 
@@ -104,7 +109,7 @@ Prépare l'image exploitable par la vision :
 - conserve le buffer grayscale corrigé ;
 - construit encore un en-tête/palette BMP pour validation visuelle, mais le BMP n'est pas une dépendance du pipeline métier.
 
-Accès métier prévus :
+Accès métier :
 
 ```text
 grayscale_data()
@@ -123,11 +128,37 @@ Algorithme pur de correction du défaut observé sur la voie JPEG : petits segme
 
 Transforme un `GrayFrameView` non propriétaire en `TargetObservation`. Il reste indépendant d'ESPHome, du JPEG, du HTTP et du stockage d'image.
 
+La version actuelle recherche le motif 7×7 sur l'image entière et retourne : centre, largeur/hauteur, qualité et orientation discrète 0/90/180/270 degrés. L'orientation fine/perspective sera ajoutée après validation de la cible réelle.
+
 **Tests prioritaires :** cible synthétique, quatre orientations, absence de cible, contraste insuffisant, différentes tailles/résolutions, stabilité des coordonnées et du score.
+
+### `TargetDetectionService`
+
+Pont métier très fin entre l'image corrigée et `TargetDetector` :
+
+- vérifie qu'une image filtrée valide est disponible ;
+- construit un `GrayFrameView` sans copie ;
+- appelle `TargetDetector` ;
+- mémorise le dernier `TargetObservation`, le numéro de source et le temps de détection.
+
+Il ne déclenche volontairement ni capture ni filtrage : les trois étapes restent indépendantes pendant la validation fonctionnelle.
+
+**Frontière de test :** injecter une source grayscale connue et un détecteur, vérifier propagation du résultat et rejet d'une source indisponible.
+
+### `TargetDetectionApiHandler`
+
+Expose uniquement la validation de cible :
+
+```text
+GET /target/detect
+GET /target/status
+```
+
+`/target/detect` traite la dernière image filtrée ; `/target/status` relit le dernier résultat sans retraitement.
 
 ### `MeasurementManager`
 
-Enchaîne `TargetDetector` puis `GeometryMeasurementEngine` et conserve la dernière mesure valide.
+Enchaînera `TargetDetector` puis `GeometryMeasurementEngine` une fois la cible réelle validée. Il conserve déjà la dernière mesure et le compteur de mesures valides.
 
 ### `GeometryMeasurementEngine`
 
@@ -175,6 +206,8 @@ GET /diagnostic-jpeg/image.jpg
 GET /diagnostic-jpeg/filter
 GET /diagnostic-jpeg/filter-status
 GET /diagnostic-jpeg/filtered.bmp
+GET /target/detect
+GET /target/status
 ```
 
 ## Sous-systèmes supprimés après validation
@@ -183,14 +216,12 @@ Le nettoyage suivant est volontaire : ces composants correspondaient à des bran
 
 - `GrayscaleDiagnostic` et son API ;
 - `Rgb565Diagnostic` et son API ;
-- `TargetSearchDiagnostic` GRAYSCALE et son API ;
+- ancien `TargetSearchDiagnostic` GRAYSCALE et son API ;
 - `Ov5640TimingController` / API de registres ;
 - `Ov3660CameraConfigurator` ;
 - `ImageProvider`, `PlaceholderImageProvider`, image placeholder ;
 - `CameraManager` historique ;
 - `CameraApiHandler` historique (`/api/status`, `/api/capture`, `/api/measure`, `/image.jpg`).
-
-Une nouvelle API de cible/mesure sera créée uniquement quand la chaîne JPEG corrigée sera réellement raccordée à `TargetDetector`.
 
 ## État matériel / image retenu
 
