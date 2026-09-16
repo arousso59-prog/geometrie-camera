@@ -25,13 +25,13 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
                                         : "unknown";
 
   std::string xml;
-  xml.reserve(10240);
+  xml.reserve(12288);
   xml += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-  xml += "<api name=\"geometrie-camera\" version=\"2\" style=\"REST-over-HTTP\">\n";
-  xml += "  <description>API actuelle de la voie camera validee : OV5640 JPEG, correction grayscale, reglages et diagnostic runtime.</description>\n";
+  xml += "<api name=\"geometrie-camera\" version=\"3\" style=\"REST-over-HTTP\">\n";
+  xml += "  <description>API de la voie camera validee : OV5640 JPEG, correction grayscale, detection cible, reglages et diagnostic runtime.</description>\n";
   xml += "  <conventions>\n";
   xml += "    <item>Les routes de commande de mise au point utilisent encore HTTP GET.</item>\n";
-  xml += "    <item>Les anciennes routes GRAYSCALE, RGB565, timing registres, placeholder et target GRAYSCALE ont ete retirees.</item>\n";
+  xml += "    <item>La detection cible travaille uniquement sur la derniere image grayscale corrigee.</item>\n";
   xml += "  </conventions>\n";
 
   xml += "  <method name=\"api_wsdl\" http=\"GET\" path=\"/api/wsdl\">\n";
@@ -99,9 +99,22 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
 
   xml += "  <method name=\"jpeg_filtered_image\" http=\"GET\" path=\"/diagnostic-jpeg/filtered.bmp\">\n";
-  xml += "    <comment>Retourne le BMP grayscale corrige pour validation visuelle. Le futur TargetDetector utilisera directement le buffer grayscale, pas le BMP.</comment>\n";
+  xml += "    <comment>Retourne le BMP grayscale corrige pour validation visuelle. Le pipeline cible utilise directement le buffer grayscale.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"image/bmp\"/>\n";
   xml += "    <response code=\"404\" content_type=\"application/json\"/>\n";
+  xml += "  </method>\n";
+
+  xml += "  <method name=\"target_detect\" http=\"GET\" path=\"/target/detect\">\n";
+  xml += "    <comment>Lance TargetDetector sur la derniere image grayscale corrigee. Ne relance ni capture ni filtrage.</comment>\n";
+  xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
+  xml += "    <response code=\"409\" content_type=\"application/json\"/>\n";
+  xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
+  xml += "  </method>\n";
+
+  xml += "  <method name=\"target_status\" http=\"GET\" path=\"/target/status\">\n";
+  xml += "    <comment>Relit le dernier resultat : trouvee, centre, taille, rotation par quart de tour, qualite et temps de detection.</comment>\n";
+  xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
+  xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
   xml += "</api>\n";
