@@ -16,12 +16,14 @@ GeometrieCameraApp::GeometrieCameraApp()
       jpeg_diagnostic_(),
       jpeg_filtered_diagnostic_(&this->jpeg_diagnostic_),
       target_detection_service_(&this->jpeg_filtered_diagnostic_, &this->measurement_manager_.target_detector()),
+      target_detection_preview_(),
       runtime_diagnostics_(),
       api_wsdl_handler_(&this->resolution_controller_),
       settings_api_handler_(&this->settings_controller_),
       jpeg_diagnostic_api_handler_(&this->jpeg_diagnostic_, &this->resolution_controller_),
       jpeg_filtered_diagnostic_api_handler_(&this->jpeg_filtered_diagnostic_),
-      target_detection_api_handler_(&this->target_detection_service_),
+      target_detection_api_handler_(&this->target_detection_service_, &this->jpeg_filtered_diagnostic_,
+                                    &this->target_detection_preview_),
       runtime_diagnostics_api_handler_(&this->runtime_diagnostics_, &this->jpeg_diagnostic_),
       api_registered_(false) {}
 
@@ -49,7 +51,7 @@ void GeometrieCameraApp::dump_config() {
   ESP_LOGCONFIG(TAG, "  Runtime diagnostics API: /api/runtime/status");
   ESP_LOGCONFIG(TAG, "  Camera settings API: /api/camera/settings*");
   ESP_LOGCONFIG(TAG, "  JPEG capture/filter API: /diagnostic-jpeg/*");
-  ESP_LOGCONFIG(TAG, "  Target detection API: /target/detect, /target/status");
+  ESP_LOGCONFIG(TAG, "  Target detection API: /target/detect, /target/status, /target/preview.bmp");
   ESP_LOGCONFIG(TAG, "  Resolution active: %s", this->resolution_controller_.active_resolution().c_str());
   ESP_LOGCONFIG(TAG, "  JPEG ready: %s", this->jpeg_diagnostic_.ready() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  JPEG filtered ready: %s", this->jpeg_filtered_diagnostic_.ready() ? "YES" : "NO");
