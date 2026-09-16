@@ -30,7 +30,7 @@
    - ne pas utiliser `std::vector` par défaut pour des workspaces pouvant dépasser quelques dizaines de kilo-octets ;
    - réutiliser les buffers entre appels plutôt que réallouer ;
    - réserver la RAM interne aux structures légères et aux besoins temps-réel ;
-   - éviter aussi les gros tableaux temporaires sur la pile des handlers HTTP : les candidats V5 sont persistants dans `TargetDetector`.
+   - éviter les gros tableaux temporaires sur la pile des handlers HTTP.
 
 ## Architecture actuelle
 
@@ -59,7 +59,7 @@ GeometrieCameraApp
 └── ApiWsdlHandler
 ```
 
-## Chaîne image validée
+## Chaîne image actuelle
 
 ```text
 OV5640 / JPEG natif
@@ -69,14 +69,20 @@ JpegDiagnostic
   - demande d'une frame fraîche
   - copie JPEG persistante en PSRAM
         ↓
-JpegFilteredDiagnostic
-  - décodage JPEG par blocs
-  - conversion immédiate en luminance 8 bits
-  - comptage des graines vertes pendant le décodage
+JpegFilteredDiagnostic / optimisation filtre V2
+  - décodage TJpgDec par blocs
+  - conversion RGB -> luminance 8 bits
+  - classification des graines vertes directement dans le callback
+  - workspace JPEG 4 ko persistant
         ↓
-JpegArtifactCorrector V4 sparse
-  - correction locale des artefacts verts/noirs
-  - parcours direct du masque compact au lieu d'un scan pixel par pixel
+masque vert brut 1 bit/pixel
+        ↓
+JpegArtifactCorrector V5 lookup
+  - construction de deux masques dérivés persistants en PSRAM
+    * graines vertes dilatées horizontalement ±2 px
+    * graines vertes fines
+  - parcours sparse des défauts
+  - réparation verte/noire avec les mêmes seuils fonctionnels
         ↓
 GrayFrameView corrigé
         ↓
@@ -84,28 +90,11 @@ TargetDetectionService
         ↓
 TargetDetector V5.4
   ├── TargetCandidateFinder V5.2
-  │     - réduction de l'image à ~320 px max
-  │     - seuillage local
-  │     - composantes sombres
-  │     - estimation de quatre coins approximatifs
-  │     - conservation des 8 meilleurs candidats
   ├── TargetCornerRefiner V5.4
-  │     - recherche locale autour des quatre coins
-  │     - évaluation des transitions clair extérieur / noir intérieur
-  │     - validation géométrique du quadrilatère raffiné
   └── TargetCodeDecoder V5.4
-        - test du candidat brut en secours
-        - test du candidat raffiné
-        - projection projective par homographie
-        - lecture du motif 7×7
-        - test des quatre orientations logiques
-        - validation du contraste, du cadre noir et du fond extérieur
-        - seuil final d'acceptation = 0.82
         ↓
 TargetObservation
 ```
-
-Une fois la détection réelle validée, `MeasurementManager / GeometryMeasurementEngine` réutiliseront la géométrie de la cible pour distance et orientation fine.
 
 ## Responsabilités
 
@@ -115,11 +104,22 @@ Orchestration uniquement : initialisation, injection de la caméra ESPHome, bouc
 
 ### `JpegDiagnostic`
 
-Acquisition JPEG native de l'OV5640. ESPHome conservant une frame pré-acquise, une demande de capture consomme d'abord cette frame puis demande une nouvelle frame réellement fraîche. Le JPEG est copié en PSRAM car le framebuffer caméra est éphémère.
+Acquisition JPEG native de l'OV5640. ESPHome conservant une frame pré-acquise, une demande de capture consomme d'abord cette frame puis demande une nouvelle frame fraîche. Le JPEG est copié en PSRAM car le framebuffer caméra est éphémère.
 
 ### `JpegFilteredDiagnostic`
 
-Prépare l'image exploitable par la vision : décodage JPEG par blocs, conversion immédiate en luminance 8 bits, construction du masque d'artefacts, application du correcteur et conservation du buffer grayscale corrigé. Le BMP reste uniquement une visualisation de diagnostic.
+Responsabilité : transformer le JPEG en image grayscale corrigible et conserver le résultat exploitable par la vision.
+
+Il gère :
+
+- le décodage TJpgDec ;
+- la conversion RGB vers luminance ;
+- la construction du masque vert brut pendant le décodage ;
+- le buffer BMP/grayscale en PSRAM ;
+- l'appel au correcteur ;
+- les timings `decode_ms`, `correction_ms` et `total_ms`.
+
+L'optimisation V2 conserve le workspace TJpgDec de 4 ko entre deux traitements au lieu de l'allouer/libérer à chaque appel. La classification d'une graine verte est maintenant une petite fonction locale au même `.cpp` que le callback JPEG, ce qui évite un appel de méthode externe pour chaque pixel décodé tout en conservant exactement les seuils précédents.
 
 Accès métier :
 
@@ -130,101 +130,110 @@ width()
 height()
 ```
 
-Avant l'optimisation V1 du filtre, les mesures à 1600×1200 tournaient autour de ~1,6 s pour le décodage JPEG et ~2,4 s pour la correction d'artefacts, soit environ 4 s au total, alors que la détection V5 était déjà de l'ordre de quelques dixièmes de seconde. La V1 supprime plusieurs parcours complets inutiles : les graines vertes sont comptées pendant le décodage, le buffer image n'est plus intégralement remis à zéro avant d'être réécrit, et le correcteur parcourt directement les octets non nuls du masque. Les nouveaux temps doivent être validés sur l'ESP32 avant de fixer une nouvelle référence.
+Référence mesurée après optimisation V1 à 1600×1200 :
+
+```text
+decode_ms      ≈ 1661 ms
+correction_ms  ≈ 965 ms
+total_ms       ≈ 2634 ms
+```
+
+La V2 doit être comparée à cette référence sur plusieurs traitements du même JPEG.
 
 ### `JpegArtifactCorrector`
 
-Responsabilité : corriger le défaut observé sur la voie JPEG : petits segments verts/noirs périodiques, sans flou global.
+Responsabilité : corriger les petits segments verts/noirs périodiques sans appliquer de flou global.
 
-La V4 conserve les règles de correction de la V3 mais remplace le balayage horizontal exhaustif par une recherche **sparse** :
+#### V1 / V4 sparse
 
-- le masque vert reste compact à 1 bit/pixel ;
-- les lignes sont examinées par groupes de 8 pixels ;
-- les groupes sans aucune graine verte sur la ligne ou ses voisines sont sautés immédiatement ;
-- les positions réellement candidates sont ensuite validées avec les mêmes règles de finesse verticale ;
-- les intervalles et les règles de réparation vert/noir restent inchangés ;
-- le nombre brut de graines vertes est fourni directement par le décodeur JPEG, supprimant un second scan complet du masque.
+La V1 a supprimé le balayage horizontal exhaustif : le masque vert compact est parcouru par groupes de bits et les zones sans graine sont sautées. Cette évolution a fait passer la correction d'environ 2,4 s à environ 0,95 s à 1600×1200 sans régression observée sur la détection.
 
-La frontière de test reste simple : à JPEG identique, les statistiques de correction et l'image grayscale corrigée doivent rester équivalentes à la V3, tandis que `correction_ms` doit diminuer sensiblement.
+#### V2 / lookup masks
+
+La V2 ne change pas les seuils ni les règles de réparation. Elle évite surtout de recalculer les mêmes voisinages des milliers de fois.
+
+Deux workspaces 1 bit/pixel sont construits une fois par image puis réutilisés pendant toute la correction :
+
+1. `near_green_mask_` : indique directement si une graine verte existe dans le voisinage horizontal ±2 px ;
+2. `thin_green_mask_` : indique directement quelles graines satisfont le critère de finesse verticale.
+
+Ainsi :
+
+- le test « graine verte proche » devient une lecture de bit au lieu de cinq lectures ;
+- la recherche de référence verticale n'a plus besoin de recalculer ce voisinage ;
+- la recherche sparse saute directement entre graines fines ;
+- les deux buffers sont persistants et alloués explicitement en PSRAM.
+
+À 1600×1200, chaque masque représente environ 240 ko, soit environ 480 ko de workspace supplémentaire. Avec 8 Mo de PSRAM, ce budget reste acceptable pour la phase actuelle.
+
+**Frontière de test V2 :** pour un même JPEG, vérifier que `green_seed_pixels`, `thin_green_pixels`, `corrected_green_pixels`, `corrected_dark_pixels`, `corrected_total_pixels`, l'image corrigée et le résultat `/target/detect` restent cohérents avec la V1, tout en réduisant `correction_ms` et idéalement `decode_ms`.
 
 ### `TargetDetector`
 
-Orchestrateur vision de la cible uniquement. Depuis la V5 il ne balaie plus l'image entière avec le code 7×7. En V5.4 il délègue :
+Orchestrateur vision de la cible. Il délègue :
 
-1. la localisation globale à `TargetCandidateFinder` ;
-2. le raffinement pleine résolution des coins à `TargetCornerRefiner` ;
-3. la lecture/validation du code à `TargetCodeDecoder`.
+1. localisation globale à `TargetCandidateFinder` ;
+2. raffinement pleine résolution des coins à `TargetCornerRefiner` ;
+3. lecture/validation du code à `TargetCodeDecoder`.
 
-Pour chaque candidat, le décodeur teste toujours le quadrilatère brut. Si le raffinement des coins réussit, le quadrilatère raffiné est également décodé et le meilleur résultat est conservé. Le raffinement ne peut donc pas supprimer une détection déjà obtenue avec le candidat brut.
+Pour chaque candidat, le décodeur teste toujours le quadrilatère brut. Si le raffinement réussit, le quadrilatère raffiné est également testé et le meilleur résultat est conservé.
 
-Le tableau des candidats est persistant dans l'objet `TargetDetector` et non local à `detect()`. Cette règle a été introduite après avoir observé un `vApplicationStackOverflowHook` dans le thread HTTP avec la première V5.
+Le tableau de candidats est persistant dans `TargetDetector` afin d'éviter les gros temporaires sur la pile du handler HTTP.
 
 ### `TargetCandidateFinder`
 
-Responsabilité : **trouver rapidement les zones où la cible peut se trouver**, sans chercher encore une géométrie subpixel.
+Responsabilité : trouver rapidement les zones où la cible peut se trouver.
 
 Méthode V5.2 :
 
-- réduction dynamique pour garder le plus grand côté proche de 320 px ;
-- cinq échantillons rapides par cellule réduite plutôt qu'une moyenne exhaustive du bloc source ;
-- calcul de luminosité locale par tuiles ;
-- seuillage adaptatif ;
-- composantes connexes 4-voisins ;
-- rejet des composantes trop petites, trop grandes ou trop allongées ;
-- estimation approximative de quatre coins par extrema `x+y` / `x-y` ;
-- maximum 8 candidats conservés, classés principalement par forme carrée ;
-- pendant la validation, les huit candidats sont journalisés avec centre, taille et score sans modifier l'API.
+- réduction dynamique vers ~320 px maximum ;
+- cinq échantillons par cellule réduite ;
+- seuillage adaptatif local ;
+- composantes connexes ;
+- rejet des formes trop petites/grandes/allongées ;
+- estimation approximative des quatre coins ;
+- conservation des 8 meilleurs candidats ;
+- buffers de travail persistants en PSRAM.
 
-À 1600×1200, la réduction est typiquement ×5 et produit 320×240 pixels : une cible d'environ 40 px reste de l'ordre de 8 px dans la carte de localisation. Cette précision est suffisante pour proposer une zone mais pas toujours pour décoder correctement une cible en perspective ; c'est précisément la responsabilité du `TargetCornerRefiner`.
-
-Le workspace de localisation est persistant et alloué explicitement en PSRAM. À 1600×1200, la carte réduite représente environ 75 ko et la file de composantes peut atteindre environ 300 ko.
-
-**Frontières de test :** carré sombre sur fond clair, lignes verticales parasites, plusieurs objets, cible déplacée, faible contraste local, allocation PSRAM, stabilité de pile, présence de la vraie cible dans les huit candidats.
+À 1600×1200, la réduction est typiquement ×5 vers 320×240.
 
 ### `TargetCornerRefiner`
 
-Responsabilité : **transformer un quadrilatère approximatif issu de l'image réduite en quatre coins plus précis sur l'image pleine résolution**.
+Responsabilité : raffiner les quatre coins d'un candidat sur l'image pleine résolution.
 
 Méthode V5.4 :
 
-- rayon de recherche adapté à la taille du candidat, borné entre 3 et 12 px ;
-- recherche indépendante autour de chacun des quatre coins ;
-- score fondé sur les deux transitions attendues au coin : extérieur clair vers bord noir sur chaque côté ;
-- contrôle diagonal supplémentaire ;
-- pénalité de déplacement pour éviter de sauter vers un objet voisin ;
-- reconstruction du centre, largeur et hauteur ;
-- validation des longueurs d'arêtes et de l'aire du quadrilatère ;
-- conservation du candidat brut si le raffinement n'améliore pas suffisamment le score des coins.
+- recherche locale autour de chaque coin ;
+- score basé sur les transitions extérieur clair / bord noir ;
+- contrôle diagonal ;
+- pénalité de déplacement ;
+- validation des longueurs d'arêtes et de l'aire ;
+- repli sur le candidat brut si le raffinement n'est pas convaincant.
 
-Cette classe ne connaît pas le motif 7×7 : elle ne fait que de la géométrie/contraste de bord. Les coins obtenus sont donc réutilisables plus tard pour la distance, la perspective et l'orientation.
-
-**Frontière de test principale :** `GrayFrameView + TargetCandidate approximatif -> TargetCandidate raffiné`. Cas prioritaires : cible droite, cible inclinée, perspective, coin proche d'un autre bord sombre, faible contraste, candidat déjà précis.
+Ces quatre coins seront réutilisés pour la mesure de distance et d'orientation.
 
 ### `TargetCodeDecoder`
 
-Responsabilité : **dire si un candidat géométrique est réellement notre cible**.
+Responsabilité : valider que le quadrilatère contient réellement la cible 7×7.
 
 Méthode V5.4 :
 
-- teste plusieurs petites dilatations du quadrilatère pour compenser les incertitudes restantes ;
-- utilise une homographie directe carré unité -> quadrilatère pour projeter correctement une cible plane vue en perspective ;
-- chaque cellule du 7×7 utilise plusieurs échantillons de l'image pleine résolution ;
-- teste les quatre rotations logiques 0/90/180/270 degrés ;
-- exige indépendamment un contraste minimal, un cadre noir cohérent et un extérieur plus clair que le noir de la cible ;
-- seuil final d'acceptation = 0.82 ;
-- journalise score, `pattern`, `border`, contraste, niveau extérieur, niveau noir, facteur d'expansion et rotation.
-
-L'ancienne interpolation bilinéaire reste uniquement un repli de sécurité si le calcul projectif devient dégénéré.
-
-**Frontières de test :** vrai code, faux carré noir, sous-motif interne, quatre rotations, perspective légère et marquée, contraste faible, fond extérieur sombre, cible absente avec `target_found=false`.
+- petites dilatations du quadrilatère ;
+- homographie carré unité -> quadrilatère ;
+- plusieurs échantillons par cellule ;
+- rotations 0/90/180/270° ;
+- contraste minimal ;
+- cadre noir ;
+- extérieur plus clair que le noir de la cible ;
+- seuil final d'acceptation = 0.82.
 
 ### `TargetDetectionService`
 
-Pont très fin entre l'image corrigée et `TargetDetector` : construit un `GrayFrameView` sans copie, appelle le détecteur et mémorise résultat, source et temps de détection. Il ne déclenche ni capture ni filtrage.
+Pont sans copie entre l'image corrigée et `TargetDetector`. Il ne déclenche ni capture ni filtrage.
 
 ### `TargetDetectionPreview`
 
-Diagnostic visuel séparé : construit à la demande une miniature grayscale de largeur maximale 640 px et dessine un rectangle noir/blanc autour du meilleur résultat. Il ne modifie jamais le buffer métier.
+Construit à la demande une miniature grayscale de diagnostic avec le meilleur résultat.
 
 ### `TargetDetectionApiHandler`
 
@@ -234,15 +243,13 @@ GET /target/status
 GET /target/preview.bmp
 ```
 
-Les routes restent inchangées avec la V5.4.
-
 ### `MeasurementManager`
 
-Enchaînera `TargetDetector` puis `GeometryMeasurementEngine` une fois la cible réelle suffisamment robuste. Il conserve déjà la dernière mesure et le compteur de mesures valides.
+Enchaînera la détection puis `GeometryMeasurementEngine` pour distance et orientation une fois la chaîne image validée.
 
 ### `GeometryMeasurementEngine`
 
-Calcul mathématique indépendant du matériel et du réseau. Distance, orientation et calibration seront complétées après validation de la détection de cible.
+Calcul mathématique indépendant du matériel et du réseau. Distance, orientation et calibration seront complétées après validation du filtre V2 et de la détection cible.
 
 ### `CameraResolutionController`
 
@@ -250,11 +257,11 @@ Maintient l'identité capteur et les résolutions supportées. Capteur confirmé
 
 ### `CameraSettingsController` / `CameraSettingsApiHandler`
 
-Conservés pour exposition, gain, luminosité et contraste. Les réglages caméra doivent être jugés par comparaison A/B avec la qualité de détection et non seulement visuellement.
+Réglages exposition, gain, luminosité et contraste.
 
 ### `RuntimeDiagnostics` / `RuntimeDiagnosticsApiHandler`
 
-Instrumentation légère de boucle et mémoire, conservée pour les futures optimisations.
+Instrumentation légère de boucle et mémoire.
 
 ### `ApiWsdlHandler`
 
@@ -282,9 +289,7 @@ GET /target/status
 GET /target/preview.bmp
 ```
 
-## Sous-systèmes supprimés après validation
-
-Les anciens chemins GRAYSCALE, RGB565, TargetSearch GRAYSCALE, essais de registres OV5640, configurateur OV3660, placeholder/ImageProvider/CameraManager et anciennes API historiques ont été supprimés après validation de la voie JPEG.
+La V2 du filtre ne modifie aucune route, aucun paramètre ni aucun contrat JSON. Le WSDL-like reste donc inchangé.
 
 ## État matériel / image retenu
 
@@ -298,19 +303,15 @@ XCLK = 8 MHz
 idle_framerate = 0
 ```
 
-Les essais de timing n'ont pas supprimé le motif parasite ; la correction logicielle V4 sparse reste la voie retenue.
+## Feuille de route immédiate
 
-## Optimisations après validation V5.4
-
-La V5 réduit déjà fortement le coût de détection. Le chantier de performance actuel porte sur `JpegFilteredDiagnostic` / `JpegArtifactCorrector` :
-
-1. **V1 réalisée :** supprimer les scans complets évitables et rendre la correction sparse sans changer ses règles fonctionnelles ;
-2. mesurer les nouveaux temps sur plusieurs frames et comparer les statistiques/images à la V3 ;
-3. après première détection globale, mémoriser la dernière cible ;
-4. recherche suivante dans une ROI ;
-5. correction d'artefacts limitée à cette ROI lorsque l'architecture de décodage le permet ;
-6. étudier le décodage JPEG partiel/par blocs ;
-7. retour automatique à la recherche globale si la cible est perdue.
+1. **Valider l'optimisation filtre V2** sur plusieurs traitements 1600×1200 ;
+2. vérifier que la détection cible n'est pas impactée ;
+3. si le gain V2 est significatif, figer cette version du filtre ;
+4. passer à la calibration optique ;
+5. calculer distance et angles à partir des quatre coins ;
+6. mettre en place l'acquisition continue ;
+7. ajouter ensuite la ROI autour de la dernière cible pour la voie rapide.
 
 ## Revue obligatoire avant nouvelle fonctionnalité
 
