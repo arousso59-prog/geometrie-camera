@@ -12,12 +12,14 @@
 #include "jpeg_diagnostic_api.h"
 #include "jpeg_filtered_diagnostic.h"
 #include "jpeg_filtered_diagnostic_api.h"
+#include "measurement_api.h"
 #include "measurement_manager.h"
 #include "runtime_diagnostics.h"
 #include "runtime_diagnostics_api.h"
 #include "target_detection_api.h"
 #include "target_detection_preview.h"
 #include "target_detection_service.h"
+#include "target_detector.h"
 #include "types.h"
 
 namespace esphome {
@@ -53,6 +55,7 @@ class GeometrieCameraApp : public Component {
   void register_api_if_possible_();
 
   MeasurementManager measurement_manager_;
+  TargetDetector target_detector_;
   CameraResolutionController resolution_controller_;
   CameraSettingsController settings_controller_;
   JpegDiagnostic jpeg_diagnostic_;
@@ -65,6 +68,7 @@ class GeometrieCameraApp : public Component {
   JpegDiagnosticApiHandler jpeg_diagnostic_api_handler_;
   JpegFilteredDiagnosticApiHandler jpeg_filtered_diagnostic_api_handler_;
   TargetDetectionApiHandler target_detection_api_handler_;
+  MeasurementApiHandler measurement_api_handler_;
   RuntimeDiagnosticsApiHandler runtime_diagnostics_api_handler_;
   bool api_registered_;
 };
