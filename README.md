@@ -44,9 +44,10 @@ buffer grayscale corrigé
    ↓
 TargetDetectionService
    ↓
-TargetDetector V5.3
+TargetDetector V5.4
    ├── TargetCandidateFinder V5.2
-   └── TargetCodeDecoder V5.3
+   ├── TargetCornerRefiner V5.4
+   └── TargetCodeDecoder V5.4
    ↓
 TargetObservation
    ↓
@@ -55,16 +56,19 @@ distance / orientation / géométrie
 
 Le correcteur V3 supprime la grande majorité des artefacts verts/noirs sans appliquer de flou global.
 
-La V5 sépare deux problèmes auparavant mélangés :
+La V5 sépare désormais trois problèmes :
 
-1. **retrouver la petite cible dans toute l'image** ;
-2. **lire le code 7×7 une fois la zone localisée**.
+1. **retrouver rapidement la petite cible dans toute l'image** ;
+2. **raffiner ses quatre coins sur l'image pleine résolution** ;
+3. **lire le code 7×7 dans le quadrilatère obtenu**.
 
-`TargetCandidateFinder` réduit l'image à environ 320 px maximum, applique un seuillage local puis recherche des composantes sombres quasi carrées. Les lignes parasites et objets très allongés sont rejetés. Les 8 meilleurs candidats sont conservés dans un buffer persistant afin de limiter le coût CPU et la pile du handler HTTP.
+`TargetCandidateFinder` réduit l'image à environ 320 px maximum, applique un seuillage local puis recherche des composantes sombres quasi carrées. Les 8 meilleurs candidats sont conservés dans un buffer persistant afin de limiter le coût CPU et la pile du handler HTTP.
 
-`TargetCodeDecoder` revient ensuite sur l'image pleine résolution, projette le motif 7×7 dans le quadrilatère candidat, teste plusieurs petits ajustements de taille et les quatre orientations logiques, puis valide contraste, cadre noir et fond extérieur. Depuis la V5.3, le score final est accepté à partir de `0.82`, après passage de ces gardes structurelles indépendantes.
+`TargetCornerRefiner` reprend chaque candidat dans l'image pleine résolution et déplace localement ses quatre coins en recherchant les transitions attendues entre le fond clair et le cadre noir. Si ce raffinement n'est pas suffisamment cohérent, le candidat brut reste utilisé.
 
-Sur les essais réels en 1600×1200, la localisation/détection complète est désormais de l'ordre de 0,16 s. Le principal goulot de performance est maintenant le filtre JPEG/correction d'artefacts, autour de 4 s au total sur les mesures actuelles.
+`TargetCodeDecoder` teste le candidat brut et, lorsqu'il existe, le candidat raffiné. Depuis la V5.4, le motif 7×7 est projeté avec une homographie projective plutôt qu'une simple interpolation bilinéaire, afin de mieux supporter une cible vue en biais. Le score final est accepté à partir de `0.82` après les gardes indépendantes de contraste, cadre noir et fond extérieur.
+
+Sur les essais réels en 1600×1200 avant ajout du raffinement, la localisation/détection complète était de l'ordre de 0,16 s. Le principal goulot de performance reste le filtre JPEG/correction d'artefacts, autour de 4 s au total sur les mesures actuelles.
 
 ## Architecture
 
@@ -91,7 +95,7 @@ GET /target/status
 GET /target/preview.bmp
 ```
 
-Les routes de cible restent inchangées avec la V5.3 :
+Les routes de cible restent inchangées avec la V5.4 :
 
 - `/target/detect` traite la dernière image déjà filtrée ;
 - `/target/status` relit le dernier résultat ;
@@ -101,15 +105,15 @@ Les routes de cible restent inchangées avec la V5.3 :
 
 ## Étape actuelle
 
-Valider la V5.3 sur la cible réelle :
+Valider la V5.4 sur la cible réelle :
 
 1. capture JPEG en 1600×1200 ;
 2. filtre V3 ;
 3. `/target/detect` ;
-4. vérifier que la cible réelle passe maintenant `target_found=true` ;
-5. retirer complètement la cible et vérifier `target_found=false` ;
-6. déplacer la cible à plusieurs endroits ;
-7. tester plusieurs distances et rotations ;
+4. tester d'abord la cible presque droite pour vérifier qu'il n'y a pas de régression ;
+5. incliner progressivement la cible et surveiller `target_found`, `quality` et les logs `coarse/refined` ;
+6. tester ensuite 800×600 et 1600×1200 à distance comparable ;
+7. retirer complètement la cible et vérifier `target_found=false` ;
 8. une fois cette robustesse confirmée, passer à la distance puis à l'orientation fine.
 
-La prochaine optimisation de performance doit porter sur `JpegFilteredDiagnostic` / `JpegArtifactCorrector`, pas sur `TargetDetector`. La future voie rapide utilisera ensuite une ROI autour de la dernière cible connue et reviendra à la recherche globale en cas de perte.
+Après validation V5.4, la prochaine optimisation de performance doit porter sur `JpegFilteredDiagnostic` / `JpegArtifactCorrector`. La future voie rapide utilisera ensuite une ROI autour de la dernière cible connue et reviendra à la recherche globale en cas de perte.
