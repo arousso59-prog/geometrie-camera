@@ -22,6 +22,8 @@ class JpegFilteredDiagnostic {
   uint32_t source_capture_count() const;
   uint16_t width() const;
   uint16_t height() const;
+  const uint8_t *grayscale_data() const;
+  size_t grayscale_stride() const;
   const uint8_t *bmp_data() const;
   size_t bmp_size() const;
   int decode_result() const;
