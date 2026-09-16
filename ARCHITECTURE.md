@@ -138,24 +138,32 @@ Ces routes d'acquisition exigent que la caméra soit configurée en GRAYSCALE.
 
 Diagnostic dédié au JPEG natif produit directement par l'ISP de l'OV5640. Cette classe ne décode ni ne recompresse l'image.
 
-- demande une frame uniquement sur ordre explicite ;
+ESPHome maintient une frame pré-acquise dans sa tâche caméra. Avec un framebuffer unique et une acquisition sur demande, cette frame peut être antérieure à la requête HTTP. `JpegDiagnostic` utilise donc un cycle en deux temps :
+
+1. la première frame reçue est volontairement purgée et n'est jamais publiée ;
+2. une seconde demande est lancée depuis `GeometrieCameraApp::loop()` après retour du callback ;
+3. seule cette seconde frame est copiée dans le buffer JPEG persistant et devient l'image publiée.
+
+Cette purge est également nécessaire après un changement de `framesize`, car la frame pré-acquise peut encore avoir l'ancienne résolution.
+
 - accepte uniquement `PIXFORMAT_JPEG` ;
 - copie le JPEG natif dans un buffer persistant, de préférence en PSRAM, car le framebuffer caméra est éphémère ;
 - conserve dimensions et taille ;
 - vérifie les marqueurs JPEG SOI (`FF D8`) et EOI (`FF D9`) pour repérer une troncature grossière ;
-- mesure séparément temps d'acquisition, temps de copie et cycle total.
+- mesure séparément demande initiale, purge, demande fraîche, acquisition fraîche, copie et cycle total ;
+- compte séparément les frames utiles et les frames purgées.
 
 Routes :
 
 ```text
-GET /diagnostic-jpeg/capture
+GET /diagnostic-jpeg/capture?resolution=<optionnel>
 GET /diagnostic-jpeg/status
 GET /diagnostic-jpeg/image.jpg
 ```
 
-**But du test courant :** comparer la qualité native JPEG QSXGA avec la voie GRAYSCALE bruitée et vérifier si les anciens artefacts verts sont encore présents. Si le JPEG est propre, la piste suivante sera un décodage JPEG vers luminance pour la recherche de cible sans stocker une image RGB pleine résolution.
+**But du test courant :** comparer la qualité native JPEG avec la voie GRAYSCALE bruitée et isoler les artefacts verts sans être faussé par une frame précédente. Si le JPEG devient exploitable, la piste suivante sera un décodage JPEG vers luminance pour la recherche de cible sans stocker une image RGB pleine résolution.
 
-**Tests à prévoir :** rejet d'un format non JPEG, copie exacte d'un buffer connu, détection SOI/EOI, réutilisation/allocation du buffer, état en cas d'échec mémoire.
+**Tests à prévoir :** rejet d'un format non JPEG, première frame non publiée, seconde frame publiée, compteur utile/purge, changement de résolution suivi d'une purge, copie exacte d'un buffer connu, détection SOI/EOI, réutilisation/allocation du buffer, état en cas d'échec mémoire.
 
 ### `Rgb565Diagnostic`
 
