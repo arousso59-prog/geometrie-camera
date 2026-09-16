@@ -16,6 +16,7 @@
 #include "runtime_diagnostics.h"
 #include "runtime_diagnostics_api.h"
 #include "target_detection_api.h"
+#include "target_detection_preview.h"
 #include "target_detection_service.h"
 #include "types.h"
 
@@ -57,6 +58,7 @@ class GeometrieCameraApp : public Component {
   JpegDiagnostic jpeg_diagnostic_;
   JpegFilteredDiagnostic jpeg_filtered_diagnostic_;
   TargetDetectionService target_detection_service_;
+  TargetDetectionPreview target_detection_preview_;
   RuntimeDiagnostics runtime_diagnostics_;
   ApiWsdlHandler api_wsdl_handler_;
   CameraSettingsApiHandler settings_api_handler_;
