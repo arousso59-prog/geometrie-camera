@@ -41,6 +41,7 @@ GeometrieCameraApp
 ├── TargetDetectionService
 │   ├── TargetDetector (fourni par MeasurementManager)
 │   └── TargetDetectionApiHandler
+├── TargetDetectionPreview
 ├── MeasurementManager
 │   ├── TargetDetector
 │   └── GeometryMeasurementEngine
@@ -72,7 +73,7 @@ GrayFrameView corrigé
         ↓
 TargetDetectionService
         ↓
-TargetDetector V2
+TargetDetector V3
         ↓
 TargetObservation
 ```
@@ -89,7 +90,7 @@ Orchestration uniquement : initialisation, injection de la caméra ESPHome, appe
 
 Acquisition JPEG native de l'OV5640.
 
-ESPHome conserve une frame pré-acquise. Une demande de capture suit donc volontairement deux étapes :
+ESPHome conserve une frame pré-acquise. Une demande de capture suit volontairement deux étapes :
 
 1. consommer et jeter la frame déjà en attente ;
 2. rendre le framebuffer au driver puis demander une nouvelle frame ;
@@ -128,19 +129,22 @@ Algorithme pur de correction du défaut observé sur la voie JPEG : petits segme
 
 Transforme un `GrayFrameView` non propriétaire en `TargetObservation`. Il reste indépendant d'ESPHome, du JPEG, du HTTP et du stockage d'image.
 
-La V2 est adaptée à la cible réelle observée après la chaîne JPEG corrigée :
+La V3 vise à réduire les faux positifs observés avec la cible réelle :
 
 - motif 7×7 inchangé ;
 - quatre orientations discrètes 0/90/180/270 degrés ;
-- contraste minimal abaissé à 12 niveaux car la cible réelle reste reconnaissable malgré un contraste bien plus faible que les images synthétiques ;
-- le score est désormais la proportion de cellules correctement classées une fois le contraste minimal validé ;
-- balayage global plus grossier puis raffinement local autour du meilleur candidat ;
-- taille maximale de recherche limitée à 25 % du petit côté pour éviter les candidats irréalistes ;
-- même si le meilleur candidat reste sous le seuil d'acceptation, ses coordonnées/taille/score sont retournés avec `valid=false` pour faciliter le diagnostic.
+- taille maximale de recherche limitée à environ 10 % du petit côté : 120 px sur 1600×1200, 192 px sur 2560×1920 ;
+- échantillonnage de chaque cellule par moyenne locale 3×3 ou 5×5 plutôt que par un pixel unique ;
+- contraste minimal conservé comme garde-fou léger (`10`) ;
+- validation supplémentaire de la cohérence du cadre noir : au moins 88 % des cellules du bord doivent être classées noires ;
+- score final = 85 % motif complet + 15 % cohérence du cadre ;
+- seuil d'acceptation `0.86` ;
+- balayage global grossier puis raffinement local au pixel autour du meilleur candidat ;
+- même si le meilleur candidat reste sous le seuil, ses coordonnées/taille/score sont retournés avec `valid=false` pour diagnostic.
 
-Le seuil d'acceptation reste à `0.78`. L'orientation fine/perspective sera ajoutée seulement après validation robuste de la cible réelle.
+L'orientation fine/perspective sera ajoutée seulement après validation robuste de la cible réelle.
 
-**Tests prioritaires :** cible synthétique, cible réelle à faible contraste, quatre orientations, absence de cible, différentes tailles/résolutions, stabilité des coordonnées et du score, meilleur candidat sous le seuil.
+**Tests prioritaires :** cible synthétique, cible réelle à faible contraste, quatre orientations, absence de cible, différentes tailles/résolutions, stabilité des coordonnées et du score, faux positifs de grande taille, meilleur candidat sous le seuil.
 
 ### `TargetDetectionService`
 
@@ -155,16 +159,27 @@ Il ne déclenche volontairement ni capture ni filtrage : les trois étapes reste
 
 **Frontière de test :** injecter une source grayscale connue et un détecteur, vérifier propagation du résultat et rejet d'une source indisponible.
 
+### `TargetDetectionPreview`
+
+Diagnostic visuel séparé du détecteur :
+
+- construit à la demande une miniature grayscale de largeur maximale 640 px ;
+- conserve le ratio de l'image source ;
+- dessine un double rectangle noir/blanc autour du meilleur candidat ;
+- n'altère jamais le buffer grayscale métier utilisé par `TargetDetector` ;
+- évite une deuxième copie pleine résolution qui serait trop coûteuse en PSRAM à QSXGA.
+
 ### `TargetDetectionApiHandler`
 
-Expose uniquement la validation de cible :
+Expose la validation de cible :
 
 ```text
 GET /target/detect
 GET /target/status
+GET /target/preview.bmp
 ```
 
-`/target/detect` traite la dernière image filtrée ; `/target/status` relit le dernier résultat sans retraitement. `target_found` indique l'acceptation finale, tandis que le bloc `target` expose le meilleur candidat disponible même si celui-ci reste sous le seuil.
+`/target/detect` traite la dernière image filtrée ; `/target/status` relit le dernier résultat sans retraitement ; `/target/preview.bmp` génère une miniature annotée du meilleur candidat. `target_found` indique l'acceptation finale, tandis que le bloc `target` expose le meilleur candidat disponible même si celui-ci reste sous le seuil.
 
 ### `MeasurementManager`
 
@@ -180,12 +195,14 @@ Maintient l'identité capteur et les résolutions supportées. Capteur confirmé
 
 ### `CameraSettingsController` / `CameraSettingsApiHandler`
 
-Conservés car exposition, gain, luminosité et contraste seront utiles lors de la validation cible et de la calibration.
+Conservés car exposition, gain, luminosité et contraste sont utiles lors de la validation cible et de la calibration.
 
 ```text
 GET /api/camera/settings
 GET /api/camera/settings/set?<parametres>
 ```
+
+Les réglages caméra doivent être évalués par comparaison A/B sur la même cible et la même scène en observant à la fois l'image filtrée et `target.quality` ; ne pas figer des valeurs seulement sur l'aspect visuel.
 
 ### `RuntimeDiagnostics` / `RuntimeDiagnosticsApiHandler`
 
@@ -218,6 +235,7 @@ GET /diagnostic-jpeg/filter-status
 GET /diagnostic-jpeg/filtered.bmp
 GET /target/detect
 GET /target/status
+GET /target/preview.bmp
 ```
 
 ## Sous-systèmes supprimés après validation
