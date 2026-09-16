@@ -44,67 +44,77 @@ GeometrieCameraApp
 ├── JpegFilteredDiagnostic
 │   ├── JpegArtifactCorrector
 │   └── JpegFilteredDiagnosticApiHandler
+├── TargetDetector
+│   ├── TargetCandidateFinder
+│   ├── TargetCornerRefiner
+│   └── TargetCodeDecoder
 ├── TargetDetectionService
-│   ├── TargetDetector
-│   │   ├── TargetCandidateFinder
-│   │   ├── TargetCornerRefiner
-│   │   └── TargetCodeDecoder
 │   └── TargetDetectionApiHandler
 ├── TargetDetectionPreview
 ├── MeasurementManager
-│   ├── TargetDetector
 │   └── GeometryMeasurementEngine
+├── MeasurementApiHandler
 ├── RuntimeDiagnostics
 │   └── RuntimeDiagnosticsApiHandler
 └── ApiWsdlHandler
 ```
 
-## Chaîne image actuelle
+Le `TargetDetector` appartient maintenant directement à l'application. `MeasurementManager` ne contient plus de second détecteur : la mesure réutilise exactement le `TargetObservation` déjà validé par `TargetDetectionService`.
+
+## Chaîne image et mesure actuelle
 
 ```text
 OV5640 / JPEG natif
         ↓
 JpegDiagnostic
-  - purge de la frame ESPHome pré-acquise
-  - demande d'une frame fraîche
-  - copie JPEG persistante en PSRAM
         ↓
 JpegFilteredDiagnostic / optimisation filtre V2
-  - décodage TJpgDec par blocs
-  - conversion RGB -> luminance 8 bits
-  - classification des graines vertes directement dans le callback
+  - TJpgDec par blocs
+  - RGB -> luminance 8 bits
+  - masque vert brut pendant le décodage
   - workspace JPEG 4 ko persistant
         ↓
-masque vert brut 1 bit/pixel
-        ↓
 JpegArtifactCorrector V5 lookup
-  - construction de deux masques dérivés persistants en PSRAM
-    * graines vertes dilatées horizontalement ±2 px
-    * graines vertes fines
-  - parcours sparse des défauts
-  - réparation verte/noire avec les mêmes seuils fonctionnels
+  - deux masques dérivés persistants en PSRAM
+  - parcours sparse
         ↓
 GrayFrameView corrigé
         ↓
-TargetDetectionService
-        ↓
 TargetDetector V5.4
-  ├── TargetCandidateFinder V5.2
-  ├── TargetCornerRefiner V5.4
-  └── TargetCodeDecoder V5.4
+  ├── localisation réduite
+  ├── raffinement des quatre coins pleine résolution
+  └── décodage 7×7 par homographie
         ↓
 TargetObservation
+  - centre / taille
+  - rotation logique du code
+  - qualité
+  - 4 coins du quadrilatère réellement décodé
+        ↓
+MeasurementManager
+        ↓
+GeometryMeasurementEngine V1
+  - calibration fx/fy à distance connue
+  - adaptation de la calibration à la résolution courante
+  - homographie métrique du carré cible
+  - décomposition en translation + orientation
+        ↓
+GeometryMeasurement
+  - distance
+  - X / Y / Z
+  - angles de visée
+  - yaw / pitch / roll du plan cible
 ```
 
 ## Responsabilités
 
 ### `GeometrieCameraApp`
 
-Orchestration uniquement : initialisation, injection de la caméra ESPHome, boucle légère et enregistrement des handlers HTTP.
+Orchestration uniquement : initialisation, injection de la caméra ESPHome, boucle légère, possession des sous-systèmes et enregistrement des handlers HTTP.
 
 ### `JpegDiagnostic`
 
-Acquisition JPEG native de l'OV5640. ESPHome conservant une frame pré-acquise, une demande de capture consomme d'abord cette frame puis demande une nouvelle frame fraîche. Le JPEG est copié en PSRAM car le framebuffer caméra est éphémère.
+Acquisition JPEG native de l'OV5640. Une demande de capture purge d'abord la frame pré-acquise par ESPHome puis demande une frame fraîche. Le JPEG est copié en PSRAM car le framebuffer caméra est éphémère.
 
 ### `JpegFilteredDiagnostic`
 
@@ -119,117 +129,71 @@ Il gère :
 - l'appel au correcteur ;
 - les timings `decode_ms`, `correction_ms` et `total_ms`.
 
-L'optimisation V2 conserve le workspace TJpgDec de 4 ko entre deux traitements au lieu de l'allouer/libérer à chaque appel. La classification d'une graine verte est maintenant une petite fonction locale au même `.cpp` que le callback JPEG, ce qui évite un appel de méthode externe pour chaque pixel décodé tout en conservant exactement les seuils précédents.
+L'optimisation V2 conserve le workspace TJpgDec de 4 ko entre deux traitements et réduit le travail du callback JPEG.
 
-Accès métier :
-
-```text
-grayscale_data()
-grayscale_stride()
-width()
-height()
-```
-
-Référence mesurée après optimisation V1 à 1600×1200 :
+Référence validée à 1600×1200 après V2 :
 
 ```text
-decode_ms      ≈ 1661 ms
-correction_ms  ≈ 965 ms
-total_ms       ≈ 2634 ms
+decode_ms      ≈ 1476 ms
+correction_ms  ≈ 553 ms
+total_ms       ≈ 2036 ms
 ```
 
-La V2 doit être comparée à cette référence sur plusieurs traitements du même JPEG.
+Les essais répétés restent du même ordre de grandeur et la détection de cible n'a pas montré de régression. Cette V2 devient donc la base de travail actuelle ; les optimisations supplémentaires sont reportées après validation de la mesure.
 
 ### `JpegArtifactCorrector`
 
-Responsabilité : corriger les petits segments verts/noirs périodiques sans appliquer de flou global.
+Responsabilité : corriger les petits segments verts/noirs périodiques sans flou global.
 
-#### V1 / V4 sparse
+La version actuelle conserve les règles fonctionnelles de correction mais utilise :
 
-La V1 a supprimé le balayage horizontal exhaustif : le masque vert compact est parcouru par groupes de bits et les zones sans graine sont sautées. Cette évolution a fait passer la correction d'environ 2,4 s à environ 0,95 s à 1600×1200 sans régression observée sur la détection.
+- un parcours sparse du masque vert ;
+- `near_green_mask_` pour le voisinage horizontal ±2 px ;
+- `thin_green_mask_` pour les graines satisfaisant le critère de finesse verticale ;
+- des buffers persistants en PSRAM.
 
-#### V2 / lookup masks
-
-La V2 ne change pas les seuils ni les règles de réparation. Elle évite surtout de recalculer les mêmes voisinages des milliers de fois.
-
-Deux workspaces 1 bit/pixel sont construits une fois par image puis réutilisés pendant toute la correction :
-
-1. `near_green_mask_` : indique directement si une graine verte existe dans le voisinage horizontal ±2 px ;
-2. `thin_green_mask_` : indique directement quelles graines satisfont le critère de finesse verticale.
-
-Ainsi :
-
-- le test « graine verte proche » devient une lecture de bit au lieu de cinq lectures ;
-- la recherche de référence verticale n'a plus besoin de recalculer ce voisinage ;
-- la recherche sparse saute directement entre graines fines ;
-- les deux buffers sont persistants et alloués explicitement en PSRAM.
-
-À 1600×1200, chaque masque représente environ 240 ko, soit environ 480 ko de workspace supplémentaire. Avec 8 Mo de PSRAM, ce budget reste acceptable pour la phase actuelle.
-
-**Frontière de test V2 :** pour un même JPEG, vérifier que `green_seed_pixels`, `thin_green_pixels`, `corrected_green_pixels`, `corrected_dark_pixels`, `corrected_total_pixels`, l'image corrigée et le résultat `/target/detect` restent cohérents avec la V1, tout en réduisant `correction_ms` et idéalement `decode_ms`.
+À 1600×1200, les deux masques dérivés utilisent environ 480 ko de PSRAM supplémentaires.
 
 ### `TargetDetector`
 
 Orchestrateur vision de la cible. Il délègue :
 
 1. localisation globale à `TargetCandidateFinder` ;
-2. raffinement pleine résolution des coins à `TargetCornerRefiner` ;
-3. lecture/validation du code à `TargetCodeDecoder`.
+2. raffinement des coins à `TargetCornerRefiner` ;
+3. validation du code à `TargetCodeDecoder`.
 
-Pour chaque candidat, le décodeur teste toujours le quadrilatère brut. Si le raffinement réussit, le quadrilatère raffiné est également testé et le meilleur résultat est conservé.
-
-Le tableau de candidats est persistant dans `TargetDetector` afin d'éviter les gros temporaires sur la pile du handler HTTP.
+Le candidat brut reste toujours testé. Si le raffinement réussit, le candidat raffiné est également testé et le meilleur résultat est conservé.
 
 ### `TargetCandidateFinder`
 
 Responsabilité : trouver rapidement les zones où la cible peut se trouver.
 
-Méthode V5.2 :
-
-- réduction dynamique vers ~320 px maximum ;
-- cinq échantillons par cellule réduite ;
-- seuillage adaptatif local ;
-- composantes connexes ;
-- rejet des formes trop petites/grandes/allongées ;
-- estimation approximative des quatre coins ;
-- conservation des 8 meilleurs candidats ;
-- buffers de travail persistants en PSRAM.
-
-À 1600×1200, la réduction est typiquement ×5 vers 320×240.
+Méthode actuelle : réduction vers ~320 px, seuillage adaptatif, composantes connexes, filtrage géométrique et conservation des 8 meilleurs candidats. Les buffers de travail sont persistants en PSRAM.
 
 ### `TargetCornerRefiner`
 
-Responsabilité : raffiner les quatre coins d'un candidat sur l'image pleine résolution.
+Responsabilité : raffiner les quatre coins d'un candidat sur l'image pleine résolution sans connaître le motif 7×7.
 
-Méthode V5.4 :
-
-- recherche locale autour de chaque coin ;
-- score basé sur les transitions extérieur clair / bord noir ;
-- contrôle diagonal ;
-- pénalité de déplacement ;
-- validation des longueurs d'arêtes et de l'aire ;
-- repli sur le candidat brut si le raffinement n'est pas convaincant.
-
-Ces quatre coins seront réutilisés pour la mesure de distance et d'orientation.
+Les quatre coins obtenus sont réutilisables par le décodage puis par la mesure géométrique.
 
 ### `TargetCodeDecoder`
 
 Responsabilité : valider que le quadrilatère contient réellement la cible 7×7.
 
-Méthode V5.4 :
+La V5.4 utilise :
 
-- petites dilatations du quadrilatère ;
+- plusieurs dilatations du quadrilatère ;
 - homographie carré unité -> quadrilatère ;
 - plusieurs échantillons par cellule ;
 - rotations 0/90/180/270° ;
-- contraste minimal ;
-- cadre noir ;
-- extérieur plus clair que le noir de la cible ;
-- seuil final d'acceptation = 0.82.
+- contraste, cadre noir et fond extérieur ;
+- seuil final `0.82`.
+
+Lorsqu'un décodage devient le meilleur résultat, ses quatre coins ajustés sont maintenant copiés dans `TargetObservation`. La rotation logique du code permet ensuite de remettre ces coins dans l'ordre physique canonique de la cible.
 
 ### `TargetDetectionService`
 
-Pont sans copie entre l'image corrigée et `TargetDetector`. Il ne déclenche ni capture ni filtrage.
+Pont sans copie entre l'image corrigée et `TargetDetector`. Il mémorise la dernière observation et le compteur de source utilisé. Il ne déclenche ni capture ni filtrage.
 
 ### `TargetDetectionPreview`
 
@@ -245,11 +209,108 @@ GET /target/preview.bmp
 
 ### `MeasurementManager`
 
-Enchaînera la détection puis `GeometryMeasurementEngine` pour distance et orientation une fois la chaîne image validée.
+Responsabilité : conserver la dernière mesure et son compteur, puis déléguer les calculs mathématiques à `GeometryMeasurementEngine`.
+
+Il **ne détecte plus la cible**. Son entrée est :
+
+```text
+TargetObservation + frame_width + frame_height + timestamp
+```
+
+Cette séparation évite un deuxième passage du détecteur et constitue une frontière de test simple.
 
 ### `GeometryMeasurementEngine`
 
-Calcul mathématique indépendant du matériel et du réseau. Distance, orientation et calibration seront complétées après validation du filtre V2 et de la détection cible.
+Responsabilité : calcul mathématique pur de calibration, distance et pose.
+
+#### Taille de cible
+
+Valeur par défaut actuelle :
+
+```text
+target_size_mm = 50.0
+```
+
+Cette valeur correspond au carré physique complet utilisé par le détecteur. Elle est configurable par API.
+
+#### Calibration V1 à distance connue
+
+La résolution seule ne permet pas de convertir une taille en pixels en distance absolue : il faut connaître la focale effective de l'objectif. Le champ de vision annoncé par le vendeur n'est donc pas utilisé comme vérité de calibration.
+
+Procédure V1 :
+
+1. placer la cible approximativement de face et proche du centre optique ;
+2. mesurer physiquement la distance caméra -> cible ;
+3. capture + filtre + détection ;
+4. appeler `/measurement/calibrate?distance_mm=...` ;
+5. calculer :
+
+```text
+fx_px = largeur_cible_px  × distance_connue_mm / taille_cible_mm
+fy_px = hauteur_cible_px  × distance_connue_mm / taille_cible_mm
+cx_px = centre horizontal de l'image
+cy_px = centre vertical de l'image
+```
+
+La calibration mémorise également la résolution de référence. Pour une autre résolution de **même cadrage optique**, `fx`, `fy`, `cx` et `cy` sont redimensionnés proportionnellement.
+
+Cette première calibration ignore encore la distorsion radiale de l'objectif. Elle sert à valider la chaîne de mesure avant une calibration optique complète.
+
+#### Distance et position 3D
+
+Les quatre coins sont remis dans l'ordre canonique grâce à la rotation du code 7×7. Une homographie est construite entre le carré physique de côté `target_size_mm` et ses quatre points image.
+
+La décomposition avec la matrice intrinsèque fournit la translation du centre de cible :
+
+```text
+X : droite positive
+Y : bas positif
+Z : avant positif
+```
+
+Le résultat expose :
+
+```text
+distance_mm = sqrt(X² + Y² + Z²)
+z_mm        = profondeur optique
+x_mm
+y_mm
+```
+
+#### Angles
+
+Deux familles d'angles sont volontairement séparées :
+
+```text
+bearing_yaw_deg
+bearing_pitch_deg
+```
+
+position angulaire du **centre de cible** par rapport à l'axe optique, et :
+
+```text
+target_yaw_deg
+target_pitch_deg
+target_roll_deg
+```
+
+orientation du **plan de la cible**.
+
+`roll` utilise l'orientation canonique fournie par le code 7×7 ; une rotation physique de 90° de la cible ne doit donc pas être confondue avec l'ambiguïté géométrique d'un simple carré.
+
+**Frontières de test :** cible frontale à distance connue, plusieurs distances, déplacement horizontal/vertical, rotation en roulis, inclinaison yaw/pitch, changement 1600×1200 ↔ 800×600, répétabilité sur captures successives.
+
+### `MeasurementApiHandler`
+
+```text
+GET /measurement/config
+GET /measurement/config/set?target_size_mm=<mm>
+GET /measurement/calibrate?distance_mm=<mm>&target_size_mm=<optionnel>
+GET /measurement/compute
+GET /measurement/status
+```
+
+`/measurement/calibrate` et `/measurement/compute` exigent une détection correspondant à la dernière image filtrée. Ils ne relancent ni capture, ni filtre, ni détection.
 
 ### `CameraResolutionController`
 
@@ -271,6 +332,8 @@ Catalogue des routes HTTP réellement compilées :
 GET /api/wsdl
 ```
 
+Le WSDL-like est en version **10** depuis l'ajout de la mesure/calibration.
+
 ## API actuelle
 
 ```text
@@ -287,9 +350,12 @@ GET /diagnostic-jpeg/filtered.bmp
 GET /target/detect
 GET /target/status
 GET /target/preview.bmp
+GET /measurement/config
+GET /measurement/config/set?target_size_mm=<mm>
+GET /measurement/calibrate?distance_mm=<mm>&target_size_mm=<optionnel>
+GET /measurement/compute
+GET /measurement/status
 ```
-
-La V2 du filtre ne modifie aucune route, aucun paramètre ni aucun contrat JSON. Le WSDL-like reste donc inchangé.
 
 ## État matériel / image retenu
 
@@ -305,13 +371,15 @@ idle_framerate = 0
 
 ## Feuille de route immédiate
 
-1. **Valider l'optimisation filtre V2** sur plusieurs traitements 1600×1200 ;
-2. vérifier que la détection cible n'est pas impactée ;
-3. si le gain V2 est significatif, figer cette version du filtre ;
-4. passer à la calibration optique ;
-5. calculer distance et angles à partir des quatre coins ;
-6. mettre en place l'acquisition continue ;
-7. ajouter ensuite la ROI autour de la dernière cible pour la voie rapide.
+1. compiler/flasher la V1 de mesure ;
+2. calibrer à une distance connue avec la cible 50 mm bien de face ;
+3. vérifier la distance sur plusieurs positions connues ;
+4. vérifier `bearing_yaw/pitch` par déplacement de la cible ;
+5. vérifier `target_yaw/pitch/roll` en inclinant la cible ;
+6. quantifier la répétabilité et les erreurs ;
+7. améliorer ensuite la calibration optique/distorsion si nécessaire ;
+8. passer à l'acquisition continue ;
+9. revenir ensuite sur ROI et performances.
 
 ## Revue obligatoire avant nouvelle fonctionnalité
 
