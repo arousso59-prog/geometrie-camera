@@ -16,6 +16,9 @@ namespace {
 static const char *const TAG = "image_sharpness";
 constexpr size_t JPEG_WORK_BUFFER_SIZE = 4096;
 constexpr uint8_t JPEG_SCALE = 2;  // 1/4 dans chaque dimension pour conserver du detail sur la cible.
+constexpr uint16_t LAPLACIAN_HISTOGRAM_BINS = 256;
+constexpr uint8_t LAPLACIAN_BIN_SHIFT = 2;  // |Laplacien| 0..1020 -> histogramme 0..255.
+constexpr uint32_t STRONG_EDGE_PERCENT = 20;
 
 struct SharpnessDecodeContext {
   const uint8_t *jpeg;
@@ -150,11 +153,11 @@ bool ImageSharpnessEvaluator::evaluate_region(uint16_t x, uint16_t y, uint16_t w
   this->height_ = reduced_height;
 
   const uint32_t scale = 1U << JPEG_SCALE;
-  uint16_t roi_x = static_cast<uint16_t>(x / scale);
-  uint16_t roi_y = static_cast<uint16_t>(y / scale);
-  uint16_t roi_right = static_cast<uint16_t>(std::min<uint32_t>(
+  const uint16_t roi_x = static_cast<uint16_t>(x / scale);
+  const uint16_t roi_y = static_cast<uint16_t>(y / scale);
+  const uint16_t roi_right = static_cast<uint16_t>(std::min<uint32_t>(
       reduced_width, (static_cast<uint32_t>(x) + width + scale - 1U) / scale));
-  uint16_t roi_bottom = static_cast<uint16_t>(std::min<uint32_t>(
+  const uint16_t roi_bottom = static_cast<uint16_t>(std::min<uint32_t>(
       reduced_height, (static_cast<uint32_t>(y) + height + scale - 1U) / scale));
 
   if (roi_right <= roi_x + 2U || roi_bottom <= roi_y + 2U) {
@@ -166,7 +169,7 @@ bool ImageSharpnessEvaluator::evaluate_region(uint16_t x, uint16_t y, uint16_t w
   this->evaluation_ms_ = millis() - started_ms;
   this->ready_ = true;
 
-  ESP_LOGD(TAG, "Nettete ROI reduite %ux%u @(%u,%u) %ux%u: score_x100=%u, temps=%u ms",
+  ESP_LOGD(TAG, "Nettete ROI reduite %ux%u @(%u,%u) %ux%u: score_edges_x100=%u, temps=%u ms",
            static_cast<unsigned>(this->width_), static_cast<unsigned>(this->height_),
            static_cast<unsigned>(roi_x), static_cast<unsigned>(roi_y),
            static_cast<unsigned>(roi_right - roi_x), static_cast<unsigned>(roi_bottom - roi_y),
@@ -230,7 +233,10 @@ uint32_t ImageSharpnessEvaluator::compute_score_x100_(uint16_t x, uint16_t y,
     return 0;
   }
 
-  uint64_t sum = 0;
+  // On ne moyenne plus tout le mur contenu dans la ROI. Un histogramme compact
+  // permet de ne conserver que les 20 % de reponses Laplaciennes les plus fortes,
+  // donc principalement les transitions noir/blanc de la cible.
+  uint16_t histogram[LAPLACIAN_HISTOGRAM_BINS] = {};
   uint32_t count = 0;
   const size_t stride = this->width_;
 
@@ -244,7 +250,11 @@ uint32_t ImageSharpnessEvaluator::compute_score_x100_(uint16_t x, uint16_t y,
       if (laplacian < 0) {
         laplacian = -laplacian;
       }
-      sum += static_cast<uint32_t>(laplacian);
+      const uint16_t bin = static_cast<uint16_t>(std::min<int>(
+          LAPLACIAN_HISTOGRAM_BINS - 1U, laplacian >> LAPLACIAN_BIN_SHIFT));
+      if (histogram[bin] != 0xFFFFU) {
+        histogram[bin]++;
+      }
       count++;
     }
   }
@@ -252,7 +262,28 @@ uint32_t ImageSharpnessEvaluator::compute_score_x100_(uint16_t x, uint16_t y,
   if (count == 0) {
     return 0;
   }
-  return static_cast<uint32_t>((sum * 100U) / count);
+
+  const uint32_t wanted = std::max<uint32_t>(1U, (count * STRONG_EDGE_PERCENT + 99U) / 100U);
+  uint32_t remaining = wanted;
+  uint64_t weighted_sum = 0;
+
+  for (int bin = static_cast<int>(LAPLACIAN_HISTOGRAM_BINS) - 1; bin >= 0 && remaining > 0; --bin) {
+    const uint32_t available = histogram[bin];
+    if (available == 0) {
+      continue;
+    }
+    const uint32_t take = std::min<uint32_t>(available, remaining);
+    const uint32_t approximated_laplacian = (static_cast<uint32_t>(bin) << LAPLACIAN_BIN_SHIFT) +
+                                             (1U << (LAPLACIAN_BIN_SHIFT - 1U));
+    weighted_sum += static_cast<uint64_t>(approximated_laplacian) * take;
+    remaining -= take;
+  }
+
+  const uint32_t selected = wanted - remaining;
+  if (selected == 0) {
+    return 0;
+  }
+  return static_cast<uint32_t>((weighted_sum * 100U) / selected);
 }
 
 }  // namespace geometrie_camera_app
