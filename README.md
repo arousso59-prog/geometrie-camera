@@ -18,8 +18,9 @@ OV5640 JPEG
 JpegDiagnostic
    ↓
 ImageSharpnessEvaluator (mode continu)
-   ├── décodage JPEG 1/8
-   └── recapture si flou important
+   ├── ROI autour de la dernière cible détectée
+   ├── décodage JPEG 1/4
+   └── recapture si la cible devient nettement floue
    ↓
 JpegFilteredDiagnostic V2
    ↓
@@ -69,7 +70,7 @@ GET /api/camera/settings/set?resolution=800x600
 
 Le mode continu utilise la résolution caméra active. `800x600` reste pratique pour les essais rapides ; une évolution haute résolution + ROI est prévue pour augmenter la précision sans traiter toute l'image.
 
-## Mode continu avec contrôle de netteté
+## Mode continu avec contrôle de netteté ciblé
 
 Le démarrage est interdit sans calibration valide :
 
@@ -83,18 +84,24 @@ Le cycle est :
 
 ```text
 capture
-→ contrôle rapide de netteté
-   ├── flou marqué → recapture immédiate, maximum 2 fois
+→ contrôle netteté dans la ROI de la dernière cible connue
+   ├── aucune ROI connue → pas de rejet, passage direct au filtre
+   ├── cible fortement floue → recapture immédiate, maximum 2 fois
    └── OK
 → filtre
 → détection
+→ mise à jour ROI + référence netteté
 → mesure
 → cycle suivant
 ```
 
-Le contrôle de netteté travaille sur un JPEG réduit à 1/8. Sa référence est relative à la session ; une chute sous 60 % de la référence déclenche une recapture. Si la troisième capture reste faible, le pipeline continue quand même afin de ne pas se bloquer.
+La netteté ne dépend donc plus du décor complet. Sur un mur uniforme, seul le voisinage de la cible influence le score.
 
-`/continuous/status` expose maintenant les temps détaillés :
+La ROI vaut environ quatre fois la taille détectée de la cible, avec un minimum de `64×64 px` dans l'image source. Le JPEG est décodé à `1/4` pour ce contrôle afin de conserver assez de détails quand la cible devient petite.
+
+La référence de netteté est mise à jour uniquement après une détection valide. Une chute du score ROI sous 60 % de cette référence déclenche une recapture. Si la troisième capture reste faible, le pipeline continue quand même pour ne pas se bloquer.
+
+`/continuous/status` expose les temps détaillés :
 
 ```text
 timing.capture_ms
@@ -113,13 +120,18 @@ sharpness.reference_x100
 sharpness.ok
 sharpness.capture_retries
 sharpness.blur_retry_count
+sharpness.roi_active
+sharpness.roi_x
+sharpness.roi_y
+sharpness.roi_width
+sharpness.roi_height
 ```
 
-Cela permet de décider les futures optimisations à partir de mesures réelles.
+Cela permet de vérifier que le contrôle travaille bien autour de la cible et de guider les futures optimisations.
 
 ## Interface Web ESPHome
 
-La page principale garde désormais les **dernières valeurs valides** de distance, X/Y/Z, angles et qualité même si un cycle courant ne retrouve pas la cible. La ligne `03 Cible actuelle` indique séparément si la dernière détection a réussi.
+La page principale garde les **dernières valeurs valides** de distance, X/Y/Z, angles et qualité même si un cycle courant ne retrouve pas la cible. La ligne `03 Cible actuelle` indique séparément si la dernière détection a réussi.
 
 Les timings capture/netteté/filtre/détection/calcul et les compteurs de recapture sont affichés sous les mesures principales.
 
@@ -149,15 +161,15 @@ GET /continuous/stop
 GET /continuous/status
 ```
 
-`/api/wsdl` est la référence du contrat HTTP. Version actuelle : **13**.
+`/api/wsdl` est la référence du contrat HTTP. Version actuelle : **14**.
 
 Les responsabilités détaillées et les règles de développement sont dans [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ## Étape actuelle
 
-1. compiler/flasher la version avec contrôle de netteté ;
-2. observer les scores de netteté sur des captures normales ;
-3. provoquer volontairement un flou pour vérifier les recaptures ;
+1. compiler/flasher la version avec netteté ROI ;
+2. vérifier que `/continuous/status` expose une ROI cohérente autour de la cible ;
+3. provoquer volontairement un flou de la cible ;
 4. comparer le taux de cibles trouvées avant/après ;
-5. utiliser les timings détaillés pour prioriser les optimisations ;
+5. exploiter les timings détaillés ;
 6. reprendre ensuite la validation des angles et la future approche haute résolution + ROI.
