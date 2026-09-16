@@ -59,7 +59,7 @@ GeometrieCameraApp
 └── ApiWsdlHandler
 ```
 
-Le `TargetDetector` appartient maintenant directement à l'application. `MeasurementManager` ne contient plus de second détecteur : la mesure réutilise exactement le `TargetObservation` déjà validé par `TargetDetectionService`.
+Le `TargetDetector` appartient directement à l'application. `MeasurementManager` ne contient pas de second détecteur : la mesure réutilise exactement le `TargetObservation` déjà validé par `TargetDetectionService`.
 
 ## Chaîne image et mesure actuelle
 
@@ -89,21 +89,24 @@ TargetObservation
   - centre / taille
   - rotation logique du code
   - qualité
-  - 4 coins du quadrilatère réellement décodé
+  - 4 coins géométriques du candidat validé
         ↓
 MeasurementManager
         ↓
-GeometryMeasurementEngine V1
+GeometryMeasurementEngine V2
   - calibration fx/fy à distance connue
-  - adaptation de la calibration à la résolution courante
-  - homographie métrique du carré cible
-  - décomposition en translation + orientation
+  - adaptation de calibration à la résolution courante
+  - distance principale par taille apparente
+  - X/Y/Z à partir du rayon du centre de cible
+  - homographie conservée uniquement pour l'orientation
+  - validation de cohérence de la pose
         ↓
 GeometryMeasurement
-  - distance
-  - X / Y / Z
+  - distance / X / Y / Z
+  - z depuis largeur et hauteur
   - angles de visée
-  - yaw / pitch / roll du plan cible
+  - pose_valid
+  - yaw / pitch / roll seulement si pose cohérente
 ```
 
 ## Responsabilités
@@ -162,13 +165,15 @@ Orchestrateur vision de la cible. Il délègue :
 2. raffinement des coins à `TargetCornerRefiner` ;
 3. validation du code à `TargetCodeDecoder`.
 
-Le candidat brut reste toujours testé. Si le raffinement réussit, le candidat raffiné est également testé et le meilleur résultat est conservé.
+Le candidat brut reste toujours testé. Si le raffinement réussit, le candidat raffiné est également testé. Le score de décodage et la géométrie des coins sont séparés : lorsqu'un candidat raffiné valide la même rotation logique, ses coins peuvent être conservés même si le candidat brut garde un score de code légèrement supérieur.
 
 ### `TargetCandidateFinder`
 
 Responsabilité : trouver rapidement les zones où la cible peut se trouver.
 
 Méthode actuelle : réduction vers ~320 px, seuillage adaptatif, composantes connexes, filtrage géométrique et conservation des 8 meilleurs candidats. Les buffers de travail sont persistants en PSRAM.
+
+Les logs flottants détaillés sont désactivés sur le thread HTTP afin d'éviter les conversions `printf` coûteuses en pile observées lors d'un `StoreProhibited` dans `_dtoa_r`.
 
 ### `TargetCornerRefiner`
 
@@ -189,7 +194,7 @@ La V5.4 utilise :
 - contraste, cadre noir et fond extérieur ;
 - seuil final `0.82`.
 
-Lorsqu'un décodage devient le meilleur résultat, ses quatre coins ajustés sont maintenant copiés dans `TargetObservation`. La rotation logique du code permet ensuite de remettre ces coins dans l'ordre physique canonique de la cible.
+Les facteurs de dilatation servent uniquement à l'échantillonnage du code. Les coins conservés dans `TargetObservation` restent ceux du candidat géométrique d'entrée afin qu'un changement de facteur de lecture ne modifie pas artificiellement la taille physique utilisée pour la distance.
 
 ### `TargetDetectionService`
 
@@ -211,7 +216,7 @@ GET /target/preview.bmp
 
 Responsabilité : conserver la dernière mesure et son compteur, puis déléguer les calculs mathématiques à `GeometryMeasurementEngine`.
 
-Il **ne détecte plus la cible**. Son entrée est :
+Il **ne détecte pas la cible**. Son entrée est :
 
 ```text
 TargetObservation + frame_width + frame_height + timestamp
@@ -221,7 +226,7 @@ Cette séparation évite un deuxième passage du détecteur et constitue une fro
 
 ### `GeometryMeasurementEngine`
 
-Responsabilité : calcul mathématique pur de calibration, distance et pose.
+Responsabilité : calcul mathématique pur de calibration, distance, position et orientation.
 
 #### Taille de cible
 
@@ -233,11 +238,11 @@ target_size_mm = 50.0
 
 Cette valeur correspond au carré physique complet utilisé par le détecteur. Elle est configurable par API.
 
-#### Calibration V1 à distance connue
+#### Calibration à distance connue
 
 La résolution seule ne permet pas de convertir une taille en pixels en distance absolue : il faut connaître la focale effective de l'objectif. Le champ de vision annoncé par le vendeur n'est donc pas utilisé comme vérité de calibration.
 
-Procédure V1 :
+Procédure :
 
 1. placer la cible approximativement de face et proche du centre optique ;
 2. mesurer physiquement la distance caméra -> cible ;
@@ -252,65 +257,95 @@ cx_px = centre horizontal de l'image
 cy_px = centre vertical de l'image
 ```
 
-La calibration mémorise également la résolution de référence. Pour une autre résolution de **même cadrage optique**, `fx`, `fy`, `cx` et `cy` sont redimensionnés proportionnellement.
+Une fois valide, cette calibration devient **verrouillée**. Un nouvel appel à `/measurement/calibrate` sans `force=1` retourne `calibration_locked` et ne modifie aucune valeur. Modifier explicitement `target_size_mm` invalide la calibration et lève le verrou.
 
-Cette première calibration ignore encore la distorsion radiale de l'objectif. Elle sert à valider la chaîne de mesure avant une calibration optique complète.
+La calibration mémorise la résolution de référence. Pour une autre résolution de **même cadrage optique**, `fx`, `fy`, `cx` et `cy` sont redimensionnés proportionnellement.
 
-#### Distance et position 3D
+Cette calibration ignore encore la distorsion radiale de l'objectif.
 
-Les quatre coins sont remis dans l'ordre canonique grâce à la rotation du code 7×7. Une homographie est construite entre le carré physique de côté `target_size_mm` et ses quatre points image.
+#### Distance V2 robuste
 
-La décomposition avec la matrice intrinsèque fournit la translation du centre de cible :
+La première décomposition homographique a montré qu'un quadrilatère de coins imparfait pouvait produire une profondeur très fausse alors que la taille apparente de la cible restait cohérente. La distance principale ne dépend donc plus de la pose projective.
 
-```text
-X : droite positive
-Y : bas positif
-Z : avant positif
-```
-
-Le résultat expose :
+À partir des quatre coins canoniques :
 
 ```text
-distance_mm = sqrt(X² + Y² + Z²)
-z_mm        = profondeur optique
-x_mm
-y_mm
+largeur_px = moyenne(arête haute, arête basse)
+hauteur_px = moyenne(arête gauche, arête droite)
+
+z_from_width_mm  = fx × target_size_mm / largeur_px
+z_from_height_mm = fy × target_size_mm / hauteur_px
+z_mm             = min(z_from_width_mm, z_from_height_mm)
 ```
 
-#### Angles
+Le choix du minimum limite la surestimation de distance quand une inclinaison raccourcit une seule dimension projetée.
 
-Deux familles d'angles sont volontairement séparées :
+Le centre de cible définit ensuite le rayon optique :
 
 ```text
-bearing_yaw_deg
-bearing_pitch_deg
+nx = (center_x - cx) / fx
+ny = (center_y - cy) / fy
+
+x_mm = nx × z_mm
+y_mm = ny × z_mm
+distance_mm = sqrt(x_mm² + y_mm² + z_mm²)
 ```
 
-position angulaire du **centre de cible** par rapport à l'axe optique, et :
+Les angles de visée sont obtenus directement depuis `nx` et `ny` et restent indépendants de la pose du plan.
+
+#### Orientation du plan et `pose_valid`
+
+L'homographie des quatre coins est toujours décomposée pour estimer `target_yaw_deg`, `target_pitch_deg` et `target_roll_deg`, mais elle n'a plus le droit de modifier `distance_mm` ou `x/y/z`.
+
+La profondeur issue de cette pose est exposée dans :
 
 ```text
-target_yaw_deg
-target_pitch_deg
-target_roll_deg
+pose_z_mm
+pose_scale_error_pct
 ```
 
-orientation du **plan de la cible**.
+avec :
 
-`roll` utilise l'orientation canonique fournie par le code 7×7 ; une rotation physique de 90° de la cible ne doit donc pas être confondue avec l'ambiguïté géométrique d'un simple carré.
+```text
+pose_scale_error_pct = abs(pose_z_mm - z_mm) / z_mm × 100
+```
 
-**Frontières de test :** cible frontale à distance connue, plusieurs distances, déplacement horizontal/vertical, rotation en roulis, inclinaison yaw/pitch, changement 1600×1200 ↔ 800×600, répétabilité sur captures successives.
+La pose n'est acceptée que si l'erreur reste inférieure ou égale à **25 %**. Sinon :
+
+```text
+measurement.valid = true
+pose_valid = false
+target_yaw/pitch/roll = 0
+```
+
+La distance et les angles de visée restent donc utilisables même si les quatre coins ne sont pas encore assez fiables pour une orientation de plan précise.
+
+Le `roll` accepté est normalisé modulo 180° dans l'intervalle `[-90°, +90°)` afin qu'une cible presque droite décodée à 180° ne soit pas affichée autour de ±180°.
+
+**Frontières de test :** cible frontale à distance connue, plusieurs distances sans recalibration, déplacement horizontal/vertical, comparaison `z_from_width` / `z_from_height`, rejet d'une pose incohérente, rotation en roulis, inclinaison yaw/pitch, changement 1600×1200 ↔ 800×600, répétabilité sur captures successives.
 
 ### `MeasurementApiHandler`
 
 ```text
 GET /measurement/config
 GET /measurement/config/set?target_size_mm=<mm>
-GET /measurement/calibrate?distance_mm=<mm>&target_size_mm=<optionnel>
+GET /measurement/calibrate?distance_mm=<mm>&target_size_mm=<optionnel>&force=<0|1>
 GET /measurement/compute
 GET /measurement/status
 ```
 
 `/measurement/calibrate` et `/measurement/compute` exigent une détection correspondant à la dernière image filtrée. Ils ne relancent ni capture, ni filtre, ni détection.
+
+Le JSON expose désormais :
+
+```text
+calibration.locked
+measurement.pose_valid
+measurement.z_from_width_mm
+measurement.z_from_height_mm
+measurement.pose_z_mm
+measurement.pose_scale_error_pct
+```
 
 ### `CameraResolutionController`
 
@@ -332,7 +367,7 @@ Catalogue des routes HTTP réellement compilées :
 GET /api/wsdl
 ```
 
-Le WSDL-like est en version **10** depuis l'ajout de la mesure/calibration.
+Le WSDL-like est en version **11** depuis le verrouillage de calibration et la distance V2 robuste.
 
 ## API actuelle
 
@@ -352,7 +387,7 @@ GET /target/status
 GET /target/preview.bmp
 GET /measurement/config
 GET /measurement/config/set?target_size_mm=<mm>
-GET /measurement/calibrate?distance_mm=<mm>&target_size_mm=<optionnel>
+GET /measurement/calibrate?distance_mm=<mm>&target_size_mm=<optionnel>&force=<0|1>
 GET /measurement/compute
 GET /measurement/status
 ```
@@ -371,15 +406,16 @@ idle_framerate = 0
 
 ## Feuille de route immédiate
 
-1. compiler/flasher la V1 de mesure ;
-2. calibrer à une distance connue avec la cible 50 mm bien de face ;
-3. vérifier la distance sur plusieurs positions connues ;
-4. vérifier `bearing_yaw/pitch` par déplacement de la cible ;
-5. vérifier `target_yaw/pitch/roll` en inclinant la cible ;
-6. quantifier la répétabilité et les erreurs ;
-7. améliorer ensuite la calibration optique/distorsion si nécessaire ;
-8. passer à l'acquisition continue ;
-9. revenir ensuite sur ROI et performances.
+1. compiler/flasher la distance V2 robuste ;
+2. calibrer une seule fois à une distance précisément connue ;
+3. vérifier que `calibration.locked=true` et qu'un deuxième calibrage sans `force=1` est refusé ;
+4. déplacer la cible à plusieurs distances sans recalibrer ;
+5. comparer `z_from_width_mm`, `z_from_height_mm`, `z_mm` et la distance réelle ;
+6. vérifier `bearing_yaw/pitch` par déplacement de la cible ;
+7. observer `pose_valid` avant de retravailler le raffinement des coins ;
+8. améliorer ensuite calibration optique/distorsion et pose si nécessaire ;
+9. passer à l'acquisition continue ;
+10. revenir ensuite sur ROI et performances.
 
 ## Revue obligatoire avant nouvelle fonctionnalité
 
