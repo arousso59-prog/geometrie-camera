@@ -6,16 +6,6 @@
 namespace esphome {
 namespace geometrie_camera_app {
 
-struct CameraFrameInfo {
-  CameraFrameInfo();
-
-  bool valid;
-  uint16_t width;
-  uint16_t height;
-  size_t size_bytes;
-  uint32_t timestamp_ms;
-};
-
 struct CameraCalibration {
   CameraCalibration();
 
@@ -55,16 +45,6 @@ struct GrayFrameView {
   uint16_t width;
   uint16_t height;
   size_t stride;
-};
-
-struct ImageBufferView {
-  ImageBufferView();
-
-  const uint8_t *data;
-  size_t size_bytes;
-  uint16_t width;
-  uint16_t height;
-  const char *mime_type;
 };
 
 }  // namespace geometrie_camera_app
