@@ -25,7 +25,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
                                         : "unknown";
 
   std::string xml;
-  xml.reserve(20480);
+  xml.reserve(22528);
   xml += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
   xml += "<api name=\"geometrie-camera\" version=\"1\" style=\"REST-over-HTTP\">\n";
   xml += "  <description>Catalogue WSDL-like des routes HTTP du projet. Ce document doit etre maintenu avec toute evolution d API.</description>\n";
@@ -162,6 +162,24 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  <method name=\"jpeg_image\" http=\"GET\" path=\"/diagnostic-jpeg/image.jpg\">\n";
   xml += "    <comment>Retourne sans recompression la derniere frame JPEG fraiche copiee depuis le framebuffer camera.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"image/jpeg\"/>\n";
+  xml += "    <response code=\"404\" content_type=\"application/json\"/>\n";
+  xml += "  </method>\n";
+
+  xml += "  <method name=\"jpeg_filter\" http=\"GET\" path=\"/diagnostic-jpeg/filter\">\n";
+  xml += "    <comment>Decode la derniere frame JPEG par blocs vers un BMP grayscale 8 bits pleine resolution puis corrige selectivement les impulsions vertes et noires du motif parasite. Traitement diagnostic synchrone et uniquement sur demande.</comment>\n";
+  xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
+  xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
+  xml += "  </method>\n";
+
+  xml += "  <method name=\"jpeg_filter_status\" http=\"GET\" path=\"/diagnostic-jpeg/filter-status\">\n";
+  xml += "    <comment>Expose dimensions, temps de decodage/correction et statistiques des pixels/lignes identifies par le filtre d artefacts JPEG.</comment>\n";
+  xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
+  xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
+  xml += "  </method>\n";
+
+  xml += "  <method name=\"jpeg_filtered_image\" http=\"GET\" path=\"/diagnostic-jpeg/filtered.bmp\">\n";
+  xml += "    <comment>Retourne l image grayscale pleine resolution issue du JPEG apres correction selective des artefacts. Ce BMP peut etre volumineux et sert uniquement a la validation visuelle.</comment>\n";
+  xml += "    <response code=\"200\" content_type=\"image/bmp\"/>\n";
   xml += "    <response code=\"404\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
