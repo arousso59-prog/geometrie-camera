@@ -34,6 +34,7 @@ class JpegFilteredDiagnostic {
 
  private:
   bool ensure_buffers_(uint16_t width, uint16_t height);
+  bool ensure_jpeg_work_buffer_();
   void clear_buffers_();
   void build_bmp_header_(uint16_t width, uint16_t height, size_t row_stride);
 
@@ -44,6 +45,7 @@ class JpegFilteredDiagnostic {
   size_t bmp_capacity_;
   uint8_t *green_mask_;
   size_t green_mask_capacity_;
+  uint8_t *jpeg_work_buffer_;
   uint16_t width_;
   uint16_t height_;
   uint32_t process_count_;
