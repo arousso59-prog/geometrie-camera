@@ -13,7 +13,7 @@ class ImageSharpnessEvaluator {
   explicit ImageSharpnessEvaluator(JpegDiagnostic *source);
   ~ImageSharpnessEvaluator();
 
-  bool evaluate();
+  bool evaluate_region(uint16_t x, uint16_t y, uint16_t width, uint16_t height);
 
   bool ready() const;
   uint32_t score_x100() const;
@@ -24,7 +24,7 @@ class ImageSharpnessEvaluator {
  private:
   bool ensure_buffers_(uint16_t width, uint16_t height);
   void clear_buffers_();
-  uint32_t compute_score_x100_() const;
+  uint32_t compute_score_x100_(uint16_t x, uint16_t y, uint16_t width, uint16_t height) const;
 
   JpegDiagnostic *source_;
   uint8_t *grayscale_buffer_;
