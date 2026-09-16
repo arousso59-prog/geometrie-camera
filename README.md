@@ -1,31 +1,16 @@
 # geometrie-camera
 
-Capteur optique pour appareil de géométrie automobile maison, basé sur ESP32-S3 + caméra OV3660.
-
-## Architecture
-
-Le projet sépare strictement les responsabilités :
-
-- `geometrie-camera.yaml` : configuration ESPHome et matérielle ;
-- `GeometrieCameraApp` : orchestration uniquement ;
-- `ImageProvider` : interface de source d'image ;
-- `PlaceholderImageProvider` : image bouchon de l'API principale ;
-- `CameraManager` : cycle d'acquisition et métadonnées ;
-- `MeasurementManager` : chaîne de détection et de mesure ;
-- `TargetDetector` : détection de cible ;
-- `GeometryMeasurementEngine` : calcul mathématique des angles ;
-- `CameraApiHandler` : interface HTTP principale ;
-- `GrayscaleDiagnostic` + `GrayscaleDiagnosticApiHandler` : diagnostic temporaire de la caméra brute.
-
-Les règles de développement et la préparation des tests unitaires sont décrites dans [`ARCHITECTURE.md`](ARCHITECTURE.md).
+Capteur optique pour appareil de géométrie automobile maison, basé sur ESP32-S3 + caméra OV5640.
 
 ## Matériel validé
 
-Carte : GOOUUU ESP32-S3-CAM V1.5, ESP32-S3 N16R8.
+- carte : GOOUUU ESP32-S3-CAM V1.5, ESP32-S3 N16R8 ;
+- capteur confirmé par PID : OV5640 (`0x5640`) ;
+- PSRAM : 8 Mo octal ;
+- résolution de travail maximale exposée par ESPHome 2026.7.3 : 2560×1920 ;
+- XCLK retenu actuellement : 8 MHz.
 
-Capteur : OV3660.
-
-Brochage caméra validé :
+Brochage caméra :
 
 ```text
 SIOD  GPIO4
@@ -44,82 +29,76 @@ Y9    GPIO16
 PCLK  GPIO13
 ```
 
-La capture JPEG réelle a été validée jusqu'à 1600x1200. Un artefact régulier sous forme de petits traits a cependant été observé et reste présent avec différentes résolutions, XCLK 10/20 MHz, PSRAM/DRAM, mire interne et inversion de polarité PCLK.
+## Voie image retenue
 
-## Étape actuelle — diagnostic sans compression JPEG
+Les essais GRAYSCALE brut ont montré davantage de bruit et un coût mémoire élevé. Le JPEG natif de l'OV5640 donne une image nettement moins bruitée mais présente un motif parasite régulier vert/noir.
 
-Le firmware est temporairement configuré en :
-
-```yaml
-pixel_format: GRAYSCALE
-resolution: 640x480
-jpeg_quality: 0
-frame_buffer_location: PSRAM
-idle_framerate: 0 fps
-```
-
-Avec `jpeg_quality: 0`, ESPHome conserve la frame GRAYSCALE brute et ne la convertit pas en JPEG.
-
-`GrayscaleDiagnostic` copie cette frame dans un BMP 8 bits **non compressé** uniquement pour permettre son affichage dans un navigateur. Les valeurs de pixels ne sont pas recompressées.
-
-### Procédure de test
-
-1. Demander une acquisition :
+La méthode retenue est désormais :
 
 ```text
-GET http://<IP>/diagnostic/capture
+OV5640 JPEG
+   ↓
+frame fraîche (purge de la frame ESPHome pré-acquise)
+   ↓
+décodage par blocs vers grayscale 8 bits
+   ↓
+JpegArtifactCorrector V3
+   ↓
+buffer grayscale corrigé
+   ↓
+TargetDetector
+   ↓
+distance / orientation / géométrie
 ```
 
-Réponse attendue :
+Le correcteur V3 supprime la grande majorité des impulsions vertes et une part importante des petits segments noirs sans appliquer de flou global. Le buffer grayscale corrigé est exposé directement au code C++ ; le BMP n'est qu'une visualisation de diagnostic.
 
-```json
-{
-  "accepted": true,
-  "status": "capture_requested"
-}
-```
+## Architecture actuelle
 
-2. Attendre environ une seconde puis contrôler :
+Les responsabilités détaillées et les règles de développement sont dans [`ARCHITECTURE.md`](ARCHITECTURE.md).
+
+Sous-systèmes conservés :
+
+- `GeometrieCameraApp` : orchestration uniquement ;
+- `JpegDiagnostic` : acquisition JPEG fraîche et stockage persistant ;
+- `JpegFilteredDiagnostic` : décodage grayscale et préparation de l'image corrigée ;
+- `JpegArtifactCorrector` : correction pure des artefacts ;
+- `TargetDetector` : recherche de la cible ;
+- `MeasurementManager` / `GeometryMeasurementEngine` : future chaîne distance/orientation/angles ;
+- `CameraResolutionController` ;
+- `CameraSettingsController` / API ;
+- `RuntimeDiagnostics` / API ;
+- `ApiWsdlHandler`.
+
+Les anciens chemins de test GRAYSCALE, RGB565, OV3660, registres OV5640, placeholder et TargetSearch GRAYSCALE ont été supprimés après validation de la voie JPEG.
+
+## API actuelle
 
 ```text
-GET http://<IP>/diagnostic/status
+GET /api/wsdl
+GET /api/runtime/status
+
+GET /api/camera/settings
+GET /api/camera/settings/set?<parametres>
+
+GET /diagnostic-jpeg/capture?resolution=<optionnel>
+GET /diagnostic-jpeg/status
+GET /diagnostic-jpeg/image.jpg
+GET /diagnostic-jpeg/filter
+GET /diagnostic-jpeg/filter-status
+GET /diagnostic-jpeg/filtered.bmp
 ```
 
-Une capture valide doit donner `ready: true` avec une taille de 640x480.
+`/api/wsdl` reste la référence du contrat HTTP et doit être mis à jour dans le même changement que toute évolution d'API.
 
-3. Afficher la frame brute :
+## Étape suivante
 
-```text
-GET http://<IP>/diagnostic/raw.bmp
-```
+Valider la cible réelle sur la voie JPEG corrigée :
 
-Le navigateur affiche alors un BMP niveaux de gris généré directement à partir de la frame brute OV3660.
+1. recherche pleine image ;
+2. validation de la position et du score ;
+3. estimation de distance ;
+4. estimation d'orientation ;
+5. calibration optique et comparaison aux données constructeur.
 
-### Interprétation
-
-- si les artefacts sont encore visibles dans `/diagnostic/raw.bmp`, ils sont présents **avant toute compression JPEG** : bus caméra, acquisition parallèle, capteur ou driver deviennent les pistes prioritaires ;
-- si l'image brute est propre, le problème se situe dans la chaîne JPEG utilisée lors des tests précédents.
-
-## API principale
-
-L'API principale reste actuellement branchée sur `PlaceholderImageProvider` afin de ne pas mélanger diagnostic matériel et architecture finale :
-
-```text
-GET /api/status
-GET /api/capture
-GET /api/measure
-GET /image.jpg
-```
-
-Le futur `Ov3660ImageProvider` remplacera le bouchon une fois la chaîne caméra validée.
-
-## Étapes suivantes
-
-- exécuter le test GRAYSCALE sans JPEG ;
-- selon le résultat, poursuivre le diagnostic bus/PCLK/driver ou chaîne JPEG ;
-- revenir ensuite à la résolution de travail validée ;
-- créer `Ov3660ImageProvider` ;
-- fixer exposition / gain / balance des blancs ;
-- implémenter la détection de cible ;
-- ajouter les tests unitaires du calcul et des gestionnaires ;
-- passer aux coordonnées sub-pixel et à la calibration optique.
+Les optimisations de vitesse seront faites après cette validation fonctionnelle. La stratégie prévue est de mémoriser la dernière boîte de cible et, après la première recherche globale, de limiter autant que possible le décodage/correction et la recherche à une ROI autour de la cible. En cas de perte de cible, retour automatique à une recherche globale.
