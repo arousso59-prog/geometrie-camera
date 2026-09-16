@@ -25,7 +25,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
                                         : "unknown";
 
   std::string xml;
-  xml.reserve(17920);
+  xml.reserve(18432);
   xml += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
   xml += "<api name=\"geometrie-camera\" version=\"1\" style=\"REST-over-HTTP\">\n";
   xml += "  <description>Catalogue WSDL-like des routes HTTP du projet. Ce document doit etre maintenu avec toute evolution d API.</description>\n";
@@ -46,7 +46,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
 
   xml += "  <method name=\"runtime_status\" http=\"GET\" path=\"/api/runtime/status\">\n";
-  xml += "    <comment>Expose les intervalles entre passages de la boucle applicative, la memoire interne/PSRAM disponible et les traitements camera actuellement en attente.</comment>\n";
+  xml += "    <comment>Expose les intervalles entre passages de la boucle applicative, la memoire disponible et les traitements camera en attente.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
@@ -63,44 +63,58 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
-  xml += "  <method name=\"camera_settings_get\" http=\"GET\" path=\"/api/camera/settings\">\n";
-  xml += "    <comment>Lit les reglages d acquisition directement depuis le capteur actif et expose leurs plages de test.</comment>\n";
-  xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
-  xml += "    <response code=\"503\" content_type=\"application/json\"/>\n";
-  xml += "  </method>\n";
-
-  xml += "  <method name=\"camera_settings_set\" http=\"GET\" path=\"/api/camera/settings/set\">\n";
-  xml += "    <comment>Modifie un ou plusieurs reglages d acquisition du capteur. Route temporaire de mise au point avant stabilisation de l API v1.</comment>\n";
-  xml += "    <parameter name=\"brightness\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"-2..2\">Luminosite capteur.</parameter>\n";
-  xml += "    <parameter name=\"contrast\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"-2..2\">Contraste capteur.</parameter>\n";
-  xml += "    <parameter name=\"exposure_ctrl\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0,1\">Active ou desactive l exposition automatique.</parameter>\n";
-  xml += "    <parameter name=\"ae_level\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"-2..2\">Compensation du niveau d exposition automatique.</parameter>\n";
-  xml += "    <parameter name=\"aec_value\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0..1200\">Valeur d exposition manuelle, utile quand exposure_ctrl vaut 0.</parameter>\n";
-  xml += "    <parameter name=\"gain_ctrl\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0,1\">Active ou desactive le gain automatique.</parameter>\n";
-  xml += "    <parameter name=\"agc_gain\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0..30\">Gain manuel, utile quand gain_ctrl vaut 0.</parameter>\n";
-  xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
-  xml += "    <response code=\"400\" content_type=\"application/json\"/>\n";
-  xml += "    <response code=\"503\" content_type=\"application/json\"/>\n";
-  xml += "  </method>\n";
-
   xml += "  <method name=\"api_image\" http=\"GET\" path=\"/image.jpg\">\n";
   xml += "    <comment>Retourne l image courante du CameraManager dans son type MIME natif.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"image/jpeg\"/>\n";
   xml += "    <response code=\"404\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
+  xml += "  <method name=\"camera_settings_get\" http=\"GET\" path=\"/api/camera/settings\">\n";
+  xml += "    <comment>Lit les reglages d acquisition directement depuis le capteur actif.</comment>\n";
+  xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
+  xml += "    <response code=\"503\" content_type=\"application/json\"/>\n";
+  xml += "  </method>\n";
+
+  xml += "  <method name=\"camera_settings_set\" http=\"GET\" path=\"/api/camera/settings/set\">\n";
+  xml += "    <comment>Modifie un ou plusieurs reglages d acquisition du capteur. Route temporaire de mise au point.</comment>\n";
+  xml += "    <parameter name=\"brightness\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"-2..2\"/>\n";
+  xml += "    <parameter name=\"contrast\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"-2..2\"/>\n";
+  xml += "    <parameter name=\"exposure_ctrl\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0,1\"/>\n";
+  xml += "    <parameter name=\"ae_level\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"-2..2\"/>\n";
+  xml += "    <parameter name=\"aec_value\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0..1200\"/>\n";
+  xml += "    <parameter name=\"gain_ctrl\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0,1\"/>\n";
+  xml += "    <parameter name=\"agc_gain\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0..30\"/>\n";
+  xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
+  xml += "    <response code=\"400\" content_type=\"application/json\"/>\n";
+  xml += "    <response code=\"503\" content_type=\"application/json\"/>\n";
+  xml += "  </method>\n";
+
+  xml += "  <method name=\"camera_timing_get\" http=\"GET\" path=\"/api/camera/timing\">\n";
+  xml += "    <comment>Lit le timing DVP de l OV5640 utilise pour le diagnostic des artefacts JPEG : PID, diviseur PCLK 0x3824 et VFIFO_CTRL0C 0x460C.</comment>\n";
+  xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
+  xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
+  xml += "  </method>\n";
+
+  xml += "  <method name=\"camera_timing_set\" http=\"GET\" path=\"/api/camera/timing/set\">\n";
+  xml += "    <comment>Modifie uniquement le diviseur PCLK manuel de l OV5640 et verifie la valeur relue. Un changement de resolution peut reprogrammer ce registre ; appliquer le timing apres avoir choisi la resolution.</comment>\n";
+  xml += "    <parameter name=\"pclk_divider\" location=\"query\" required=\"true\" type=\"integer\" allowed=\"1..31\">Diviseur du registre OV5640 0x3824.</parameter>\n";
+  xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
+  xml += "    <response code=\"400\" content_type=\"application/json\"/>\n";
+  xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
+  xml += "  </method>\n";
+
   xml += "  <method name=\"diagnostic_capture\" http=\"GET\" path=\"/diagnostic/capture\">\n";
-  xml += "    <comment>Declenche une capture brute GRAYSCALE lorsque la camera est configuree en GRAYSCALE. En QSXGA le diagnostic conserve surtout statistiques et preview sans dupliquer la frame en BMP pleine resolution.</comment>\n";
+  xml += "    <comment>Declenche une capture brute lorsque la camera est configuree en GRAYSCALE.</comment>\n";
   xml += "    <parameter name=\"resolution\" location=\"query\" required=\"false\" type=\"string\" allowed=\"";
   xml += allowed_resolutions;
-  xml += "\">Resolution a appliquer avant la capture. Si absente, conserve la resolution active.</parameter>\n";
+  xml += "\">Resolution a appliquer avant la capture.</parameter>\n";
   xml += "    <response code=\"202\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"400\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"503\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
   xml += "  <method name=\"diagnostic_status\" http=\"GET\" path=\"/diagnostic/status\">\n";
-  xml += "    <comment>Etat du diagnostic GRAYSCALE : capteur, resolution, disponibilite BMP plein format et preview, statistiques brutes et timings.</comment>\n";
+  xml += "    <comment>Etat, statistiques et timings du diagnostic GRAYSCALE.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
@@ -111,16 +125,16 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
 
   xml += "  <method name=\"diagnostic_preview\" http=\"GET\" path=\"/diagnostic/preview.bmp\">\n";
-  xml += "    <comment>Retourne un BMP 8 bits reduit a 640x480 maximum pour controle visuel rapide d une capture GRAYSCALE.</comment>\n";
+  xml += "    <comment>Retourne un BMP 8 bits reduit pour controle visuel rapide d une capture GRAYSCALE.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"image/bmp\"/>\n";
   xml += "    <response code=\"404\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
   xml += "  <method name=\"jpeg_capture\" http=\"GET\" path=\"/diagnostic-jpeg/capture\">\n";
-  xml += "    <comment>Purge la frame pre-acquise par ESPHome puis demande une frame JPEG fraiche produite par l ISP du capteur. La frame publiee correspond donc a la requete courante et non a la capture precedente.</comment>\n";
+  xml += "    <comment>Purge la frame pre-acquise par ESPHome puis demande une frame JPEG fraiche produite par l ISP du capteur.</comment>\n";
   xml += "    <parameter name=\"resolution\" location=\"query\" required=\"false\" type=\"string\" allowed=\"";
   xml += allowed_resolutions;
-  xml += "\">Resolution a appliquer avant la capture JPEG. La frame en attente est purgee apres le changement de resolution.</parameter>\n";
+  xml += "\">Resolution a appliquer avant la capture JPEG. Le changement de resolution peut remettre le diviseur PCLK du driver ; regler /api/camera/timing/set ensuite pour un test timing.</parameter>\n";
   xml += "    <response code=\"202\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"400\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
@@ -128,7 +142,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
 
   xml += "  <method name=\"jpeg_status\" http=\"GET\" path=\"/diagnostic-jpeg/status\">\n";
-  xml += "    <comment>Expose resolution active, dimensions, taille JPEG, marqueurs SOI/EOI, nombre de frames purgees et timings de la demande fraiche.</comment>\n";
+  xml += "    <comment>Expose resolution active, dimensions, taille JPEG, marqueurs SOI/EOI, nombre de frames purgees et timings de la frame fraiche.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
@@ -140,7 +154,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
 
   xml += "  <method name=\"rgb565_capture\" http=\"GET\" path=\"/diagnostic-rgb565/capture\">\n";
-  xml += "    <comment>Declenche le diagnostic temporaire RGB565 lorsque la camera est configuree en RGB565.</comment>\n";
+  xml += "    <comment>Declenche le diagnostic RGB565 lorsque la camera est configuree en RGB565.</comment>\n";
   xml += "    <response code=\"202\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"503\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
@@ -157,10 +171,10 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
 
   xml += "  <method name=\"target_search\" http=\"GET\" path=\"/target/search\">\n";
-  xml += "    <comment>Declenche une acquisition et une recherche de cible lorsque la camera est configuree en GRAYSCALE. Cette route n est pas utilisee pendant le test JPEG natif.</comment>\n";
+  xml += "    <comment>Declenche une acquisition et une recherche de cible lorsque la camera est configuree en GRAYSCALE.</comment>\n";
   xml += "    <parameter name=\"resolution\" location=\"query\" required=\"false\" type=\"string\" allowed=\"";
   xml += allowed_resolutions;
-  xml += "\">Resolution a appliquer avant la recherche. Si absente, conserve la resolution active.</parameter>\n";
+  xml += "\">Resolution a appliquer avant la recherche.</parameter>\n";
   xml += "    <response code=\"202\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"400\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"503\" content_type=\"application/json\"/>\n";
