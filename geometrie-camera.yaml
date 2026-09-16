@@ -1,4 +1,4 @@
-# Capteur camera pour geometrie automobile - ESP32-S3 + OV3660
+# Capteur camera pour geometrie automobile - ESP32-S3 + OV5640
 # YAML = materiel / ESPHome
 # C++  = logique applicative / diagnostic / traitement image / calculs
 
@@ -60,7 +60,7 @@ geometrie_camera_app:
   camera_id: camera_geometrie
 
 # ============================================================
-# CAMERA OV3660 - GOOUUU ESP32-S3-CAM V1.5
+# CAMERA OV5640 - GOOUUU ESP32-S3-CAM V1.5
 # ============================================================
 # Brochage confirme depuis le schema vendeur :
 #   SIOD  = GPIO4
@@ -78,19 +78,12 @@ geometrie_camera_app:
 #   Y9    = GPIO16
 #   PCLK  = GPIO13
 #
-# TEST DE BASE POUR LE PROJET FINAL :
-# - GRAYSCALE brut, sans JPEG ;
-# - resolution maximale OV3660 : 2048x1536 ;
-# - XCLK = 16 MHz, configuration non-JPEG deja validee ;
-# - framebuffer unique en PSRAM ;
-# - acquisition uniquement sur demande ;
-# - max_framerate releve a 5 fps pour ne pas brider artificiellement
-#   notre objectif d'au moins 2 mesures completes par seconde.
-#
-# Le diagnostic expose separement :
-# - temps acquisition camera : demande -> framebuffer recu ;
-# - temps diagnostic : statistiques + construction BMP ;
-# - temps cycle total.
+# Capteur confirme par PID : OV5640 (0x5640), resolution native max 2592x1944.
+# Voie de mesure : GRAYSCALE brut, sans JPEG capteur.
+# A 5 MP, le diagnostic HTTP utilise surtout le preview 640x480 pour eviter
+# de dupliquer une frame brute d'environ 5 Mo en BMP pleine resolution.
+# XCLK = 16 MHz, configuration non-JPEG deja validee.
+# framebuffer unique en PSRAM ; acquisition uniquement sur demande.
 
 i2c:
   - id: camera_i2c
@@ -100,7 +93,7 @@ i2c:
 
 esp32_camera:
   id: camera_geometrie
-  name: "Camera geometrie GRAYSCALE QXGA diagnostic"
+  name: "Camera geometrie GRAYSCALE OV5640 5MP"
   internal: true
 
   external_clock:
@@ -124,7 +117,7 @@ esp32_camera:
   pixel_clock_pin: GPIO13
 
   pixel_format: GRAYSCALE
-  resolution: 2048x1536
+  resolution: 2592x1944
   jpeg_quality: 0
   frame_buffer_count: 1
   frame_buffer_location: PSRAM
@@ -132,12 +125,13 @@ esp32_camera:
   idle_framerate: 0 fps
   test_pattern: false
 
-# Pas de serveur snapshot JPEG : on teste directement la frame brute.
+# Pas de serveur snapshot JPEG dans cette voie : le calcul travaille sur la frame brute.
 #
 # Routes du diagnostic GRAYSCALE :
-#   GET /diagnostic/capture  -> demande une frame brute
-#   GET /diagnostic/status   -> dimensions, statistiques et temps mesures
-#   GET /diagnostic/raw.bmp  -> BMP 8 bits non compresse pour verifier la nettete
+#   GET /diagnostic/capture      -> demande une frame brute
+#   GET /diagnostic/status       -> dimensions, statistiques et temps mesures
+#   GET /diagnostic/preview.bmp  -> preview 640x480 environ pour controle rapide
+#   GET /diagnostic/raw.bmp      -> BMP pleine resolution si disponible
 #
 # Le diagnostic RGB565 reste compile dans le projet mais n'est pas utilise ici.
 
@@ -185,7 +179,7 @@ number:
     min_value: 0
     max_value: 3000
     step: 0.1
-    initial_value: 1024
+    initial_value: 1296
     restore_value: true
     optimistic: true
     unit_of_measurement: "px"
@@ -194,9 +188,9 @@ number:
     name: "Centre optique Y"
     id: centre_optique_cy
     min_value: 0
-    max_value: 2000
+    max_value: 2200
     step: 0.1
-    initial_value: 768
+    initial_value: 972
     restore_value: true
     optimistic: true
     unit_of_measurement: "px"
