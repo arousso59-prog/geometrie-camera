@@ -20,9 +20,11 @@ constexpr uint32_t MIN_INTERVAL_MS = 200;
 constexpr uint32_t MAX_INTERVAL_MS = 10000;
 constexpr uint32_t CAPTURE_TIMEOUT_MS = 10000;
 constexpr uint8_t MAX_BLUR_RETRIES = 2;
-constexpr uint32_t SHARPNESS_MIN_PERCENT_OF_REFERENCE = 60;
-constexpr uint16_t SHARPNESS_ROI_MIN_SIZE_PX = 64;
-constexpr float SHARPNESS_ROI_TARGET_SCALE = 4.0f;
+constexpr uint32_t SHARPNESS_MIN_PERCENT_OF_REFERENCE = 45;
+constexpr uint16_t SHARPNESS_ROI_MIN_SIZE_PX = 48;
+constexpr float SHARPNESS_ROI_TARGET_SCALE = 2.5f;
+constexpr uint32_t SHARPNESS_REFERENCE_MAX_STEP_PERCENT = 15;
+constexpr uint32_t SHARPNESS_REFERENCE_FILTER_DENOMINATOR = 8;
 }
 
 ContinuousMeasurementController::ContinuousMeasurementController(
@@ -201,7 +203,7 @@ void ContinuousMeasurementController::loop() {
         this->last_sharpness_ok_ = false;
         this->last_capture_retry_count_++;
         this->blur_retry_count_++;
-        ESP_LOGI(TAG, "Image floue dans ROI cible: score_x100=%u reference=%u, recapture %u/%u",
+        ESP_LOGI(TAG, "Image floue dans ROI cible: score_edges_x100=%u reference=%u, recapture %u/%u",
                  static_cast<unsigned>(this->last_sharpness_score_x100_),
                  static_cast<unsigned>(this->sharpness_reference_score_x100_),
                  static_cast<unsigned>(this->last_capture_retry_count_),
@@ -404,13 +406,20 @@ void ContinuousMeasurementController::update_sharpness_reference_(uint32_t score
     return;
   }
 
-  if (score > this->sharpness_reference_score_x100_) {
-    this->sharpness_reference_score_x100_ = static_cast<uint32_t>(
-        (3ULL * this->sharpness_reference_score_x100_ + score) / 4ULL);
-  } else {
-    this->sharpness_reference_score_x100_ = static_cast<uint32_t>(
-        (15ULL * this->sharpness_reference_score_x100_ + score) / 16ULL);
-  }
+  const uint32_t previous = this->sharpness_reference_score_x100_;
+  const uint32_t lower = static_cast<uint32_t>(
+      (static_cast<uint64_t>(previous) * (100U - SHARPNESS_REFERENCE_MAX_STEP_PERCENT)) / 100U);
+  const uint32_t upper = static_cast<uint32_t>(
+      (static_cast<uint64_t>(previous) * (100U + SHARPNESS_REFERENCE_MAX_STEP_PERCENT)) / 100U);
+  const uint32_t bounded_score = std::max(lower, std::min(upper, score));
+
+  this->sharpness_reference_score_x100_ = static_cast<uint32_t>(
+      ((SHARPNESS_REFERENCE_FILTER_DENOMINATOR - 1ULL) * previous + bounded_score) /
+      SHARPNESS_REFERENCE_FILTER_DENOMINATOR);
+
+  ESP_LOGD(TAG, "Reference nettete stabilisee: mesure=%u bornee=%u reference=%u",
+           static_cast<unsigned>(score), static_cast<unsigned>(bounded_score),
+           static_cast<unsigned>(this->sharpness_reference_score_x100_));
 }
 
 void ContinuousMeasurementController::update_sharpness_roi_from_target_() {
