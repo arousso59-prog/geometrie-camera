@@ -5,21 +5,28 @@
 #include <limits>
 
 #include "esp_heap_caps.h"
+#include "esphome/core/hal.h"
+#include "esphome/core/log.h"
 
 namespace esphome {
 namespace geometrie_camera_app {
 
 namespace {
-constexpr uint16_t MAX_REDUCED_DIMENSION = 400;
-constexpr uint16_t LOCAL_TILE_SIZE = 24;
+static const char *const TAG = "target_candidate_finder";
+
+// V5.1 : la localisation doit rester tres legere. A 1600x1200, cette borne
+// produit typiquement une carte d'environ 229x172 pixels (facteur x7).
+constexpr uint16_t MAX_REDUCED_DIMENSION = 256;
+constexpr uint16_t LOCAL_TILE_SIZE = 20;
 constexpr uint8_t LOCAL_DARK_MARGIN = 8;
-constexpr uint32_t MIN_COMPONENT_PIXELS = 6;
+constexpr uint32_t MIN_COMPONENT_PIXELS = 4;
 constexpr float MIN_ASPECT_RATIO = 0.50f;
 constexpr float MAX_ASPECT_RATIO = 2.00f;
-constexpr float MIN_FILL_RATIO = 0.12f;
-constexpr float MAX_FILL_RATIO = 0.92f;
+constexpr float MIN_FILL_RATIO = 0.10f;
+constexpr float MAX_FILL_RATIO = 0.94f;
 constexpr uint16_t MIN_TARGET_SIDE_PX = 12;
 constexpr uint16_t MAX_TARGET_SIDE_DIVISOR = 4;
+constexpr size_t MAX_REDUCED_PIXELS = static_cast<size_t>(MAX_REDUCED_DIMENSION) * MAX_REDUCED_DIMENSION;
 
 float distance_between(const TargetPoint &a, const TargetPoint &b) {
   const float dx = b.x - a.x;
@@ -64,25 +71,40 @@ bool TargetCandidateFinder::find(const GrayFrameView &frame, TargetCandidateSet 
     return false;
   }
 
+  const uint32_t started_ms = millis();
   const uint16_t largest_dimension = std::max<uint16_t>(frame.width, frame.height);
   const uint16_t scale = std::max<uint16_t>(
       1, static_cast<uint16_t>((static_cast<uint32_t>(largest_dimension) + MAX_REDUCED_DIMENSION - 1U) /
                                MAX_REDUCED_DIMENSION));
 
   if (!this->build_reduced_image_(frame, scale)) {
+    ESP_LOGE(TAG, "V5.1 reduction/workspace failed");
     return false;
   }
+  const uint32_t reduced_ms = millis();
+  ESP_LOGD(TAG, "V5.1 reduced %ux%u -> %ux%u scale=%u in %u ms",
+           static_cast<unsigned>(frame.width), static_cast<unsigned>(frame.height),
+           static_cast<unsigned>(this->reduced_width_), static_cast<unsigned>(this->reduced_height_),
+           static_cast<unsigned>(scale), static_cast<unsigned>(reduced_ms - started_ms));
 
   if (!this->build_local_threshold_map_()) {
+    ESP_LOGE(TAG, "V5.1 local threshold failed");
     return false;
   }
+  const uint32_t threshold_ms = millis();
+  ESP_LOGD(TAG, "V5.1 threshold in %u ms", static_cast<unsigned>(threshold_ms - reduced_ms));
 
   this->collect_components_(frame, scale, result);
+  const uint32_t components_ms = millis();
+  ESP_LOGD(TAG, "V5.1 components=%u in %u ms, total=%u ms",
+           static_cast<unsigned>(result.count),
+           static_cast<unsigned>(components_ms - threshold_ms),
+           static_cast<unsigned>(components_ms - started_ms));
   return true;
 }
 
 bool TargetCandidateFinder::ensure_workspace_(size_t pixel_count, size_t tile_count) {
-  if (pixel_count == 0 || tile_count == 0) {
+  if (pixel_count == 0 || tile_count == 0 || pixel_count > MAX_REDUCED_PIXELS) {
     return false;
   }
 
@@ -90,6 +112,8 @@ bool TargetCandidateFinder::ensure_workspace_(size_t pixel_count, size_t tile_co
     auto *new_buffer = static_cast<uint8_t *>(
         heap_caps_malloc(pixel_count * sizeof(uint8_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     if (new_buffer == nullptr) {
+      ESP_LOGE(TAG, "PSRAM allocation failed for reduced image: %u bytes",
+               static_cast<unsigned>(pixel_count));
       return false;
     }
     if (this->reduced_ != nullptr) {
@@ -103,6 +127,8 @@ bool TargetCandidateFinder::ensure_workspace_(size_t pixel_count, size_t tile_co
     auto *new_queue = static_cast<uint32_t *>(
         heap_caps_malloc(pixel_count * sizeof(uint32_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     if (new_queue == nullptr) {
+      ESP_LOGE(TAG, "PSRAM allocation failed for component queue: %u bytes",
+               static_cast<unsigned>(pixel_count * sizeof(uint32_t)));
       return false;
     }
     if (this->queue_ != nullptr) {
@@ -116,6 +142,8 @@ bool TargetCandidateFinder::ensure_workspace_(size_t pixel_count, size_t tile_co
     auto *new_tiles = static_cast<uint16_t *>(
         heap_caps_malloc(tile_count * sizeof(uint16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     if (new_tiles == nullptr) {
+      ESP_LOGE(TAG, "PSRAM allocation failed for threshold tiles: %u bytes",
+               static_cast<unsigned>(tile_count * sizeof(uint16_t)));
       return false;
     }
     if (this->tile_means_ != nullptr) {
@@ -164,6 +192,9 @@ bool TargetCandidateFinder::build_reduced_image_(const GrayFrameView &frame, uin
     return false;
   }
 
+  // V5.1 : la carte basse resolution ne sert qu'a localiser des zones sombres.
+  // Une moyenne exhaustive de chaque bloc source faisait des millions d'acces
+  // PSRAM. Cinq echantillons suffisent ici ; le decodage 7x7 reste pleine resolution.
   for (uint16_t ry = 0; ry < this->reduced_height_; ++ry) {
     const uint32_t source_y0 = static_cast<uint32_t>(ry) * scale;
     const uint32_t source_y1 = std::min<uint32_t>(frame.height, source_y0 + scale);
@@ -171,19 +202,29 @@ bool TargetCandidateFinder::build_reduced_image_(const GrayFrameView &frame, uin
     for (uint16_t rx = 0; rx < this->reduced_width_; ++rx) {
       const uint32_t source_x0 = static_cast<uint32_t>(rx) * scale;
       const uint32_t source_x1 = std::min<uint32_t>(frame.width, source_x0 + scale);
-      uint32_t sum = 0;
-      uint16_t count = 0;
-
-      for (uint32_t y = source_y0; y < source_y1; ++y) {
-        const uint8_t *line = frame.data + static_cast<size_t>(y) * frame.stride;
-        for (uint32_t x = source_x0; x < source_x1; ++x) {
-          sum += line[x];
-          count++;
-        }
+      if (source_x0 >= source_x1 || source_y0 >= source_y1) {
+        this->reduced_[static_cast<size_t>(ry) * this->reduced_width_ + rx] = 0;
+        continue;
       }
 
+      const uint32_t max_x = source_x1 - 1U;
+      const uint32_t max_y = source_y1 - 1U;
+      const uint32_t center_x = source_x0 + (max_x - source_x0) / 2U;
+      const uint32_t center_y = source_y0 + (max_y - source_y0) / 2U;
+      const uint32_t quarter_x = source_x0 + (max_x - source_x0) / 4U;
+      const uint32_t three_quarter_x = source_x0 + ((max_x - source_x0) * 3U) / 4U;
+      const uint32_t quarter_y = source_y0 + (max_y - source_y0) / 4U;
+      const uint32_t three_quarter_y = source_y0 + ((max_y - source_y0) * 3U) / 4U;
+
+      uint16_t sum = 0;
+      sum += frame.data[static_cast<size_t>(center_y) * frame.stride + center_x];
+      sum += frame.data[static_cast<size_t>(quarter_y) * frame.stride + quarter_x];
+      sum += frame.data[static_cast<size_t>(quarter_y) * frame.stride + three_quarter_x];
+      sum += frame.data[static_cast<size_t>(three_quarter_y) * frame.stride + quarter_x];
+      sum += frame.data[static_cast<size_t>(three_quarter_y) * frame.stride + three_quarter_x];
+
       this->reduced_[static_cast<size_t>(ry) * this->reduced_width_ + rx] =
-          count == 0 ? 0 : static_cast<uint8_t>(sum / count);
+          static_cast<uint8_t>(sum / 5U);
     }
   }
 
@@ -319,17 +360,21 @@ void TargetCandidateFinder::collect_components_(const GrayFrameView &frame, uint
           max_diff_y = y;
         }
 
-        const int dx[4] = {-1, 1, 0, 0};
-        const int dy[4] = {0, 0, -1, 1};
+        static constexpr int8_t DX[4] = {-1, 1, 0, 0};
+        static constexpr int8_t DY[4] = {0, 0, -1, 1};
         for (uint8_t direction = 0; direction < 4; ++direction) {
-          const int nx = static_cast<int>(x) + dx[direction];
-          const int ny = static_cast<int>(y) + dy[direction];
+          const int nx = static_cast<int>(x) + DX[direction];
+          const int ny = static_cast<int>(y) + DY[direction];
           if (nx < 0 || ny < 0 || nx >= this->reduced_width_ || ny >= this->reduced_height_) {
             continue;
           }
 
           const size_t neighbor_index = static_cast<size_t>(ny) * this->reduced_width_ + nx;
-          if (this->reduced_[neighbor_index] == 1 && queue_size < this->queue_capacity_) {
+          if (this->reduced_[neighbor_index] == 1) {
+            if (queue_size >= this->queue_capacity_) {
+              ESP_LOGE(TAG, "Component queue overflow prevented");
+              return;
+            }
             this->reduced_[neighbor_index] = 2;
             this->queue_[queue_size++] = static_cast<uint32_t>(neighbor_index);
           }
