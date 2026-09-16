@@ -1,5 +1,8 @@
 #include "continuous_measurement_controller.h"
 
+#include <algorithm>
+#include <cmath>
+
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 #include "image_sharpness_evaluator.h"
@@ -18,6 +21,8 @@ constexpr uint32_t MAX_INTERVAL_MS = 10000;
 constexpr uint32_t CAPTURE_TIMEOUT_MS = 10000;
 constexpr uint8_t MAX_BLUR_RETRIES = 2;
 constexpr uint32_t SHARPNESS_MIN_PERCENT_OF_REFERENCE = 60;
+constexpr uint16_t SHARPNESS_ROI_MIN_SIZE_PX = 64;
+constexpr float SHARPNESS_ROI_TARGET_SCALE = 4.0f;
 }
 
 ContinuousMeasurementController::ContinuousMeasurementController(
@@ -53,7 +58,12 @@ ContinuousMeasurementController::ContinuousMeasurementController(
       sharpness_reference_score_x100_(0),
       last_sharpness_ok_(false),
       last_capture_retry_count_(0),
-      blur_retry_count_(0) {}
+      blur_retry_count_(0),
+      sharpness_roi_valid_(false),
+      sharpness_roi_x_(0),
+      sharpness_roi_y_(0),
+      sharpness_roi_width_(0),
+      sharpness_roi_height_(0) {}
 
 bool ContinuousMeasurementController::start(uint32_t interval_ms) {
   if (!this->set_interval_ms(interval_ms)) {
@@ -100,8 +110,21 @@ bool ContinuousMeasurementController::start(uint32_t interval_ms) {
   this->last_sharpness_ok_ = false;
   this->last_capture_retry_count_ = 0;
   this->blur_retry_count_ = 0;
+  this->sharpness_roi_valid_ = false;
+  this->sharpness_roi_x_ = 0;
+  this->sharpness_roi_y_ = 0;
+  this->sharpness_roi_width_ = 0;
+  this->sharpness_roi_height_ = 0;
   this->last_error_.clear();
-  ESP_LOGI(TAG, "Mesure continue demarree, intervalle=%u ms", static_cast<unsigned>(this->interval_ms_));
+
+  // La calibration est faite sur une cible detectee : reutiliser cette derniere
+  // position comme ROI initiale si elle correspond encore a l'image filtree.
+  if (this->detection_service_->ready() && this->detection_service_->target_found()) {
+    this->update_sharpness_roi_from_target_();
+  }
+
+  ESP_LOGI(TAG, "Mesure continue demarree, intervalle=%u ms, ROI nettete=%s",
+           static_cast<unsigned>(this->interval_ms_), this->sharpness_roi_valid_ ? "OUI" : "NON");
   return true;
 }
 
@@ -151,8 +174,22 @@ void ContinuousMeasurementController::loop() {
       return;
 
     case ContinuousMeasurementState::SHARPNESS: {
-      if (!this->sharpness_evaluator_->evaluate()) {
-        this->fail_cycle_("sharpness_evaluation_failed");
+      // Sans cible precedente connue, un mur uniforme ne constitue pas une
+      // reference de nettete utile : laisser passer l'image vers le detecteur.
+      if (!this->sharpness_roi_valid_) {
+        this->last_sharpness_ok_ = true;
+        this->state_ = ContinuousMeasurementState::FILTER;
+        return;
+      }
+
+      if (!this->sharpness_evaluator_->evaluate_region(
+              this->sharpness_roi_x_, this->sharpness_roi_y_,
+              this->sharpness_roi_width_, this->sharpness_roi_height_)) {
+        // Le controle de nettete est un garde-fou, pas une raison de perdre une
+        // mesure : en cas d'echec du mini-decodage, le pipeline principal continue.
+        this->last_sharpness_ok_ = true;
+        ESP_LOGW(TAG, "Controle nettete ROI indisponible; pipeline poursuivi");
+        this->state_ = ContinuousMeasurementState::FILTER;
         return;
       }
 
@@ -164,7 +201,7 @@ void ContinuousMeasurementController::loop() {
         this->last_sharpness_ok_ = false;
         this->last_capture_retry_count_++;
         this->blur_retry_count_++;
-        ESP_LOGI(TAG, "Image floue rejetee: score_x100=%u reference=%u, recapture %u/%u",
+        ESP_LOGI(TAG, "Image floue dans ROI cible: score_x100=%u reference=%u, recapture %u/%u",
                  static_cast<unsigned>(this->last_sharpness_score_x100_),
                  static_cast<unsigned>(this->sharpness_reference_score_x100_),
                  static_cast<unsigned>(this->last_capture_retry_count_),
@@ -178,10 +215,8 @@ void ContinuousMeasurementController::loop() {
       }
 
       this->last_sharpness_ok_ = !too_blurry;
-      if (!too_blurry) {
-        this->update_sharpness_reference_(this->last_sharpness_score_x100_);
-      } else {
-        ESP_LOGW(TAG, "Image encore floue apres %u recaptures; pipeline poursuivi pour ne pas bloquer",
+      if (too_blurry) {
+        ESP_LOGW(TAG, "ROI cible encore floue apres %u recaptures; pipeline poursuivi",
                  static_cast<unsigned>(this->last_capture_retry_count_));
       }
       this->state_ = ContinuousMeasurementState::FILTER;
@@ -207,6 +242,13 @@ void ContinuousMeasurementController::loop() {
         this->finish_cycle_(false, false);
         return;
       }
+
+      // La cible vient d'etre validee sur cette image. Son score de nettete peut
+      // maintenant enrichir la reference et sa geometrie devient la ROI suivante.
+      if (this->last_sharpness_score_x100_ > 0 && this->last_sharpness_ok_) {
+        this->update_sharpness_reference_(this->last_sharpness_score_x100_);
+      }
+      this->update_sharpness_roi_from_target_();
       this->state_ = ContinuousMeasurementState::COMPUTE;
       return;
 
@@ -281,6 +323,11 @@ uint32_t ContinuousMeasurementController::sharpness_reference_score_x100() const
 bool ContinuousMeasurementController::last_sharpness_ok() const { return this->last_sharpness_ok_; }
 uint8_t ContinuousMeasurementController::last_capture_retry_count() const { return this->last_capture_retry_count_; }
 uint32_t ContinuousMeasurementController::blur_retry_count() const { return this->blur_retry_count_; }
+bool ContinuousMeasurementController::sharpness_roi_valid() const { return this->sharpness_roi_valid_; }
+uint16_t ContinuousMeasurementController::sharpness_roi_x() const { return this->sharpness_roi_x_; }
+uint16_t ContinuousMeasurementController::sharpness_roi_y() const { return this->sharpness_roi_y_; }
+uint16_t ContinuousMeasurementController::sharpness_roi_width() const { return this->sharpness_roi_width_; }
+uint16_t ContinuousMeasurementController::sharpness_roi_height() const { return this->sharpness_roi_height_; }
 
 void ContinuousMeasurementController::begin_cycle_() {
   this->cycle_started_ms_ = millis();
@@ -333,11 +380,13 @@ bool ContinuousMeasurementController::request_capture_() {
 }
 
 bool ContinuousMeasurementController::sharpness_is_too_low_(uint32_t score) const {
-  if (score == 0) {
-    return true;
-  }
+  // Tant qu'une image avec cible valide n'a pas etabli la reference ROI, ne
+  // rejeter aucune capture sur la seule nettete.
   if (this->sharpness_reference_score_x100_ == 0) {
     return false;
+  }
+  if (score == 0) {
+    return true;
   }
 
   const uint64_t score_percent = static_cast<uint64_t>(score) * 100U;
@@ -362,6 +411,48 @@ void ContinuousMeasurementController::update_sharpness_reference_(uint32_t score
     this->sharpness_reference_score_x100_ = static_cast<uint32_t>(
         (15ULL * this->sharpness_reference_score_x100_ + score) / 16ULL);
   }
+}
+
+void ContinuousMeasurementController::update_sharpness_roi_from_target_() {
+  if (this->detection_service_ == nullptr || this->filtered_source_ == nullptr ||
+      !this->detection_service_->ready() || !this->detection_service_->target_found()) {
+    return;
+  }
+
+  const uint16_t frame_width = this->filtered_source_->width();
+  const uint16_t frame_height = this->filtered_source_->height();
+  if (frame_width == 0 || frame_height == 0) {
+    return;
+  }
+
+  const auto &target = this->detection_service_->last_observation();
+  const float target_size = std::max(target.width_px, target.height_px);
+  if (!target.valid || target_size <= 0.0f) {
+    return;
+  }
+
+  uint32_t desired_size = static_cast<uint32_t>(std::ceil(target_size * SHARPNESS_ROI_TARGET_SCALE));
+  desired_size = std::max<uint32_t>(desired_size, SHARPNESS_ROI_MIN_SIZE_PX);
+
+  const uint16_t roi_width = static_cast<uint16_t>(std::min<uint32_t>(desired_size, frame_width));
+  const uint16_t roi_height = static_cast<uint16_t>(std::min<uint32_t>(desired_size, frame_height));
+
+  int32_t roi_x = static_cast<int32_t>(std::lround(target.center_x_px)) - static_cast<int32_t>(roi_width / 2U);
+  int32_t roi_y = static_cast<int32_t>(std::lround(target.center_y_px)) - static_cast<int32_t>(roi_height / 2U);
+  roi_x = std::max<int32_t>(0, std::min<int32_t>(roi_x, static_cast<int32_t>(frame_width - roi_width)));
+  roi_y = std::max<int32_t>(0, std::min<int32_t>(roi_y, static_cast<int32_t>(frame_height - roi_height)));
+
+  this->sharpness_roi_x_ = static_cast<uint16_t>(roi_x);
+  this->sharpness_roi_y_ = static_cast<uint16_t>(roi_y);
+  this->sharpness_roi_width_ = roi_width;
+  this->sharpness_roi_height_ = roi_height;
+  this->sharpness_roi_valid_ = true;
+
+  ESP_LOGD(TAG, "ROI nettete cible: x=%u y=%u w=%u h=%u",
+           static_cast<unsigned>(this->sharpness_roi_x_),
+           static_cast<unsigned>(this->sharpness_roi_y_),
+           static_cast<unsigned>(this->sharpness_roi_width_),
+           static_cast<unsigned>(this->sharpness_roi_height_));
 }
 
 }  // namespace geometrie_camera_app
