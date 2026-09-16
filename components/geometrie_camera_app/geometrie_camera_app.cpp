@@ -11,11 +11,12 @@ static const char *const TAG = "geometrie_camera_app";
 
 GeometrieCameraApp::GeometrieCameraApp()
     : measurement_manager_(),
+      target_detector_(),
       resolution_controller_(),
       settings_controller_(),
       jpeg_diagnostic_(),
       jpeg_filtered_diagnostic_(&this->jpeg_diagnostic_),
-      target_detection_service_(&this->jpeg_filtered_diagnostic_, &this->measurement_manager_.target_detector()),
+      target_detection_service_(&this->jpeg_filtered_diagnostic_, &this->target_detector_),
       target_detection_preview_(),
       runtime_diagnostics_(),
       api_wsdl_handler_(&this->resolution_controller_),
@@ -24,6 +25,8 @@ GeometrieCameraApp::GeometrieCameraApp()
       jpeg_filtered_diagnostic_api_handler_(&this->jpeg_filtered_diagnostic_),
       target_detection_api_handler_(&this->target_detection_service_, &this->jpeg_filtered_diagnostic_,
                                     &this->target_detection_preview_),
+      measurement_api_handler_(&this->measurement_manager_, &this->target_detection_service_,
+                               &this->jpeg_filtered_diagnostic_),
       runtime_diagnostics_api_handler_(&this->runtime_diagnostics_, &this->jpeg_diagnostic_),
       api_registered_(false) {}
 
@@ -52,6 +55,10 @@ void GeometrieCameraApp::dump_config() {
   ESP_LOGCONFIG(TAG, "  Camera settings API: /api/camera/settings*");
   ESP_LOGCONFIG(TAG, "  JPEG capture/filter API: /diagnostic-jpeg/*");
   ESP_LOGCONFIG(TAG, "  Target detection API: /target/detect, /target/status, /target/preview.bmp");
+  ESP_LOGCONFIG(TAG, "  Measurement API: /measurement/*");
+  ESP_LOGCONFIG(TAG, "  Target physical size: %.2f mm", this->measurement_manager_.measurement_engine().target_size_mm());
+  ESP_LOGCONFIG(TAG, "  Geometry calibration: %s",
+                this->measurement_manager_.measurement_engine().has_calibration() ? "VALID" : "REQUIRED");
   ESP_LOGCONFIG(TAG, "  Resolution active: %s", this->resolution_controller_.active_resolution().c_str());
   ESP_LOGCONFIG(TAG, "  JPEG ready: %s", this->jpeg_diagnostic_.ready() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  JPEG filtered ready: %s", this->jpeg_filtered_diagnostic_.ready() ? "YES" : "NO");
@@ -85,8 +92,12 @@ std::string GeometrieCameraApp::status_text() const {
     return "Detection terminee - cible non trouvee";
   }
 
+  if (!this->measurement_manager_.measurement_engine().has_calibration()) {
+    return "Cible detectee - calibration distance requise";
+  }
+
   if (!this->measurement_manager_.last_measurement().valid) {
-    return "Cible detectee - mesure a valider";
+    return "Cible detectee - mesure a lancer";
   }
 
   return "Camera prete - mesure valide";
@@ -101,7 +112,7 @@ const GeometryMeasurement &GeometrieCameraApp::last_measurement() const {
 }
 
 MeasurementManager &GeometrieCameraApp::measurement_manager() { return this->measurement_manager_; }
-TargetDetector &GeometrieCameraApp::target_detector() { return this->measurement_manager_.target_detector(); }
+TargetDetector &GeometrieCameraApp::target_detector() { return this->target_detector_; }
 GeometryMeasurementEngine &GeometrieCameraApp::measurement_engine() { return this->measurement_manager_.measurement_engine(); }
 CameraResolutionController &GeometrieCameraApp::resolution_controller() { return this->resolution_controller_; }
 CameraSettingsController &GeometrieCameraApp::settings_controller() { return this->settings_controller_; }
@@ -119,12 +130,13 @@ void GeometrieCameraApp::register_api_if_possible_() {
   web_server_base::global_web_server_base->add_handler(&this->jpeg_diagnostic_api_handler_);
   web_server_base::global_web_server_base->add_handler(&this->jpeg_filtered_diagnostic_api_handler_);
   web_server_base::global_web_server_base->add_handler(&this->target_detection_api_handler_);
+  web_server_base::global_web_server_base->add_handler(&this->measurement_api_handler_);
   web_server_base::global_web_server_base->add_handler(&this->runtime_diagnostics_api_handler_);
   this->api_registered_ = true;
 
   ESP_LOGI(TAG,
            "API HTTP camera enregistree: /api/wsdl, /api/runtime/status, /api/camera/settings*, "
-           "/diagnostic-jpeg/* et /target/*");
+           "/diagnostic-jpeg/*, /target/* et /measurement/*");
 }
 
 }  // namespace geometrie_camera_app
