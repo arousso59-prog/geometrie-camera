@@ -90,13 +90,14 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
 
   xml += "  <method name=\"camera_timing_get\" http=\"GET\" path=\"/api/camera/timing\">\n";
-  xml += "    <comment>Lit le diagnostic bas niveau OV5640 : PCLK, VFIFO, HTS/VTS, JPEG mode 0x4713, HREF blanking 0x471F et eventuelle reference memorisee.</comment>\n";
+  xml += "    <comment>Lit le diagnostic bas niveau OV5640 : XCLK runtime, PCLK, VFIFO, HTS/VTS, JPEG mode 0x4713, HREF blanking 0x471F et eventuelle reference memorisee.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
   xml += "  <method name=\"camera_timing_set\" http=\"GET\" path=\"/api/camera/timing/set\">\n";
-  xml += "    <comment>Modifie uniquement des registres OV5640 explicitement autorises avec readback. La premiere modification HTS/VTS/JPEG/HREF memorise automatiquement la reference courante.</comment>\n";
+  xml += "    <comment>Modifie uniquement des parametres OV5640 explicitement autorises avec controle. La premiere modification XCLK/HTS/VTS/JPEG/HREF memorise automatiquement la reference courante.</comment>\n";
+  xml += "    <parameter name=\"xclk_mhz\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"5..8\">Frequence XCLK runtime de test via le callback set_xclk du driver. Permet de tester sous la limite YAML ESPHome de 8 MHz sans reflasher.</parameter>\n";
   xml += "    <parameter name=\"pclk_divider\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"1..31\">Diviseur PCLK du registre 0x3824.</parameter>\n";
   xml += "    <parameter name=\"hts\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"1..65535\">Horizontal Total Size, registres 0x380C/0x380D. Decimal ou notation 0x...</parameter>\n";
   xml += "    <parameter name=\"vts\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"1..65535\">Vertical Total Size, registres 0x380E/0x380F. Decimal ou notation 0x...</parameter>\n";
@@ -108,7 +109,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
 
   xml += "  <method name=\"camera_timing_restore\" http=\"GET\" path=\"/api/camera/timing/restore\">\n";
-  xml += "    <comment>Restaure HTS, VTS, JPEG mode et HREF blanking aux valeurs memorisees avant la premiere modification de la serie de test. Ne restaure pas le diviseur PCLK.</comment>\n";
+  xml += "    <comment>Restaure XCLK, HTS, VTS, JPEG mode et HREF blanking aux valeurs memorisees avant la premiere modification de la serie de test. Ne restaure pas le diviseur PCLK.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"409\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
