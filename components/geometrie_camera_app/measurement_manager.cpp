@@ -4,7 +4,7 @@ namespace esphome {
 namespace geometrie_camera_app {
 
 MeasurementManager::MeasurementManager()
-    : target_detector_(), measurement_engine_(), last_measurement_(), valid_measurement_count_(0) {}
+    : measurement_engine_(), last_measurement_(), valid_measurement_count_(0) {}
 
 void MeasurementManager::setup() {
   this->reset();
@@ -15,9 +15,11 @@ void MeasurementManager::reset() {
   this->valid_measurement_count_ = 0;
 }
 
-bool MeasurementManager::process(const GrayFrameView &frame, uint32_t timestamp_ms) {
-  const TargetObservation observation = this->target_detector_.detect(frame);
-  this->last_measurement_ = this->measurement_engine_.compute(observation, timestamp_ms);
+bool MeasurementManager::process(const TargetObservation &observation,
+                                 uint16_t frame_width, uint16_t frame_height,
+                                 uint32_t timestamp_ms) {
+  this->last_measurement_ = this->measurement_engine_.compute(
+      observation, frame_width, frame_height, timestamp_ms);
 
   if (this->last_measurement_.valid) {
     this->valid_measurement_count_++;
@@ -35,11 +37,11 @@ const GeometryMeasurement &MeasurementManager::last_measurement() const {
   return this->last_measurement_;
 }
 
-TargetDetector &MeasurementManager::target_detector() {
-  return this->target_detector_;
+GeometryMeasurementEngine &MeasurementManager::measurement_engine() {
+  return this->measurement_engine_;
 }
 
-GeometryMeasurementEngine &MeasurementManager::measurement_engine() {
+const GeometryMeasurementEngine &MeasurementManager::measurement_engine() const {
   return this->measurement_engine_;
 }
 
