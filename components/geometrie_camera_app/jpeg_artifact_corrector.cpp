@@ -19,6 +19,7 @@ constexpr uint8_t DARK_EDGE_DELTA = 7;
 constexpr uint8_t MAX_REFERENCE_DIFFERENCE = 60;
 constexpr uint8_t GREEN_NEIGHBOR_X = 2;
 constexpr uint8_t DARK_EDGE_EXPANSION = 2;
+constexpr uint8_t MAX_DASH_GAP = 3;
 
 struct ReferenceSample {
   bool have_above;
@@ -37,6 +38,31 @@ inline bool mask_get(const uint8_t *mask, uint16_t width, uint16_t height, int x
   }
   const size_t index = static_cast<size_t>(y) * width + static_cast<size_t>(x);
   return (mask[index >> 3] & static_cast<uint8_t>(1U << (index & 7U))) != 0;
+}
+
+uint8_t mask_window_byte(const uint8_t *mask, uint16_t width, uint16_t height,
+                         int y, uint16_t x_base) {
+  if (mask == nullptr || y < 0 || y >= height || x_base >= width) {
+    return 0;
+  }
+
+  const size_t total_bits = static_cast<size_t>(width) * height;
+  const size_t total_bytes = (total_bits + 7U) / 8U;
+  const size_t bit_offset = static_cast<size_t>(y) * width + x_base;
+  const size_t byte_index = bit_offset >> 3;
+  const uint8_t bit_shift = static_cast<uint8_t>(bit_offset & 7U);
+
+  uint16_t word = mask[byte_index];
+  if (bit_shift != 0 && byte_index + 1U < total_bytes) {
+    word |= static_cast<uint16_t>(mask[byte_index + 1U]) << 8;
+  }
+
+  uint8_t value = static_cast<uint8_t>((word >> bit_shift) & 0xFFU);
+  const uint16_t remaining = static_cast<uint16_t>(width - x_base);
+  if (remaining < 8U) {
+    value &= static_cast<uint8_t>((1U << remaining) - 1U);
+  }
+  return value;
 }
 
 bool is_thin_green(const uint8_t *mask, uint16_t width, uint16_t height, int x, int y) {
@@ -67,6 +93,42 @@ bool has_thin_green_near_row(const uint8_t *mask, uint16_t width, uint16_t heigh
     }
   }
   return false;
+}
+
+int find_next_thin_green_x(const uint8_t *mask, uint16_t width, uint16_t height,
+                           int y, int start_x) {
+  if (mask == nullptr || width == 0 || height == 0 || y < 0 || y >= height || start_x >= width) {
+    return -1;
+  }
+
+  int search_x = std::max(0, start_x);
+  uint16_t x_base = static_cast<uint16_t>(search_x & ~7);
+
+  while (x_base < width) {
+    uint8_t candidates = 0;
+    for (int dy = -CANDIDATE_VERTICAL_RADIUS; dy <= CANDIDATE_VERTICAL_RADIUS; ++dy) {
+      candidates |= mask_window_byte(mask, width, height, y + dy, x_base);
+    }
+
+    if (search_x > x_base) {
+      const uint8_t skip = static_cast<uint8_t>(search_x - x_base);
+      candidates &= static_cast<uint8_t>(0xFFU << skip);
+    }
+
+    while (candidates != 0) {
+      const uint8_t bit = static_cast<uint8_t>(__builtin_ctz(static_cast<unsigned>(candidates)));
+      const int candidate_x = static_cast<int>(x_base) + bit;
+      if (candidate_x < width && has_thin_green_near_row(mask, width, height, candidate_x, y)) {
+        return candidate_x;
+      }
+      candidates &= static_cast<uint8_t>(candidates - 1U);
+    }
+
+    x_base = static_cast<uint16_t>(x_base + 8U);
+    search_x = x_base;
+  }
+
+  return -1;
 }
 
 bool has_green_seed_near_x(const uint8_t *mask, uint16_t width, uint16_t height,
@@ -182,55 +244,40 @@ bool JpegArtifactCorrector::is_green_seed(uint8_t red, uint8_t green, uint8_t bl
 
 bool JpegArtifactCorrector::correct(uint8_t *grayscale, size_t row_stride,
                                     const uint8_t *green_mask, uint16_t width,
-                                    uint16_t height) {
+                                    uint16_t height, uint32_t green_seed_count) {
   this->reset_stats_();
   if (grayscale == nullptr || green_mask == nullptr || width == 0 || height == 0 ||
       row_stride < width) {
     return false;
   }
 
-  // Count raw green seeds once. Processing remains restricted to compact
-  // horizontal intervals around thin green dashes; there is no full-frame
-  // neighbourhood search during correction.
-  const size_t pixel_count = static_cast<size_t>(width) * height;
-  for (size_t index = 0; index < pixel_count; ++index) {
-    if ((green_mask[index >> 3] & static_cast<uint8_t>(1U << (index & 7U))) != 0) {
-      this->stats_.green_seed_pixels++;
-    }
-  }
+  // V4 sparse: the JPEG decoder already counted the raw green seeds while
+  // building the bit mask, so there is no second full-frame counting pass.
+  this->stats_.green_seed_pixels = green_seed_count;
 
   const uint16_t expand_x = horizontal_expansion(width);
   const uint16_t max_dark_run = maximum_dark_run_length(width);
 
   for (uint16_t y = 0; y < height; ++y) {
     bool row_affected = false;
-    int x = 0;
+    int search_x = 0;
 
-    while (x < width) {
-      // Find the next thin green seed on this row or one neighbouring row.
-      while (x < width && !has_thin_green_near_row(green_mask, width, height, x, y)) {
-        ++x;
-      }
-      if (x >= width) {
+    while (search_x < width) {
+      // V4 sparse: scan packed mask bytes and jump directly to actual seed
+      // positions instead of testing every x coordinate in the image.
+      const int first_seed = find_next_thin_green_x(green_mask, width, height, y, search_x);
+      if (first_seed < 0) {
         break;
       }
 
-      const int first_seed = x;
-      int last_seed = x;
-      int gap = 0;
-
-      // Merge close seed pixels into one dash. JPEG chroma ringing may create
-      // one- or two-pixel holes inside what is visually one artefact.
-      ++x;
-      while (x < width && gap <= 3) {
-        if (has_thin_green_near_row(green_mask, width, height, x, y)) {
-          last_seed = x;
-          gap = 0;
-        } else {
-          ++gap;
-        }
-        ++x;
+      int last_seed = first_seed;
+      int next_seed = find_next_thin_green_x(green_mask, width, height, y, last_seed + 1);
+      while (next_seed >= 0 && next_seed - last_seed <= static_cast<int>(MAX_DASH_GAP) + 1) {
+        last_seed = next_seed;
+        next_seed = find_next_thin_green_x(green_mask, width, height, y, last_seed + 1);
       }
+
+      search_x = next_seed >= 0 ? next_seed : width;
 
       const int interval_start = std::max<int>(0, first_seed - expand_x);
       const int interval_end = std::min<int>(width - 1, last_seed + expand_x);
