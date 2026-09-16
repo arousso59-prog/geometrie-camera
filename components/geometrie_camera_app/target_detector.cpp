@@ -21,21 +21,27 @@ constexpr uint8_t TARGET_GRID[7][7] = {
 // aurait moins de 2 px et la reconnaissance devient trop fragile.
 constexpr uint16_t MIN_TARGET_SIZE_ABSOLUTE_PX = 14;
 
-// La plage de recherche est exprimee relativement au petit cote de l'image :
-// - minimum ~= 1 % du petit cote, avec plancher absolu de 14 px ;
-// - maximum ~= 50 % du petit cote.
+// La recherche initiale reste volontairement large, mais on n'explore plus les
+// carrés gigantesques qui ne correspondent pas a une cible de geometrie.
 constexpr uint16_t MIN_TARGET_SIZE_DIVISOR = 100;
-constexpr uint16_t MAX_TARGET_SIZE_DIVISOR = 2;
+constexpr uint16_t MAX_TARGET_SIZE_DIVISOR = 4;
 
-// Les petites cibles gardent une exploration fine. Pour les grandes tailles,
-// le pas d'echelle augmente progressivement afin de limiter le temps CPU.
-constexpr uint16_t MIN_SCALE_STEP_PX = 4;
-constexpr uint16_t SCALE_STEP_DIVISOR = 10;
+// V2 : balayage plus grossier que la premiere version, suivi d'un raffinement
+// local autour du meilleur candidat. Cela reduit fortement le nombre de positions
+// testees sans sacrifier la precision finale.
+constexpr uint16_t MIN_SPATIAL_STEP_PX = 6;
+constexpr uint16_t SPATIAL_STEP_DIVISOR = 8;
+constexpr uint16_t MIN_SCALE_STEP_PX = 6;
+constexpr uint16_t SCALE_STEP_DIVISOR = 8;
+constexpr uint16_t REFINE_STEP_PX = 2;
 
+// La vraie cible observee apres decodage/correction est nettement moins contrastee
+// que les images synthetiques utilisees au depart. Le code 7x7 doit donc porter
+// l'essentiel du score ; le contraste est un garde-fou, pas un multiplicateur fort.
 constexpr float MIN_ACCEPTED_SCORE = 0.78f;
-constexpr int MIN_CONTRAST = 40;
-constexpr int MIN_PREFILTER_CONTRAST = 24;
-constexpr uint8_t MIN_PREFILTER_BRIGHT_CELLS = 2;
+constexpr int MIN_CONTRAST = 12;
+constexpr int MIN_PREFILTER_CONTRAST = 12;
+constexpr uint8_t MIN_PREFILTER_BRIGHT_CELLS = 3;
 }
 
 TargetDetector::TargetDetector() {}
@@ -66,13 +72,11 @@ TargetObservation TargetDetector::detect(const GrayFrameView &frame) const {
 
   uint16_t size = minimum_size;
   while (size <= maximum_size) {
-    const uint16_t spatial_step = std::max<uint16_t>(4, size / 12U);
+    const uint16_t spatial_step =
+        std::max<uint16_t>(MIN_SPATIAL_STEP_PX, static_cast<uint16_t>(size / SPATIAL_STEP_DIVISOR));
 
     for (uint16_t y = 0; static_cast<uint32_t>(y) + size <= frame.height; y += spatial_step) {
       for (uint16_t x = 0; static_cast<uint32_t>(x) + size <= frame.width; x += spatial_step) {
-        // Le balayage pleine image contient enormement de positions, surtout a
-        // haute resolution. Ce prefiltre ne lit que quelques cellules et rejette
-        // les zones qui ne peuvent pas ressembler a un carre a bord noir.
         if (!this->passes_prefilter_(frame, x, y, size)) {
           continue;
         }
@@ -89,17 +93,17 @@ TargetObservation TargetDetector::detect(const GrayFrameView &frame) const {
       }
     }
 
-    const uint16_t scale_step = std::max<uint16_t>(MIN_SCALE_STEP_PX, size / SCALE_STEP_DIVISOR);
+    const uint16_t scale_step =
+        std::max<uint16_t>(MIN_SCALE_STEP_PX, static_cast<uint16_t>(size / SCALE_STEP_DIVISOR));
     if (static_cast<uint32_t>(size) + scale_step > maximum_size) {
       break;
     }
     size = static_cast<uint16_t>(size + scale_step);
   }
 
-  // Toujours tester exactement la borne haute si elle n'a pas ete visitee par
-  // la progression ci-dessus.
   if (size != maximum_size && maximum_size >= minimum_size) {
-    const uint16_t spatial_step = std::max<uint16_t>(4, maximum_size / 12U);
+    const uint16_t spatial_step =
+        std::max<uint16_t>(MIN_SPATIAL_STEP_PX, static_cast<uint16_t>(maximum_size / SPATIAL_STEP_DIVISOR));
     for (uint16_t y = 0; static_cast<uint32_t>(y) + maximum_size <= frame.height; y += spatial_step) {
       for (uint16_t x = 0; static_cast<uint32_t>(x) + maximum_size <= frame.width; x += spatial_step) {
         if (!this->passes_prefilter_(frame, x, y, maximum_size)) {
@@ -119,11 +123,63 @@ TargetObservation TargetDetector::detect(const GrayFrameView &frame) const {
     }
   }
 
-  if (best_score < MIN_ACCEPTED_SCORE || best_size == 0) {
+  // Raffinement local : une fois une zone prometteuse trouvee, on reteste autour
+  // de sa position et de sa taille avec un pas de 2 px. Cela permet au balayage
+  // global de rester rapide tout en retrouvant correctement les centres de cellules.
+  if (best_size != 0) {
+    const uint16_t coarse_spatial_step =
+        std::max<uint16_t>(MIN_SPATIAL_STEP_PX, static_cast<uint16_t>(best_size / SPATIAL_STEP_DIVISOR));
+    const uint16_t coarse_scale_step =
+        std::max<uint16_t>(MIN_SCALE_STEP_PX, static_cast<uint16_t>(best_size / SCALE_STEP_DIVISOR));
+
+    const uint16_t refine_min_size =
+        best_size > coarse_scale_step ? std::max<uint16_t>(minimum_size, best_size - coarse_scale_step)
+                                      : minimum_size;
+    const uint16_t refine_max_size =
+        std::min<uint16_t>(maximum_size, static_cast<uint16_t>(best_size + coarse_scale_step));
+    const uint16_t refine_min_x = best_x > coarse_spatial_step ? best_x - coarse_spatial_step : 0;
+    const uint16_t refine_min_y = best_y > coarse_spatial_step ? best_y - coarse_spatial_step : 0;
+    const uint32_t refine_max_x = static_cast<uint32_t>(best_x) + coarse_spatial_step;
+    const uint32_t refine_max_y = static_cast<uint32_t>(best_y) + coarse_spatial_step;
+
+    for (uint16_t refine_size = refine_min_size; refine_size <= refine_max_size;) {
+      for (uint32_t y = refine_min_y; y <= refine_max_y && y + refine_size <= frame.height;
+           y += REFINE_STEP_PX) {
+        for (uint32_t x = refine_min_x; x <= refine_max_x && x + refine_size <= frame.width;
+             x += REFINE_STEP_PX) {
+          if (!this->passes_prefilter_(frame, static_cast<uint16_t>(x), static_cast<uint16_t>(y), refine_size)) {
+            continue;
+          }
+
+          uint8_t candidate_rotation = 0;
+          const float score = this->score_candidate_(frame, static_cast<uint16_t>(x),
+                                                     static_cast<uint16_t>(y), refine_size,
+                                                     candidate_rotation);
+          if (score > best_score) {
+            best_score = score;
+            best_x = static_cast<uint16_t>(x);
+            best_y = static_cast<uint16_t>(y);
+            best_size = refine_size;
+            best_rotation = candidate_rotation;
+          }
+        }
+      }
+
+      if (static_cast<uint32_t>(refine_size) + REFINE_STEP_PX > refine_max_size) {
+        break;
+      }
+      refine_size = static_cast<uint16_t>(refine_size + REFINE_STEP_PX);
+    }
+  }
+
+  if (best_size == 0) {
     return best;
   }
 
-  best.valid = true;
+  // Toujours exposer le meilleur candidat pour le diagnostic, meme s'il reste
+  // sous le seuil d'acceptation. target_found/valid indique seul si la cible est
+  // consideree comme reconnue.
+  best.valid = best_score >= MIN_ACCEPTED_SCORE;
   best.center_x_px = static_cast<float>(best_x) + static_cast<float>(best_size) * 0.5f;
   best.center_y_px = static_cast<float>(best_y) + static_cast<float>(best_size) * 0.5f;
   best.width_px = static_cast<float>(best_size);
@@ -137,8 +193,6 @@ bool TargetDetector::passes_prefilter_(const GrayFrameView &frame, uint16_t x, u
   uint32_t border_sum = 0;
   uint8_t border_count = 0;
 
-  // Douze points repartis sur le bord, qui doit etre noir quelle que soit
-  // l'orientation du marqueur.
   for (uint8_t column = 0; column < 7; column += 2) {
     border_sum += this->sample_cell_(frame, x, y, size, 0, column);
     border_sum += this->sample_cell_(frame, x, y, size, 6, column);
@@ -157,9 +211,6 @@ bool TargetDetector::passes_prefilter_(const GrayFrameView &frame, uint16_t x, u
   const int border_mean = static_cast<int>(border_sum / border_count);
   uint8_t bright_inner_cells = 0;
 
-  // Le motif interieur contient plusieurs cellules blanches. On ne cherche pas
-  // encore le code exact ici : on verifie seulement qu'il existe un contraste
-  // suffisant avec le bord noir. Le test complet n'est lance que si ce filtre passe.
   for (uint8_t row = 1; row <= 5; row++) {
     for (uint8_t column = 1; column <= 5; column++) {
       const int value = static_cast<int>(this->sample_cell_(frame, x, y, size, row, column));
@@ -177,9 +228,6 @@ bool TargetDetector::passes_prefilter_(const GrayFrameView &frame, uint16_t x, u
 
 float TargetDetector::score_candidate_(const GrayFrameView &frame, uint16_t x, uint16_t y, uint16_t size,
                                        uint8_t &best_rotation_quarters) const {
-  // Les 49 valeurs ne dependent pas de la rotation. La version precedente les
-  // relisait deux fois pour chacune des quatre rotations. On les echantillonne
-  // maintenant une seule fois puis on teste les quatre orientations en RAM.
   uint8_t samples[7][7];
   for (uint8_t row = 0; row < 7; row++) {
     for (uint8_t column = 0; column < 7; column++) {
@@ -233,9 +281,10 @@ float TargetDetector::score_candidate_(const GrayFrameView &frame, uint16_t x, u
       }
     }
 
-    const float pattern_score = static_cast<float>(correct) / 49.0f;
-    const float contrast_score = std::min(1.0f, static_cast<float>(contrast) / 110.0f);
-    const float score = pattern_score * (0.75f + 0.25f * contrast_score);
+    // Le contraste a deja ete valide ci-dessus. On ne le penalise plus une
+    // seconde fois : le score exprime directement la proportion du code 7x7
+    // correctement classee.
+    const float score = static_cast<float>(correct) / 49.0f;
 
     if (score > best_score) {
       best_score = score;
