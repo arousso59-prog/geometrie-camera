@@ -5,28 +5,16 @@
 
 #include "esphome/core/component.h"
 #include "api_wsdl.h"
-#include "camera_api.h"
-#include "camera_manager.h"
 #include "camera_resolution_controller.h"
 #include "camera_settings_api.h"
 #include "camera_settings_controller.h"
-#include "grayscale_diagnostic.h"
-#include "grayscale_diagnostic_api.h"
 #include "jpeg_diagnostic.h"
 #include "jpeg_diagnostic_api.h"
 #include "jpeg_filtered_diagnostic.h"
 #include "jpeg_filtered_diagnostic_api.h"
 #include "measurement_manager.h"
-#include "ov3660_camera_configurator.h"
-#include "ov5640_timing_api.h"
-#include "ov5640_timing_controller.h"
-#include "placeholder_image_provider.h"
-#include "rgb565_diagnostic.h"
-#include "rgb565_diagnostic_api.h"
 #include "runtime_diagnostics.h"
 #include "runtime_diagnostics_api.h"
-#include "target_search_diagnostic.h"
-#include "target_search_diagnostic_api.h"
 #include "types.h"
 
 namespace esphome {
@@ -44,49 +32,32 @@ class GeometrieCameraApp : public Component {
   void dump_config() override;
 
   void set_camera(esp32_camera::ESP32Camera *camera);
-  void set_ov3660_pclk_divider(uint8_t divider);
 
   std::string status_text() const;
   uint32_t valid_measurement_count() const;
   const GeometryMeasurement &last_measurement() const;
 
-  CameraManager &camera_manager();
   MeasurementManager &measurement_manager();
   TargetDetector &target_detector();
   GeometryMeasurementEngine &measurement_engine();
   CameraResolutionController &resolution_controller();
   CameraSettingsController &settings_controller();
-  GrayscaleDiagnostic &grayscale_diagnostic();
   JpegDiagnostic &jpeg_diagnostic();
-  Rgb565Diagnostic &rgb565_diagnostic();
-  TargetSearchDiagnostic &target_search_diagnostic();
-  Ov3660CameraConfigurator &camera_configurator();
+  JpegFilteredDiagnostic &jpeg_filtered_diagnostic();
 
  private:
   void register_api_if_possible_();
 
-  PlaceholderImageProvider placeholder_image_provider_;
-  CameraManager camera_manager_;
   MeasurementManager measurement_manager_;
   CameraResolutionController resolution_controller_;
   CameraSettingsController settings_controller_;
-  Ov5640TimingController timing_controller_;
-  GrayscaleDiagnostic grayscale_diagnostic_;
   JpegDiagnostic jpeg_diagnostic_;
   JpegFilteredDiagnostic jpeg_filtered_diagnostic_;
-  Rgb565Diagnostic rgb565_diagnostic_;
-  TargetSearchDiagnostic target_search_diagnostic_;
-  Ov3660CameraConfigurator camera_configurator_;
   RuntimeDiagnostics runtime_diagnostics_;
   ApiWsdlHandler api_wsdl_handler_;
-  CameraApiHandler api_handler_;
   CameraSettingsApiHandler settings_api_handler_;
-  Ov5640TimingApiHandler timing_api_handler_;
-  GrayscaleDiagnosticApiHandler diagnostic_api_handler_;
   JpegDiagnosticApiHandler jpeg_diagnostic_api_handler_;
   JpegFilteredDiagnosticApiHandler jpeg_filtered_diagnostic_api_handler_;
-  Rgb565DiagnosticApiHandler rgb565_diagnostic_api_handler_;
-  TargetSearchDiagnosticApiHandler target_search_diagnostic_api_handler_;
   RuntimeDiagnosticsApiHandler runtime_diagnostics_api_handler_;
   bool api_registered_;
 };
