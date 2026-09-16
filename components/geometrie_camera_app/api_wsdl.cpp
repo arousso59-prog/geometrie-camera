@@ -25,7 +25,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
                                         : "unknown";
 
   std::string xml;
-  xml.reserve(19456);
+  xml.reserve(20480);
   xml += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
   xml += "<api name=\"geometrie-camera\" version=\"1\" style=\"REST-over-HTTP\">\n";
   xml += "  <description>Catalogue WSDL-like des routes HTTP du projet. Ce document doit etre maintenu avec toute evolution d API.</description>\n";
@@ -90,23 +90,25 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
 
   xml += "  <method name=\"camera_timing_get\" http=\"GET\" path=\"/api/camera/timing\">\n";
-  xml += "    <comment>Lit le timing bas niveau de l OV5640 : diviseur PCLK, VFIFO_CTRL0C, HTS 0x380C/0x380D, VTS 0x380E/0x380F et eventuelle reference memorisee pour restauration.</comment>\n";
+  xml += "    <comment>Lit le diagnostic bas niveau OV5640 : PCLK, VFIFO, HTS/VTS, JPEG mode 0x4713, HREF blanking 0x471F et eventuelle reference memorisee.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
   xml += "  <method name=\"camera_timing_set\" http=\"GET\" path=\"/api/camera/timing/set\">\n";
-  xml += "    <comment>Modifie un ou plusieurs parametres de timing OV5640 avec readback. La premiere modification HTS/VTS memorise automatiquement les valeurs courantes pour pouvoir les restaurer.</comment>\n";
+  xml += "    <comment>Modifie uniquement des registres OV5640 explicitement autorises avec readback. La premiere modification HTS/VTS/JPEG/HREF memorise automatiquement la reference courante.</comment>\n";
   xml += "    <parameter name=\"pclk_divider\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"1..31\">Diviseur PCLK du registre 0x3824.</parameter>\n";
   xml += "    <parameter name=\"hts\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"1..65535\">Horizontal Total Size, registres 0x380C/0x380D. Decimal ou notation 0x...</parameter>\n";
   xml += "    <parameter name=\"vts\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"1..65535\">Vertical Total Size, registres 0x380E/0x380F. Decimal ou notation 0x...</parameter>\n";
+  xml += "    <parameter name=\"jpeg_mode\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"2,3\">Valeur de test limitee aux modes JPEG 2 et 3 du registre 0x4713.</parameter>\n";
+  xml += "    <parameter name=\"href_blanking\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0..255\">Valeur du controle HREF DVP 0x471F. Decimal ou notation 0x...</parameter>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"400\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
   xml += "  <method name=\"camera_timing_restore\" http=\"GET\" path=\"/api/camera/timing/restore\">\n";
-  xml += "    <comment>Restaure HTS/VTS aux valeurs memorisees juste avant la premiere modification de timing de la serie de test. Ne restaure pas le diviseur PCLK.</comment>\n";
+  xml += "    <comment>Restaure HTS, VTS, JPEG mode et HREF blanking aux valeurs memorisees avant la premiere modification de la serie de test. Ne restaure pas le diviseur PCLK.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"409\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
@@ -143,7 +145,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "    <comment>Purge la frame pre-acquise par ESPHome puis demande une frame JPEG fraiche produite par l ISP du capteur.</comment>\n";
   xml += "    <parameter name=\"resolution\" location=\"query\" required=\"false\" type=\"string\" allowed=\"";
   xml += allowed_resolutions;
-  xml += "\">Resolution a appliquer avant la capture JPEG. Un changement de resolution peut reprogrammer les registres de timing ; choisir la resolution avant un test HTS/VTS.</parameter>\n";
+  xml += "\">Resolution a appliquer avant la capture JPEG. Un changement de resolution peut reprogrammer les registres OV5640 ; choisir la resolution avant une serie de tests de timing/JPEG DVP.</parameter>\n";
   xml += "    <response code=\"202\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"400\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
