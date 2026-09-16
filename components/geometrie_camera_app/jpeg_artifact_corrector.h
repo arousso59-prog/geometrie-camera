@@ -21,7 +21,7 @@ class JpegArtifactCorrector {
 
   bool is_green_seed(uint8_t red, uint8_t green, uint8_t blue) const;
   bool correct(uint8_t *grayscale, size_t row_stride, const uint8_t *green_mask,
-               uint16_t width, uint16_t height);
+               uint16_t width, uint16_t height, uint32_t green_seed_count);
 
   const JpegArtifactCorrectionStats &stats() const;
 
