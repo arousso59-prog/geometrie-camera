@@ -17,6 +17,7 @@ class Ov5640TimingApiHandler : public AsyncWebHandler {
  private:
   void handle_status_(AsyncWebServerRequest *request) const;
   void handle_set_(AsyncWebServerRequest *request) const;
+  void handle_restore_(AsyncWebServerRequest *request) const;
   void send_snapshot_(AsyncWebServerRequest *request, bool applied, const char *status, int response_code) const;
 
   Ov5640TimingController *controller_;
