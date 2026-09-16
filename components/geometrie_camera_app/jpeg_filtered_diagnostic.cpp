@@ -234,6 +234,15 @@ uint32_t JpegFilteredDiagnostic::process_count() const { return this->process_co
 uint32_t JpegFilteredDiagnostic::source_capture_count() const { return this->source_capture_count_; }
 uint16_t JpegFilteredDiagnostic::width() const { return this->width_; }
 uint16_t JpegFilteredDiagnostic::height() const { return this->height_; }
+const uint8_t *JpegFilteredDiagnostic::grayscale_data() const {
+  if (!this->ready_ || this->bmp_buffer_ == nullptr) {
+    return nullptr;
+  }
+  return this->bmp_buffer_ + BMP_PIXEL_OFFSET;
+}
+size_t JpegFilteredDiagnostic::grayscale_stride() const {
+  return (static_cast<size_t>(this->width_) + 3U) & ~static_cast<size_t>(3U);
+}
 const uint8_t *JpegFilteredDiagnostic::bmp_data() const { return this->bmp_buffer_; }
 size_t JpegFilteredDiagnostic::bmp_size() const { return this->bmp_size_; }
 int JpegFilteredDiagnostic::decode_result() const { return this->decode_result_; }
