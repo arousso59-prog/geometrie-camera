@@ -32,7 +32,7 @@ struct TargetCandidate {
 struct TargetCandidateSet {
   TargetCandidateSet();
 
-  static constexpr size_t MAX_CANDIDATES = 24;
+  static constexpr size_t MAX_CANDIDATES = 8;
   TargetCandidate candidates[MAX_CANDIDATES];
   size_t count;
 };
