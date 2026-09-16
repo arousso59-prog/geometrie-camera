@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <vector>
 
 namespace esphome {
 namespace geometrie_camera_app {
@@ -12,11 +11,11 @@ constexpr uint8_t GREEN_MIN_VALUE = 48;
 constexpr uint8_t GREEN_DOMINANCE_DELTA = 28;
 constexpr uint8_t GREEN_MEAN_DELTA = 22;
 constexpr uint8_t THIN_GREEN_VERTICAL_RADIUS = 2;
-constexpr uint8_t GREEN_EXPAND_X = 3;
-constexpr uint8_t GREEN_EXPAND_Y = 1;
-constexpr uint8_t REFERENCE_SEARCH_RADIUS = 6;
-constexpr uint8_t DARK_IMPULSE_DELTA = 38;
-constexpr uint8_t MAX_REFERENCE_DIFFERENCE = 48;
+constexpr uint8_t CANDIDATE_VERTICAL_RADIUS = 1;
+constexpr uint8_t REFERENCE_SEARCH_RADIUS = 4;
+constexpr uint8_t DARK_IMPULSE_DELTA = 26;
+constexpr uint8_t MAX_REFERENCE_DIFFERENCE = 52;
+constexpr uint8_t GREEN_NEIGHBOR_X = 2;
 
 inline bool mask_get(const uint8_t *mask, uint16_t width, uint16_t height, int x, int y) {
   if (mask == nullptr || x < 0 || y < 0 || x >= width || y >= height) {
@@ -41,27 +40,36 @@ bool is_thin_green(const uint8_t *mask, uint16_t width, uint16_t height, int x, 
     }
   }
 
-  // The observed defect is one or two pixels high. A real green surface tends
-  // to continue over several neighbouring rows and is deliberately rejected.
+  // The observed defect is made of one/two-pixel-high dashes. Continuous
+  // green objects are intentionally rejected here.
   return vertical_neighbors <= 1;
 }
 
-bool near_thin_green(const uint8_t *mask, uint16_t width, uint16_t height, int x, int y) {
-  for (int dy = -GREEN_EXPAND_Y; dy <= GREEN_EXPAND_Y; ++dy) {
-    for (int dx = -GREEN_EXPAND_X; dx <= GREEN_EXPAND_X; ++dx) {
-      if (is_thin_green(mask, width, height, x + dx, y + dy)) {
-        return true;
-      }
+bool has_thin_green_near_row(const uint8_t *mask, uint16_t width, uint16_t height,
+                             int x, int y) {
+  for (int dy = -CANDIDATE_VERTICAL_RADIUS; dy <= CANDIDATE_VERTICAL_RADIUS; ++dy) {
+    if (is_thin_green(mask, width, height, x, y + dy)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool has_green_seed_near_x(const uint8_t *mask, uint16_t width, uint16_t height,
+                           int x, int y) {
+  for (int dx = -GREEN_NEIGHBOR_X; dx <= GREEN_NEIGHBOR_X; ++dx) {
+    if (mask_get(mask, width, height, x + dx, y)) {
+      return true;
     }
   }
   return false;
 }
 
 bool find_reference_value(const uint8_t *grayscale, size_t row_stride,
-                          const std::vector<uint8_t> &affected_rows,
-                          uint16_t width, uint16_t height, int x, int y,
-                          int direction, uint8_t *value) {
-  if (grayscale == nullptr || value == nullptr || x < 0 || x >= width || direction == 0) {
+                          const uint8_t *green_mask, uint16_t width, uint16_t height,
+                          int x, int y, int direction, uint8_t *value) {
+  if (grayscale == nullptr || green_mask == nullptr || value == nullptr || x < 0 ||
+      x >= width || direction == 0) {
     return false;
   }
 
@@ -70,13 +78,23 @@ bool find_reference_value(const uint8_t *grayscale, size_t row_stride,
     if (yy < 0 || yy >= height) {
       break;
     }
-    if (affected_rows[yy] != 0) {
+
+    // Never use an obviously corrupted green sample as a reference.
+    if (has_green_seed_near_x(green_mask, width, height, x, yy)) {
       continue;
     }
+
     *value = grayscale[static_cast<size_t>(yy) * row_stride + static_cast<size_t>(x)];
     return true;
   }
   return false;
+}
+
+uint16_t horizontal_expansion(uint16_t width) {
+  // The dash length scales with the selected sensor resolution. About 10 px
+  // at 1600-wide and 16 px at 2560-wide covers the observed black tail while
+  // keeping the correction local.
+  return std::max<uint16_t>(6, width / 160);
 }
 }
 
@@ -99,97 +117,109 @@ bool JpegArtifactCorrector::correct(uint8_t *grayscale, size_t row_stride,
     return false;
   }
 
-  std::vector<uint8_t> affected_rows(height, 0);
-  std::vector<uint8_t> expanded_rows(height, 0);
-
-  const uint16_t row_seed_threshold = std::max<uint16_t>(4, width / 200);
-
-  for (uint16_t y = 0; y < height; ++y) {
-    uint16_t thin_count = 0;
-    for (uint16_t x = 0; x < width; ++x) {
-      if (mask_get(green_mask, width, height, x, y)) {
-        this->stats_.green_seed_pixels++;
-      }
-      if (is_thin_green(green_mask, width, height, x, y)) {
-        thin_count++;
-        this->stats_.thin_green_pixels++;
-      }
-    }
-    if (thin_count >= row_seed_threshold) {
-      affected_rows[y] = 1;
+  // Count raw green seeds once. The previous V1 repeatedly searched large
+  // neighbourhoods for every pixel and then searched up/down again for every
+  // pixel of almost every row. On a 1600x1200 frame that made correction take
+  // several seconds. V2 instead discovers short candidate intervals once per
+  // row and only evaluates pixels inside those intervals.
+  const size_t pixel_count = static_cast<size_t>(width) * height;
+  for (size_t index = 0; index < pixel_count; ++index) {
+    if ((green_mask[index >> 3] & static_cast<uint8_t>(1U << (index & 7U))) != 0) {
+      this->stats_.green_seed_pixels++;
     }
   }
 
-  // Include the immediately adjacent row because JPEG ringing around the
-  // green/black dash can spill by one pixel vertically.
-  for (uint16_t y = 0; y < height; ++y) {
-    if (affected_rows[y] == 0) {
-      continue;
-    }
-    expanded_rows[y] = 1;
-    if (y > 0) {
-      expanded_rows[y - 1] = 1;
-    }
-    if (y + 1 < height) {
-      expanded_rows[y + 1] = 1;
-    }
-  }
-  affected_rows.swap(expanded_rows);
+  const uint16_t expand_x = horizontal_expansion(width);
 
   for (uint16_t y = 0; y < height; ++y) {
-    if (affected_rows[y] != 0) {
+    bool row_affected = false;
+    int x = 0;
+
+    while (x < width) {
+      // Find the next thin green seed on this row or one neighbouring row.
+      while (x < width && !has_thin_green_near_row(green_mask, width, height, x, y)) {
+        ++x;
+      }
+      if (x >= width) {
+        break;
+      }
+
+      const int first_seed = x;
+      int last_seed = x;
+      int gap = 0;
+
+      // Merge close seed pixels into one dash. JPEG chroma ringing may create
+      // one- or two-pixel holes inside what is visually one artefact.
+      ++x;
+      while (x < width && gap <= 3) {
+        if (has_thin_green_near_row(green_mask, width, height, x, y)) {
+          last_seed = x;
+          gap = 0;
+        } else {
+          ++gap;
+        }
+        ++x;
+      }
+
+      const int interval_start = std::max<int>(0, first_seed - expand_x);
+      const int interval_end = std::min<int>(width - 1, last_seed + expand_x);
+      row_affected = true;
+
+      for (int px = interval_start; px <= interval_end; ++px) {
+        if (is_thin_green(green_mask, width, height, px, y)) {
+          this->stats_.thin_green_pixels++;
+        }
+
+        uint8_t above = 0;
+        uint8_t below = 0;
+        const bool have_above = find_reference_value(grayscale, row_stride, green_mask,
+                                                     width, height, px, y, -1, &above);
+        const bool have_below = find_reference_value(grayscale, row_stride, green_mask,
+                                                     width, height, px, y, +1, &below);
+        if (!have_above && !have_below) {
+          continue;
+        }
+
+        const size_t pixel_index = static_cast<size_t>(y) * row_stride + static_cast<size_t>(px);
+        const uint8_t current = grayscale[pixel_index];
+
+        // Green corruption can spread by a couple of horizontal pixels after
+        // JPEG decoding, hence the small local seed check.
+        const bool green_artifact = has_green_seed_near_x(green_mask, width, height, px, y);
+
+        bool dark_impulse = false;
+        if (have_above && have_below) {
+          const int reference_min = std::min<int>(above, below);
+          const int reference_difference = std::abs(static_cast<int>(above) - static_cast<int>(below));
+          dark_impulse = reference_difference <= MAX_REFERENCE_DIFFERENCE &&
+                         static_cast<int>(current) + DARK_IMPULSE_DELTA < reference_min;
+        }
+
+        if (!green_artifact && !dark_impulse) {
+          continue;
+        }
+
+        uint8_t replacement = current;
+        if (have_above && have_below) {
+          replacement = static_cast<uint8_t>((static_cast<uint16_t>(above) + below + 1U) / 2U);
+        } else if (have_above) {
+          replacement = above;
+        } else {
+          replacement = below;
+        }
+
+        grayscale[pixel_index] = replacement;
+        if (green_artifact) {
+          this->stats_.corrected_green_pixels++;
+        } else {
+          this->stats_.corrected_dark_pixels++;
+        }
+        this->stats_.corrected_total_pixels++;
+      }
+    }
+
+    if (row_affected) {
       this->stats_.affected_rows++;
-    }
-  }
-
-  for (uint16_t y = 0; y < height; ++y) {
-    if (affected_rows[y] == 0) {
-      continue;
-    }
-
-    for (uint16_t x = 0; x < width; ++x) {
-      uint8_t above = 0;
-      uint8_t below = 0;
-      const bool have_above = find_reference_value(grayscale, row_stride, affected_rows,
-                                                   width, height, x, y, -1, &above);
-      const bool have_below = find_reference_value(grayscale, row_stride, affected_rows,
-                                                   width, height, x, y, +1, &below);
-      if (!have_above && !have_below) {
-        continue;
-      }
-
-      const size_t pixel_index = static_cast<size_t>(y) * row_stride + x;
-      const uint8_t current = grayscale[pixel_index];
-      const bool green_artifact = near_thin_green(green_mask, width, height, x, y);
-
-      bool dark_impulse = false;
-      if (have_above && have_below) {
-        const int reference_min = std::min<int>(above, below);
-        const int reference_difference = std::abs(static_cast<int>(above) - static_cast<int>(below));
-        dark_impulse = reference_difference <= MAX_REFERENCE_DIFFERENCE &&
-                       static_cast<int>(current) + DARK_IMPULSE_DELTA < reference_min;
-      }
-
-      if (!green_artifact && !dark_impulse) {
-        continue;
-      }
-
-      uint8_t replacement = current;
-      if (have_above && have_below) {
-        replacement = static_cast<uint8_t>((static_cast<uint16_t>(above) + below + 1U) / 2U);
-      } else if (have_above) {
-        replacement = above;
-      } else {
-        replacement = below;
-      }
-
-      grayscale[pixel_index] = replacement;
-      if (green_artifact) {
-        this->stats_.corrected_green_pixels++;
-      } else {
-        this->stats_.corrected_dark_pixels++;
-      }
-      this->stats_.corrected_total_pixels++;
     }
   }
 
