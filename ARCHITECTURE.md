@@ -72,7 +72,7 @@ GrayFrameView corrigé
         ↓
 TargetDetectionService
         ↓
-TargetDetector
+TargetDetector V2
         ↓
 TargetObservation
 ```
@@ -128,9 +128,19 @@ Algorithme pur de correction du défaut observé sur la voie JPEG : petits segme
 
 Transforme un `GrayFrameView` non propriétaire en `TargetObservation`. Il reste indépendant d'ESPHome, du JPEG, du HTTP et du stockage d'image.
 
-La version actuelle recherche le motif 7×7 sur l'image entière et retourne : centre, largeur/hauteur, qualité et orientation discrète 0/90/180/270 degrés. L'orientation fine/perspective sera ajoutée après validation de la cible réelle.
+La V2 est adaptée à la cible réelle observée après la chaîne JPEG corrigée :
 
-**Tests prioritaires :** cible synthétique, quatre orientations, absence de cible, contraste insuffisant, différentes tailles/résolutions, stabilité des coordonnées et du score.
+- motif 7×7 inchangé ;
+- quatre orientations discrètes 0/90/180/270 degrés ;
+- contraste minimal abaissé à 12 niveaux car la cible réelle reste reconnaissable malgré un contraste bien plus faible que les images synthétiques ;
+- le score est désormais la proportion de cellules correctement classées une fois le contraste minimal validé ;
+- balayage global plus grossier puis raffinement local autour du meilleur candidat ;
+- taille maximale de recherche limitée à 25 % du petit côté pour éviter les candidats irréalistes ;
+- même si le meilleur candidat reste sous le seuil d'acceptation, ses coordonnées/taille/score sont retournés avec `valid=false` pour faciliter le diagnostic.
+
+Le seuil d'acceptation reste à `0.78`. L'orientation fine/perspective sera ajoutée seulement après validation robuste de la cible réelle.
+
+**Tests prioritaires :** cible synthétique, cible réelle à faible contraste, quatre orientations, absence de cible, différentes tailles/résolutions, stabilité des coordonnées et du score, meilleur candidat sous le seuil.
 
 ### `TargetDetectionService`
 
@@ -154,7 +164,7 @@ GET /target/detect
 GET /target/status
 ```
 
-`/target/detect` traite la dernière image filtrée ; `/target/status` relit le dernier résultat sans retraitement.
+`/target/detect` traite la dernière image filtrée ; `/target/status` relit le dernier résultat sans retraitement. `target_found` indique l'acceptation finale, tandis que le bloc `target` expose le meilleur candidat disponible même si celui-ci reste sous le seuil.
 
 ### `MeasurementManager`
 
