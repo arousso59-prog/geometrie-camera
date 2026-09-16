@@ -27,13 +27,14 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   std::string xml;
   xml.reserve(13312);
   xml += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-  xml += "<api name=\"geometrie-camera\" version=\"8\" style=\"REST-over-HTTP\">\n";
+  xml += "<api name=\"geometrie-camera\" version=\"9\" style=\"REST-over-HTTP\">\n";
   xml += "  <description>API de la voie camera validee : OV5640 JPEG, correction grayscale, detection cible, reglages et diagnostic runtime.</description>\n";
   xml += "  <conventions>\n";
   xml += "    <item>Les routes de commande de mise au point utilisent encore HTTP GET.</item>\n";
   xml += "    <item>La detection cible travaille uniquement sur la derniere image grayscale corrigee.</item>\n";
   xml += "    <item>La V5 separe localisation de la cible et lecture du code 7x7 ; target_found indique l acceptation finale.</item>\n";
   xml += "    <item>Depuis la V5.3, le decodeur accepte un score final superieur ou egal a 0.82 apres validation independante du contraste, du cadre noir et du fond exterieur.</item>\n";
+  xml += "    <item>Depuis la V5.4, les coins des candidats peuvent etre raffines sur l image pleine resolution puis le code 7x7 est projete par homographie pour mieux supporter la perspective ; le candidat brut reste teste en secours.</item>\n";
   xml += "  </conventions>\n";
 
   xml += "  <method name=\"api_wsdl\" http=\"GET\" path=\"/api/wsdl\">\n";
@@ -107,20 +108,20 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
 
   xml += "  <method name=\"target_detect\" http=\"GET\" path=\"/target/detect\">\n";
-  xml += "    <comment>Lance TargetDetector V5.3 sur la derniere image grayscale corrigee. La localisation se fait d abord sur une image reduite par seuillage local et composantes sombres quasi carrees ; le code 7x7 est ensuite projete et valide dans les quadrilateres candidats sur l image pleine resolution. Le score final est accepte a partir de 0.82 seulement apres les gardes structurelles du decodeur. Ne relance ni capture ni filtrage.</comment>\n";
+  xml += "    <comment>Lance TargetDetector V5.4 sur la derniere image grayscale corrigee. La localisation globale se fait sur une image reduite ; chaque candidat peut ensuite avoir ses quatre coins raffines sur l image pleine resolution. Le code 7x7 est teste sur le candidat brut et sur le candidat raffine avec une projection projective par homographie. Le score final est accepte a partir de 0.82 seulement apres les gardes structurelles du decodeur. Ne relance ni capture ni filtrage.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"409\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
   xml += "  <method name=\"target_status\" http=\"GET\" path=\"/target/status\">\n";
-  xml += "    <comment>Relit le dernier resultat V5.3. Le bloc target contient le meilleur code decode ; si aucun code ne passe les gardes, il peut contenir le meilleur candidat de localisation avec target_found=false.</comment>\n";
+  xml += "    <comment>Relit le dernier resultat V5.4. Le bloc target contient le meilleur code decode issu du candidat brut ou raffine ; si aucun code ne passe les gardes, il peut contenir le meilleur candidat de localisation avec target_found=false.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
   xml += "  <method name=\"target_preview\" http=\"GET\" path=\"/target/preview.bmp\">\n";
-  xml += "    <comment>Genere une miniature grayscale de largeur maximale 640 px avec un rectangle noir/blanc autour du meilleur candidat de la derniere detection.</comment>\n";
+  xml += "    <comment>Genere une miniature grayscale de largeur maximale 640 px avec un rectangle noir/blanc autour du meilleur resultat de la derniere detection.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"image/bmp\"/>\n";
   xml += "    <response code=\"409\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
