@@ -29,6 +29,7 @@ struct JpegDecodeContext {
   uint8_t *green_mask;
   uint16_t width;
   uint16_t height;
+  uint32_t green_seed_count;
   const JpegArtifactCorrector *corrector;
 };
 
@@ -101,6 +102,7 @@ UINT jpeg_output_callback(JDEC *decoder, void *bitmap, JRECT *rect) {
 
       if (context->corrector->is_green_seed(red, green, blue)) {
         mask_set(context->green_mask, context->width, x, y);
+        context->green_seed_count++;
       }
     }
   }
@@ -180,6 +182,7 @@ bool JpegFilteredDiagnostic::process() {
   context.green_mask = this->green_mask_;
   context.width = width;
   context.height = height;
+  context.green_seed_count = 0;
   context.corrector = &this->corrector_;
 
   JDEC decoder{};
@@ -206,7 +209,7 @@ bool JpegFilteredDiagnostic::process() {
 
   const uint32_t correction_started = millis();
   if (!this->corrector_.correct(this->bmp_buffer_ + BMP_PIXEL_OFFSET, row_stride,
-                                this->green_mask_, width, height)) {
+                                this->green_mask_, width, height, context.green_seed_count)) {
     ESP_LOGE(TAG, "Correction des artefacts JPEG en echec");
     return false;
   }
@@ -221,7 +224,7 @@ bool JpegFilteredDiagnostic::process() {
 
   const auto &stats = this->corrector_.stats();
   ESP_LOGI(TAG,
-           "JPEG filtre pret: %ux%u, decode=%u ms correction=%u ms total=%u ms, lignes=%u, pixels corriges=%u",
+           "JPEG filtre V4 sparse pret: %ux%u, decode=%u ms correction=%u ms total=%u ms, lignes=%u, pixels corriges=%u",
            static_cast<unsigned>(this->width_), static_cast<unsigned>(this->height_),
            static_cast<unsigned>(this->decode_ms_), static_cast<unsigned>(this->correction_ms_),
            static_cast<unsigned>(this->total_ms_), static_cast<unsigned>(stats.affected_rows),
@@ -303,7 +306,10 @@ void JpegFilteredDiagnostic::clear_buffers_() {
 }
 
 void JpegFilteredDiagnostic::build_bmp_header_(uint16_t width, uint16_t height, size_t row_stride) {
-  std::memset(this->bmp_buffer_, 0, this->bmp_size_);
+  // The JPEG decoder overwrites every image pixel. Clearing the whole PSRAM
+  // bitmap here was therefore redundant; only the header/palette and possible
+  // BMP row padding need explicit initialization.
+  std::memset(this->bmp_buffer_, 0, BMP_PIXEL_OFFSET);
   this->bmp_buffer_[0] = 'B';
   this->bmp_buffer_[1] = 'M';
   write_u32(this->bmp_buffer_, 2, static_cast<uint32_t>(this->bmp_size_));
@@ -328,6 +334,14 @@ void JpegFilteredDiagnostic::build_bmp_header_(uint16_t width, uint16_t height, 
     *palette++ = static_cast<uint8_t>(value);
     *palette++ = static_cast<uint8_t>(value);
     *palette++ = 0;
+  }
+
+  if (row_stride > width) {
+    const size_t padding = row_stride - width;
+    uint8_t *pixels = this->bmp_buffer_ + BMP_PIXEL_OFFSET;
+    for (uint16_t y = 0; y < height; ++y) {
+      std::memset(pixels + static_cast<size_t>(y) * row_stride + width, 0, padding);
+    }
   }
 }
 
