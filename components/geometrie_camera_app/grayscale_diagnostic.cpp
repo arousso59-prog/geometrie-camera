@@ -19,6 +19,8 @@ constexpr size_t BMP_PALETTE_SIZE = 256 * 4;
 constexpr size_t BMP_PIXEL_OFFSET = BMP_FILE_HEADER_SIZE + BMP_INFO_HEADER_SIZE + BMP_PALETTE_SIZE;
 constexpr uint8_t GREEN_OVERLAY_INDEX = 254;
 constexpr uint8_t GREEN_REMAP_INDEX = 253;
+constexpr uint16_t PREVIEW_MAX_WIDTH = 640;
+constexpr uint16_t PREVIEW_MAX_HEIGHT = 480;
 
 void write_u16_le(uint8_t *buffer, size_t offset, uint16_t value) {
   buffer[offset] = static_cast<uint8_t>(value & 0xFF);
@@ -40,6 +42,12 @@ GrayscaleDiagnostic::GrayscaleDiagnostic()
       bmp_capacity_(0),
       width_(0),
       height_(0),
+      preview_bmp_buffer_(nullptr),
+      preview_bmp_size_(0),
+      preview_bmp_capacity_(0),
+      preview_width_(0),
+      preview_height_(0),
+      preview_ready_(false),
       capture_count_(0),
       last_capture_ms_(0),
       capture_pending_(false),
@@ -58,6 +66,7 @@ GrayscaleDiagnostic::GrayscaleDiagnostic()
 
 GrayscaleDiagnostic::~GrayscaleDiagnostic() {
   this->clear_buffer_();
+  this->clear_preview_buffer_();
 }
 
 void GrayscaleDiagnostic::set_camera(esp32_camera::ESP32Camera *camera) {
@@ -131,9 +140,11 @@ void GrayscaleDiagnostic::on_camera_image(const std::shared_ptr<camera::CameraIm
   this->total_cycle_ms_ = this->last_capture_ms_ - this->request_started_ms_;
   this->capture_pending_ = false;
 
-  ESP_LOGI(TAG, "Capture brute recue: %ux%u, %u octets source, BMP %u octets",
+  ESP_LOGI(TAG, "Capture brute recue: %ux%u, %u octets source, BMP %u octets, preview %ux%u %u octets",
            static_cast<unsigned>(frame->width), static_cast<unsigned>(frame->height),
-           static_cast<unsigned>(frame->len), static_cast<unsigned>(this->bmp_size_));
+           static_cast<unsigned>(frame->len), static_cast<unsigned>(this->bmp_size_),
+           static_cast<unsigned>(this->preview_width_), static_cast<unsigned>(this->preview_height_),
+           static_cast<unsigned>(this->preview_bmp_size_));
   ESP_LOGI(TAG, "Temps: acquisition=%u ms, diagnostic=%u ms, total=%u ms",
            static_cast<unsigned>(this->acquisition_ms_),
            static_cast<unsigned>(this->diagnostic_processing_ms_),
@@ -153,6 +164,11 @@ bool GrayscaleDiagnostic::update_visualization(const uint8_t *grayscale, size_t 
   this->width_ = width;
   this->height_ = height;
   this->ready_ = true;
+
+  if (!this->build_preview_bmp_(grayscale, grayscale_size, width, height)) {
+    ESP_LOGW(TAG, "Construction preview BMP impossible; image pleine resolution conservee");
+  }
+
   return true;
 }
 
@@ -214,6 +230,11 @@ uint16_t GrayscaleDiagnostic::width() const { return this->width_; }
 uint16_t GrayscaleDiagnostic::height() const { return this->height_; }
 const uint8_t *GrayscaleDiagnostic::bmp_data() const { return this->bmp_buffer_; }
 size_t GrayscaleDiagnostic::bmp_size() const { return this->bmp_size_; }
+bool GrayscaleDiagnostic::preview_ready() const { return this->preview_ready_; }
+uint16_t GrayscaleDiagnostic::preview_width() const { return this->preview_width_; }
+uint16_t GrayscaleDiagnostic::preview_height() const { return this->preview_height_; }
+const uint8_t *GrayscaleDiagnostic::preview_bmp_data() const { return this->preview_bmp_buffer_; }
+size_t GrayscaleDiagnostic::preview_bmp_size() const { return this->preview_bmp_size_; }
 uint32_t GrayscaleDiagnostic::request_started_ms() const { return this->request_started_ms_; }
 uint32_t GrayscaleDiagnostic::frame_received_ms() const { return this->frame_received_ms_; }
 uint32_t GrayscaleDiagnostic::acquisition_ms() const { return this->acquisition_ms_; }
@@ -292,6 +313,93 @@ bool GrayscaleDiagnostic::build_bmp_(const uint8_t *grayscale, size_t grayscale_
   return true;
 }
 
+bool GrayscaleDiagnostic::build_preview_bmp_(const uint8_t *grayscale, size_t grayscale_size, uint16_t width,
+                                             uint16_t height) {
+  this->preview_ready_ = false;
+  this->preview_bmp_size_ = 0;
+  this->preview_width_ = 0;
+  this->preview_height_ = 0;
+
+  if (grayscale == nullptr || width == 0 || height == 0) {
+    return false;
+  }
+
+  const size_t source_size = static_cast<size_t>(width) * static_cast<size_t>(height);
+  if (grayscale_size < source_size) {
+    return false;
+  }
+
+  uint16_t preview_width = width;
+  uint16_t preview_height = height;
+
+  if (width > PREVIEW_MAX_WIDTH || height > PREVIEW_MAX_HEIGHT) {
+    const uint32_t width_limited_height =
+        (static_cast<uint32_t>(height) * PREVIEW_MAX_WIDTH) / static_cast<uint32_t>(width);
+
+    if (width_limited_height <= PREVIEW_MAX_HEIGHT) {
+      preview_width = PREVIEW_MAX_WIDTH;
+      preview_height = static_cast<uint16_t>(std::max<uint32_t>(1U, width_limited_height));
+    } else {
+      preview_height = PREVIEW_MAX_HEIGHT;
+      const uint32_t height_limited_width =
+          (static_cast<uint32_t>(width) * PREVIEW_MAX_HEIGHT) / static_cast<uint32_t>(height);
+      preview_width = static_cast<uint16_t>(std::max<uint32_t>(1U, height_limited_width));
+    }
+  }
+
+  const size_t row_stride = (static_cast<size_t>(preview_width) + 3U) & ~static_cast<size_t>(3U);
+  const size_t pixel_data_size = row_stride * static_cast<size_t>(preview_height);
+  const size_t file_size = BMP_PIXEL_OFFSET + pixel_data_size;
+
+  if (!this->ensure_preview_buffer_(file_size)) {
+    return false;
+  }
+
+  std::memset(this->preview_bmp_buffer_, 0, file_size);
+  this->preview_bmp_buffer_[0] = 'B';
+  this->preview_bmp_buffer_[1] = 'M';
+  write_u32_le(this->preview_bmp_buffer_, 2, static_cast<uint32_t>(file_size));
+  write_u32_le(this->preview_bmp_buffer_, 10, static_cast<uint32_t>(BMP_PIXEL_OFFSET));
+  write_u32_le(this->preview_bmp_buffer_, 14, static_cast<uint32_t>(BMP_INFO_HEADER_SIZE));
+  write_u32_le(this->preview_bmp_buffer_, 18, static_cast<uint32_t>(preview_width));
+  write_u32_le(this->preview_bmp_buffer_, 22, static_cast<uint32_t>(preview_height));
+  write_u16_le(this->preview_bmp_buffer_, 26, 1);
+  write_u16_le(this->preview_bmp_buffer_, 28, 8);
+  write_u32_le(this->preview_bmp_buffer_, 34, static_cast<uint32_t>(pixel_data_size));
+  write_u32_le(this->preview_bmp_buffer_, 46, 256);
+  write_u32_le(this->preview_bmp_buffer_, 50, 256);
+
+  uint8_t *palette = this->preview_bmp_buffer_ + BMP_FILE_HEADER_SIZE + BMP_INFO_HEADER_SIZE;
+  for (size_t i = 0; i < 256; i++) {
+    const size_t offset = i * 4;
+    const uint8_t value = static_cast<uint8_t>(i);
+    palette[offset] = value;
+    palette[offset + 1] = value;
+    palette[offset + 2] = value;
+    palette[offset + 3] = 0;
+  }
+
+  uint8_t *pixels = this->preview_bmp_buffer_ + BMP_PIXEL_OFFSET;
+  for (uint16_t preview_y = 0; preview_y < preview_height; preview_y++) {
+    const uint32_t source_y =
+        (static_cast<uint32_t>(preview_y) * static_cast<uint32_t>(height)) / preview_height;
+    const size_t destination_y = static_cast<size_t>(preview_height - 1U - preview_y);
+    uint8_t *destination = pixels + destination_y * row_stride;
+
+    for (uint16_t preview_x = 0; preview_x < preview_width; preview_x++) {
+      const uint32_t source_x =
+          (static_cast<uint32_t>(preview_x) * static_cast<uint32_t>(width)) / preview_width;
+      destination[preview_x] = grayscale[source_y * static_cast<uint32_t>(width) + source_x];
+    }
+  }
+
+  this->preview_width_ = preview_width;
+  this->preview_height_ = preview_height;
+  this->preview_bmp_size_ = file_size;
+  this->preview_ready_ = true;
+  return true;
+}
+
 void GrayscaleDiagnostic::calculate_statistics_(const uint8_t *grayscale, size_t pixel_count) {
   this->raw_pixel_count_ = pixel_count;
   this->raw_zero_count_ = 0;
@@ -343,6 +451,28 @@ bool GrayscaleDiagnostic::ensure_buffer_(size_t required_size) {
   return true;
 }
 
+bool GrayscaleDiagnostic::ensure_preview_buffer_(size_t required_size) {
+  if (this->preview_bmp_buffer_ != nullptr && this->preview_bmp_capacity_ >= required_size) {
+    return true;
+  }
+
+  this->clear_preview_buffer_();
+  this->preview_bmp_buffer_ =
+      static_cast<uint8_t *>(heap_caps_malloc(required_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (this->preview_bmp_buffer_ == nullptr) {
+    ESP_LOGW(TAG, "Allocation PSRAM preview impossible, tentative heap 8-bit");
+    this->preview_bmp_buffer_ = static_cast<uint8_t *>(heap_caps_malloc(required_size, MALLOC_CAP_8BIT));
+  }
+
+  if (this->preview_bmp_buffer_ == nullptr) {
+    ESP_LOGE(TAG, "Allocation preview de %u octets impossible", static_cast<unsigned>(required_size));
+    return false;
+  }
+
+  this->preview_bmp_capacity_ = required_size;
+  return true;
+}
+
 void GrayscaleDiagnostic::clear_buffer_() {
   if (this->bmp_buffer_ != nullptr) {
     heap_caps_free(this->bmp_buffer_);
@@ -350,6 +480,18 @@ void GrayscaleDiagnostic::clear_buffer_() {
   this->bmp_buffer_ = nullptr;
   this->bmp_size_ = 0;
   this->bmp_capacity_ = 0;
+}
+
+void GrayscaleDiagnostic::clear_preview_buffer_() {
+  if (this->preview_bmp_buffer_ != nullptr) {
+    heap_caps_free(this->preview_bmp_buffer_);
+  }
+  this->preview_bmp_buffer_ = nullptr;
+  this->preview_bmp_size_ = 0;
+  this->preview_bmp_capacity_ = 0;
+  this->preview_width_ = 0;
+  this->preview_height_ = 0;
+  this->preview_ready_ = false;
 }
 
 }  // namespace geometrie_camera_app
