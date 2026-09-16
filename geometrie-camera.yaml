@@ -1,6 +1,6 @@
 # Capteur camera pour geometrie automobile - ESP32-S3 + OV5640
 # YAML = materiel / ESPHome
-# C++  = logique applicative / diagnostic / traitement image / calculs
+# C++  = acquisition JPEG / correction / detection / calculs
 
 substitutions:
   device_name: geometrie-camera
@@ -62,7 +62,7 @@ geometrie_camera_app:
 # ============================================================
 # CAMERA OV5640 - GOOUUU ESP32-S3-CAM V1.5
 # ============================================================
-# Brochage confirme depuis le schema vendeur :
+# Brochage confirme :
 #   SIOD  = GPIO4
 #   SIOC  = GPIO5
 #   VSYNC = GPIO6
@@ -78,16 +78,13 @@ geometrie_camera_app:
 #   Y9    = GPIO16
 #   PCLK  = GPIO13
 #
-# Capteur confirme par PID : OV5640 (0x5640), resolution physique max 2592x1944.
-# ESPHome 2026.7.3 n'expose pas 2592x1944 dans son schema YAML ; le mode maximal
-# directement supporte est QSXGA 2560x1920, soit seulement ~2,5 % de pixels en moins.
+# Capteur confirme par PID : OV5640 (0x5640), matrice physique 2592x1944.
+# ESPHome 2026.7.3 expose QSXGA 2560x1920 comme mode maximal.
 #
-# Test courant : JPEG produit directement par l'ISP OV5640.
-# Dernier essai XCLK bas pour verifier si les artefacts verticaux dependent de
-# l'horloge externe. Les essais precedents 20 -> 10 MHz n'avaient pas change le
-# defaut. ESPHome 2026.7.3 impose 8 MHz minimum sur external_clock ; 8 MHz est donc
-# le dernier test supporte sans contourner le composant camera standard.
-# framebuffer unique en PSRAM ; acquisition uniquement sur demande.
+# Voie retenue apres validation : JPEG natif OV5640 -> decodage grayscale ->
+# correction logicielle V3 des artefacts verts/noirs -> TargetDetector.
+# XCLK reste fixe a 8 MHz : les essais de timing/registres n'ont pas supprime
+# les artefacts et les frequences plus basses n'apportent pas de solution.
 
 i2c:
   - id: camera_i2c
@@ -129,14 +126,16 @@ esp32_camera:
   idle_framerate: 0 fps
   test_pattern: false
 
-# Routes du test JPEG natif :
-#   GET /diagnostic-jpeg/capture   -> demande une nouvelle frame JPEG au capteur
-#   GET /diagnostic-jpeg/status    -> taille, marqueurs JPEG et timings
-#   GET /diagnostic-jpeg/image.jpg -> derniere image JPEG recue
+# Routes encore utiles pendant la validation cible :
+#   GET /diagnostic-jpeg/capture?resolution=...
+#   GET /diagnostic-jpeg/status
+#   GET /diagnostic-jpeg/image.jpg
+#   GET /diagnostic-jpeg/filter
+#   GET /diagnostic-jpeg/filter-status
+#   GET /diagnostic-jpeg/filtered.bmp
 #
-# Les diagnostics GRAYSCALE et RGB565 restent compiles mais leur capture exige que
-# la camera soit configuree dans le format correspondant. La recherche de cible
-# GRAYSCALE n'est donc pas utilisee pendant ce test JPEG.
+# Les anciens diagnostics GRAYSCALE/RGB565, tests de registres OV5640,
+# configurateur OV3660 et API placeholder ont ete retires du code.
 
 # ============================================================
 # PARAMETRES DE DEVELOPPEMENT / CALIBRATION
@@ -199,7 +198,7 @@ number:
     unit_of_measurement: "px"
 
 # ============================================================
-# ETAT V0
+# ETAT / MESURES
 # ============================================================
 
 text_sensor:
