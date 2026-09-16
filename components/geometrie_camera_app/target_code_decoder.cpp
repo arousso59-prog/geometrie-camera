@@ -1,0 +1,234 @@
+#include "target_code_decoder.h"
+
+#include <algorithm>
+#include <cmath>
+
+namespace esphome {
+namespace geometrie_camera_app {
+
+namespace {
+constexpr uint8_t TARGET_GRID[7][7] = {
+    {1, 1, 1, 1, 1, 1, 1},
+    {1, 1, 0, 1, 1, 0, 1},
+    {1, 0, 1, 0, 0, 1, 1},
+    {1, 1, 1, 1, 0, 0, 1},
+    {1, 0, 0, 1, 1, 1, 1},
+    {1, 1, 0, 0, 1, 0, 1},
+    {1, 1, 1, 1, 1, 1, 1},
+};
+
+constexpr float EXPANSION_FACTORS[] = {0.92f, 1.00f, 1.08f, 1.16f, 1.24f, 1.32f};
+constexpr float MIN_ACCEPTED_SCORE = 0.84f;
+constexpr float MIN_BORDER_BLACK_RATIO = 0.84f;
+constexpr int MIN_CODE_CONTRAST = 8;
+constexpr int MIN_OUTSIDE_BLACK_SEPARATION = 5;
+
+float distance_between(const TargetPoint &a, const TargetPoint &b) {
+  const float dx = b.x - a.x;
+  const float dy = b.y - a.y;
+  return std::sqrt(dx * dx + dy * dy);
+}
+
+TargetPoint expand_point(const TargetPoint &point, float center_x, float center_y, float factor) {
+  TargetPoint expanded;
+  expanded.x = center_x + (point.x - center_x) * factor;
+  expanded.y = center_y + (point.y - center_y) * factor;
+  return expanded;
+}
+}
+
+TargetCodeDecoder::TargetCodeDecoder() {}
+
+TargetObservation TargetCodeDecoder::decode(const GrayFrameView &frame,
+                                            const TargetCandidate &candidate) const {
+  TargetObservation best;
+  float best_score = 0.0f;
+
+  if (frame.data == nullptr || frame.width == 0 || frame.height == 0 || frame.stride < frame.width) {
+    return best;
+  }
+
+  for (float expansion : EXPANSION_FACTORS) {
+    TargetCandidate adjusted = candidate;
+    adjusted.top_left = expand_point(candidate.top_left, candidate.center_x, candidate.center_y, expansion);
+    adjusted.top_right = expand_point(candidate.top_right, candidate.center_x, candidate.center_y, expansion);
+    adjusted.bottom_right = expand_point(candidate.bottom_right, candidate.center_x, candidate.center_y, expansion);
+    adjusted.bottom_left = expand_point(candidate.bottom_left, candidate.center_x, candidate.center_y, expansion);
+    adjusted.center_x = candidate.center_x;
+    adjusted.center_y = candidate.center_y;
+    adjusted.width = 0.5f * (distance_between(adjusted.top_left, adjusted.top_right) +
+                             distance_between(adjusted.bottom_left, adjusted.bottom_right));
+    adjusted.height = 0.5f * (distance_between(adjusted.top_left, adjusted.bottom_left) +
+                              distance_between(adjusted.top_right, adjusted.bottom_right));
+
+    if (adjusted.width < 10.0f || adjusted.height < 10.0f) {
+      continue;
+    }
+
+    uint8_t samples[7][7];
+    for (uint8_t row = 0; row < 7; ++row) {
+      for (uint8_t column = 0; column < 7; ++column) {
+        samples[row][column] = this->sample_cell_(frame, adjusted, row, column);
+      }
+    }
+
+    const float outside_mean = this->outside_mean_(frame, adjusted);
+
+    for (uint8_t rotation = 0; rotation < 4; ++rotation) {
+      uint32_t black_sum = 0;
+      uint32_t white_sum = 0;
+      uint16_t black_count = 0;
+      uint16_t white_count = 0;
+
+      for (uint8_t row = 0; row < 7; ++row) {
+        for (uint8_t column = 0; column < 7; ++column) {
+          if (this->expected_cell_(row, column, rotation) != 0) {
+            black_sum += samples[row][column];
+            black_count++;
+          } else {
+            white_sum += samples[row][column];
+            white_count++;
+          }
+        }
+      }
+
+      if (black_count == 0 || white_count == 0) {
+        continue;
+      }
+
+      const int black_mean = static_cast<int>(black_sum / black_count);
+      const int white_mean = static_cast<int>(white_sum / white_count);
+      const int contrast = white_mean - black_mean;
+      if (contrast < MIN_CODE_CONTRAST) {
+        continue;
+      }
+
+      if (outside_mean - static_cast<float>(black_mean) < MIN_OUTSIDE_BLACK_SEPARATION) {
+        continue;
+      }
+
+      const int threshold = (black_mean + white_mean) / 2;
+      uint16_t correct = 0;
+      uint16_t border_black = 0;
+      uint16_t border_total = 0;
+
+      for (uint8_t row = 0; row < 7; ++row) {
+        for (uint8_t column = 0; column < 7; ++column) {
+          const bool expected_black = this->expected_cell_(row, column, rotation) != 0;
+          const bool measured_black = static_cast<int>(samples[row][column]) < threshold;
+          if (expected_black == measured_black) {
+            correct++;
+          }
+
+          if (row == 0 || row == 6 || column == 0 || column == 6) {
+            border_total++;
+            if (measured_black) {
+              border_black++;
+            }
+          }
+        }
+      }
+
+      if (border_total == 0) {
+        continue;
+      }
+
+      const float border_ratio = static_cast<float>(border_black) / static_cast<float>(border_total);
+      if (border_ratio < MIN_BORDER_BLACK_RATIO) {
+        continue;
+      }
+
+      const float pattern_score = static_cast<float>(correct) / 49.0f;
+      const float contrast_score = std::min(1.0f, static_cast<float>(contrast) / 45.0f);
+      const float score = 0.86f * pattern_score + 0.10f * border_ratio + 0.04f * contrast_score;
+
+      if (score > best_score) {
+        best_score = score;
+        best.valid = score >= MIN_ACCEPTED_SCORE;
+        best.center_x_px = adjusted.center_x;
+        best.center_y_px = adjusted.center_y;
+        best.width_px = adjusted.width;
+        best.height_px = adjusted.height;
+        best.rotation_deg = static_cast<float>(rotation) * 90.0f;
+        best.quality = score;
+      }
+    }
+  }
+
+  return best;
+}
+
+TargetPoint TargetCodeDecoder::project_(const TargetCandidate &candidate, float u, float v) const {
+  const float top_x = candidate.top_left.x + (candidate.top_right.x - candidate.top_left.x) * u;
+  const float top_y = candidate.top_left.y + (candidate.top_right.y - candidate.top_left.y) * u;
+  const float bottom_x = candidate.bottom_left.x + (candidate.bottom_right.x - candidate.bottom_left.x) * u;
+  const float bottom_y = candidate.bottom_left.y + (candidate.bottom_right.y - candidate.bottom_left.y) * u;
+
+  TargetPoint point;
+  point.x = top_x + (bottom_x - top_x) * v;
+  point.y = top_y + (bottom_y - top_y) * v;
+  return point;
+}
+
+uint8_t TargetCodeDecoder::sample_point_(const GrayFrameView &frame, const TargetPoint &point) const {
+  const int x = std::max(0, std::min<int>(frame.width - 1, static_cast<int>(std::lround(point.x))));
+  const int y = std::max(0, std::min<int>(frame.height - 1, static_cast<int>(std::lround(point.y))));
+  return frame.data[static_cast<size_t>(y) * frame.stride + x];
+}
+
+uint8_t TargetCodeDecoder::sample_cell_(const GrayFrameView &frame, const TargetCandidate &candidate,
+                                        uint8_t row, uint8_t column) const {
+  const float center_u = (static_cast<float>(column) + 0.5f) / 7.0f;
+  const float center_v = (static_cast<float>(row) + 0.5f) / 7.0f;
+  const float delta = 0.20f / 7.0f;
+
+  const float offsets[5][2] = {
+      {0.0f, 0.0f},
+      {-delta, 0.0f},
+      {delta, 0.0f},
+      {0.0f, -delta},
+      {0.0f, delta},
+  };
+
+  uint16_t sum = 0;
+  for (const auto &offset : offsets) {
+    const TargetPoint point = this->project_(candidate, center_u + offset[0], center_v + offset[1]);
+    sum += this->sample_point_(frame, point);
+  }
+  return static_cast<uint8_t>(sum / 5U);
+}
+
+uint8_t TargetCodeDecoder::expected_cell_(uint8_t row, uint8_t column, uint8_t rotation_quarters) const {
+  rotation_quarters &= 0x03;
+  switch (rotation_quarters) {
+    case 1:
+      return TARGET_GRID[6 - column][row];
+    case 2:
+      return TARGET_GRID[6 - row][6 - column];
+    case 3:
+      return TARGET_GRID[column][6 - row];
+    default:
+      return TARGET_GRID[row][column];
+  }
+}
+
+float TargetCodeDecoder::outside_mean_(const GrayFrameView &frame,
+                                       const TargetCandidate &candidate) const {
+  constexpr float OUTSIDE = 0.10f;
+  constexpr float POSITIONS[5] = {0.10f, 0.30f, 0.50f, 0.70f, 0.90f};
+  uint32_t sum = 0;
+  uint16_t count = 0;
+
+  for (float position : POSITIONS) {
+    sum += this->sample_point_(frame, this->project_(candidate, position, -OUTSIDE));
+    sum += this->sample_point_(frame, this->project_(candidate, position, 1.0f + OUTSIDE));
+    sum += this->sample_point_(frame, this->project_(candidate, -OUTSIDE, position));
+    sum += this->sample_point_(frame, this->project_(candidate, 1.0f + OUTSIDE, position));
+    count += 4;
+  }
+
+  return count == 0 ? 0.0f : static_cast<float>(sum) / static_cast<float>(count);
+}
+
+}  // namespace geometrie_camera_app
+}  // namespace esphome
