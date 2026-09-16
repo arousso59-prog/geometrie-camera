@@ -29,7 +29,8 @@
 6. **Les gros buffers image/vision doivent être explicitement budgétés et placés en PSRAM.**
    - ne pas utiliser `std::vector` par défaut pour des workspaces pouvant dépasser quelques dizaines de kilo-octets ;
    - réutiliser les buffers entre appels plutôt que réallouer ;
-   - réserver la RAM interne aux structures légères et aux besoins temps-réel.
+   - réserver la RAM interne aux structures légères et aux besoins temps-réel ;
+   - éviter aussi les gros tableaux temporaires sur la pile des handlers HTTP : les candidats V5 sont persistants dans `TargetDetector`.
 
 ## Architecture actuelle
 
@@ -78,14 +79,14 @@ GrayFrameView corrigé
         ↓
 TargetDetectionService
         ↓
-TargetDetector V5
+TargetDetector V5.2
   ├── TargetCandidateFinder
-  │     - réduction de l'image à ~400 px max
+  │     - réduction de l'image à ~320 px max
   │     - seuillage local
   │     - composantes sombres
   │     - rejet des objets trop allongés
   │     - estimation de quatre coins
-  │     - conservation des meilleurs candidats
+  │     - conservation des 8 meilleurs candidats
   └── TargetCodeDecoder
         - projection du quadrilatère sur l'image pleine résolution
         - lecture du motif 7×7
@@ -133,26 +134,29 @@ Orchestrateur vision de la cible uniquement. Depuis la V5 il ne balaie plus l'im
 
 Il retourne le meilleur `TargetObservation`. Si aucun code n'est validé mais qu'une zone candidate existe, il retourne cette localisation avec `valid=false` afin que `/target/preview.bmp` reste utile pour le diagnostic.
 
+Le tableau des candidats est persistant dans l'objet `TargetDetector` et non local à `detect()`. Cette règle a été introduite après avoir observé un `vApplicationStackOverflowHook` dans le thread HTTP avec la première V5.
+
 ### `TargetCandidateFinder`
 
 Responsabilité : **trouver la cible dans l'image**, sans connaître le contenu exact du code 7×7.
 
-Méthode V5 :
+Méthode V5.2 :
 
-- réduction dynamique pour garder le plus grand côté proche de 400 px ;
-- moyenne des blocs source lors de la réduction ;
+- réduction dynamique pour garder le plus grand côté proche de 320 px ;
+- cinq échantillons rapides par cellule réduite plutôt qu'une moyenne exhaustive du bloc source ;
 - calcul de luminosité locale par tuiles ;
 - seuillage adaptatif : seules les zones significativement plus sombres que leur environnement sont retenues ;
 - composantes connexes 4-voisins ;
 - rejet des composantes trop petites, trop grandes ou trop allongées ;
 - estimation de quatre coins par extrema `x+y` / `x-y` de la composante ;
-- maximum 24 candidats conservés, classés principalement par forme carrée.
+- maximum 8 candidats conservés, classés principalement par forme carrée ;
+- pendant la validation V5.2, les huit candidats sont journalisés avec centre, taille et score sans modifier l'API.
 
-À 1600×1200, la réduction est typiquement ×4 : une cible de 40 px reste donc de l'ordre de 10 px dans la carte de localisation. À 2560×1920, le facteur augmente automatiquement pour garder un coût voisin.
+À 1600×1200, la réduction est typiquement ×5 et produit 320×240 pixels : une cible d'environ 40 px reste donc de l'ordre de 8 px dans la carte de localisation. À 2560×1920, le facteur augmente automatiquement pour garder un coût voisin.
 
-Le workspace de localisation est persistant et alloué explicitement en PSRAM. À 1600×1200, il représente typiquement environ 120 ko pour l'image réduite et jusqu'à 480 ko pour la file de composantes connexes. Ces buffers ne doivent pas revenir dans le heap interne via des conteneurs STL par défaut.
+Le workspace de localisation est persistant et alloué explicitement en PSRAM. À 1600×1200 en V5.2, la carte réduite représente environ 75 ko et la file de composantes peut atteindre environ 300 ko. Ces buffers ne doivent pas revenir dans le heap interne via des conteneurs STL par défaut.
 
-**Frontières de test :** carré sombre sur fond clair, lignes verticales parasites, plusieurs objets, cible déplacée dans l'image, faible contraste local, légère rotation/perspective, allocation du workspace en PSRAM.
+**Frontières de test :** carré sombre sur fond clair, lignes verticales parasites, plusieurs objets, cible déplacée dans l'image, faible contraste local, légère rotation/perspective, allocation du workspace en PSRAM, stabilité de la pile du handler HTTP, présence de la vraie cible dans les huit candidats.
 
 ### `TargetCodeDecoder`
 
