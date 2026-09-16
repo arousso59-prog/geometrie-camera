@@ -48,7 +48,7 @@ buffer grayscale corrigé
    ↓
 TargetDetectionService
    ↓
-TargetDetector
+TargetDetector V3
    ↓
 TargetObservation
    ↓
@@ -56,6 +56,8 @@ distance / orientation / géométrie
 ```
 
 Le correcteur V3 supprime la grande majorité des impulsions vertes et une part importante des petits segments noirs sans appliquer de flou global. Le buffer grayscale corrigé est exposé directement au code C++ ; le BMP n'est qu'une visualisation de diagnostic.
+
+Le `TargetDetector` V3 limite maintenant les tailles irréalistes, moyenne localement les cellules du code 7×7 et vérifie explicitement la cohérence du cadre noir pour réduire les faux positifs.
 
 ## Architecture actuelle
 
@@ -69,6 +71,7 @@ Sous-systèmes conservés :
 - `JpegArtifactCorrector` : correction pure des artefacts ;
 - `TargetDetectionService` : adaptation sans copie du buffer corrigé vers le détecteur ;
 - `TargetDetector` : recherche de la cible 7×7 ;
+- `TargetDetectionPreview` : miniature de diagnostic annotée sans modifier le buffer métier ;
 - `MeasurementManager` / `GeometryMeasurementEngine` : future chaîne distance/orientation/angles ;
 - `CameraResolutionController` ;
 - `CameraSettingsController` / API ;
@@ -95,9 +98,12 @@ GET /diagnostic-jpeg/filtered.bmp
 
 GET /target/detect
 GET /target/status
+GET /target/preview.bmp
 ```
 
 `/target/detect` lance la recherche sur la dernière image déjà filtrée. Il ne déclenche volontairement ni nouvelle capture ni nouveau filtrage pendant la phase de validation.
+
+`/target/preview.bmp` génère une miniature grayscale de largeur maximale 640 px avec un rectangle noir/blanc autour du meilleur candidat, accepté ou non. Cela permet de vérifier visuellement où le détecteur travaille sans dupliquer une image pleine résolution en PSRAM.
 
 Le résultat contient : cible trouvée ou non, centre en pixels, taille, rotation discrète 0/90/180/270 degrés, qualité et temps de détection.
 
@@ -109,9 +115,11 @@ Valider la cible réelle sur la voie JPEG corrigée :
 
 1. capture et filtrage de l'image ;
 2. recherche pleine image avec `/target/detect` ;
-3. validation de la position, de la taille, de la rotation discrète et du score ;
-4. estimation de distance ;
-5. estimation d'orientation fine ;
-6. calibration optique et comparaison aux données constructeur.
+3. contrôle du candidat avec `/target/preview.bmp` ;
+4. validation de la position, de la taille, de la rotation discrète et du score ;
+5. réglage fin de l'image via `/api/camera/settings/set` en comparant objectivement `target.quality` ;
+6. estimation de distance ;
+7. estimation d'orientation fine ;
+8. calibration optique et comparaison aux données constructeur.
 
 Les optimisations de vitesse seront faites après cette validation fonctionnelle. La stratégie prévue est de mémoriser la dernière boîte de cible et, après la première recherche globale, de limiter autant que possible le décodage/correction et la recherche à une ROI autour de la cible. En cas de perte de cible, retour automatique à une recherche globale.
