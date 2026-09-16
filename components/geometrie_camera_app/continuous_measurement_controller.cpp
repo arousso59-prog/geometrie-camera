@@ -42,17 +42,23 @@ ContinuousMeasurementController::ContinuousMeasurementController(
 
 bool ContinuousMeasurementController::start(uint32_t interval_ms) {
   if (!this->set_interval_ms(interval_ms)) {
+    this->running_ = false;
+    this->state_ = ContinuousMeasurementState::ERROR;
     this->last_error_ = "interval_ms_out_of_range";
     return false;
   }
 
   if (this->jpeg_source_ == nullptr || this->filtered_source_ == nullptr ||
       this->detection_service_ == nullptr || this->measurement_manager_ == nullptr) {
+    this->running_ = false;
+    this->state_ = ContinuousMeasurementState::ERROR;
     this->last_error_ = "continuous_measurement_unavailable";
     return false;
   }
 
   if (!this->measurement_manager_->measurement_engine().has_calibration()) {
+    this->running_ = false;
+    this->state_ = ContinuousMeasurementState::ERROR;
     this->last_error_ = "calibration_required";
     return false;
   }
@@ -176,24 +182,15 @@ ContinuousMeasurementState ContinuousMeasurementController::state() const { retu
 
 const char *ContinuousMeasurementController::state_text() const {
   switch (this->state_) {
-    case ContinuousMeasurementState::STOPPED:
-      return "stopped";
-    case ContinuousMeasurementState::REQUEST_CAPTURE:
-      return "request_capture";
-    case ContinuousMeasurementState::WAIT_CAPTURE:
-      return "wait_capture";
-    case ContinuousMeasurementState::FILTER:
-      return "filter";
-    case ContinuousMeasurementState::DETECT:
-      return "detect";
-    case ContinuousMeasurementState::COMPUTE:
-      return "compute";
-    case ContinuousMeasurementState::WAIT_INTERVAL:
-      return "wait_interval";
-    case ContinuousMeasurementState::ERROR:
-      return "error";
-    default:
-      return "unknown";
+    case ContinuousMeasurementState::STOPPED: return "stopped";
+    case ContinuousMeasurementState::REQUEST_CAPTURE: return "request_capture";
+    case ContinuousMeasurementState::WAIT_CAPTURE: return "wait_capture";
+    case ContinuousMeasurementState::FILTER: return "filter";
+    case ContinuousMeasurementState::DETECT: return "detect";
+    case ContinuousMeasurementState::COMPUTE: return "compute";
+    case ContinuousMeasurementState::WAIT_INTERVAL: return "wait_interval";
+    case ContinuousMeasurementState::ERROR: return "error";
+    default: return "unknown";
   }
 }
 
@@ -212,12 +209,8 @@ void ContinuousMeasurementController::begin_cycle_() {
 void ContinuousMeasurementController::finish_cycle_(bool target_found, bool measurement_valid) {
   const uint32_t now = millis();
   this->cycle_count_++;
-  if (target_found) {
-    this->target_found_count_++;
-  }
-  if (measurement_valid) {
-    this->valid_measurement_count_++;
-  }
+  if (target_found) this->target_found_count_++;
+  if (measurement_valid) this->valid_measurement_count_++;
   this->last_cycle_target_found_ = target_found;
   this->last_cycle_measurement_valid_ = measurement_valid;
   this->last_cycle_completed_ms_ = now;
