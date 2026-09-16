@@ -39,7 +39,9 @@ GeometrieCameraApp
 │   ├── JpegArtifactCorrector
 │   └── JpegFilteredDiagnosticApiHandler
 ├── TargetDetectionService
-│   ├── TargetDetector (fourni par MeasurementManager)
+│   ├── TargetDetector
+│   │   ├── TargetCandidateFinder
+│   │   └── TargetCodeDecoder
 │   └── TargetDetectionApiHandler
 ├── TargetDetectionPreview
 ├── MeasurementManager
@@ -65,50 +67,44 @@ JpegFilteredDiagnostic
   - conversion immédiate en luminance 8 bits
         ↓
 JpegArtifactCorrector V3
-  - détection des impulsions vertes fines
-  - correction locale des segments verts/noirs
-  - pas de flou global
+  - correction locale des artefacts verts/noirs
         ↓
 GrayFrameView corrigé
         ↓
 TargetDetectionService
         ↓
-TargetDetector V4
+TargetDetector V5
+  ├── TargetCandidateFinder
+  │     - réduction de l'image à ~400 px max
+  │     - seuillage local
+  │     - composantes sombres
+  │     - rejet des objets trop allongés
+  │     - estimation de quatre coins
+  │     - conservation des meilleurs candidats
+  └── TargetCodeDecoder
+        - projection du quadrilatère sur l'image pleine résolution
+        - lecture du motif 7×7
+        - test des quatre orientations logiques
+        - validation du cadre noir et du fond extérieur
         ↓
 TargetObservation
 ```
 
-Une fois la détection de la cible réelle validée, `MeasurementManager / GeometryMeasurementEngine` utiliseront cette observation pour la distance et l'orientation fine.
+Une fois la détection réelle validée, `MeasurementManager / GeometryMeasurementEngine` utiliseront la géométrie de la cible pour distance et orientation fine.
 
 ## Responsabilités
 
 ### `GeometrieCameraApp`
 
-Orchestration uniquement : initialisation, injection de la caméra ESPHome, appel des boucles légères et enregistrement des handlers HTTP.
+Orchestration uniquement : initialisation, injection de la caméra ESPHome, boucle légère et enregistrement des handlers HTTP.
 
 ### `JpegDiagnostic`
 
-Acquisition JPEG native de l'OV5640.
-
-ESPHome conserve une frame pré-acquise. Une demande de capture suit volontairement deux étapes :
-
-1. consommer et jeter la frame déjà en attente ;
-2. rendre le framebuffer au driver puis demander une nouvelle frame ;
-3. publier uniquement cette nouvelle frame.
-
-Le JPEG est copié en PSRAM parce que le framebuffer caméra est éphémère.
-
-**Frontières de test :** première frame non publiée, seconde frame publiée, compteurs purge/capture, SOI/EOI, réutilisation du buffer, changement de résolution.
+Acquisition JPEG native de l'OV5640. ESPHome conservant une frame pré-acquise, une demande de capture consomme d'abord cette frame puis demande une nouvelle frame réellement fraîche. Le JPEG est copié en PSRAM car le framebuffer caméra est éphémère.
 
 ### `JpegFilteredDiagnostic`
 
-Prépare l'image exploitable par la vision :
-
-- décode le JPEG par blocs avec TJpgDec ;
-- écrit directement une luminance 8 bits ;
-- applique `JpegArtifactCorrector` ;
-- conserve le buffer grayscale corrigé ;
-- construit encore un en-tête/palette BMP pour validation visuelle, mais le BMP n'est pas une dépendance du pipeline métier.
+Prépare l'image exploitable par la vision : décodage JPEG par blocs, conversion immédiate en luminance 8 bits, application du correcteur d'artefacts, conservation du buffer grayscale corrigé. Le BMP reste uniquement une visualisation de diagnostic.
 
 Accès métier :
 
@@ -121,61 +117,63 @@ height()
 
 ### `JpegArtifactCorrector`
 
-Algorithme pur de correction du défaut observé sur la voie JPEG : petits segments verts/noirs périodiques. La V3 corrige localement les défauts reconnus par interpolation depuis des pixels sains, sans lisser l'image complète.
-
-**Tests prioritaires :** motifs synthétiques verts/noirs, vrais traits noirs verticaux à préserver, bords de cible, absence d'artefact, différentes résolutions.
+Algorithme de correction du défaut observé sur la voie JPEG : petits segments verts/noirs périodiques. La V3 corrige localement les défauts reconnus sans flou global.
 
 ### `TargetDetector`
 
-Transforme un `GrayFrameView` non propriétaire en `TargetObservation`. Il reste indépendant d'ESPHome, du JPEG, du HTTP et du stockage d'image.
+Orchestrateur vision de la cible uniquement. Depuis la V5 il ne balaie plus l'image entière avec le code 7×7. Il délègue :
 
-La V4 corrige le faux positif interne observé avec la cible réelle :
+1. la localisation géométrique à `TargetCandidateFinder` ;
+2. la lecture/validation du code à `TargetCodeDecoder`.
 
-- motif 7×7 inchangé ;
-- quatre orientations discrètes 0/90/180/270 degrés ;
-- taille maximale de recherche limitée à environ 10 % du petit côté : 120 px sur 1600×1200, 192 px sur 2560×1920 ;
-- préfiltre global très léger avec lecture d'un seul pixel par point ;
-- moyenne locale 3×3 ou 5×5 réservée uniquement aux candidats ayant passé le préfiltre ;
-- contraste minimal léger (`10`) ;
-- cohérence du cadre noir obligatoire : au moins 88 % des cellules du bord classées noires ;
-- validation d'un anneau extérieur clair autour de la cible : au moins 67 % des points périphériques au-dessus du seuil noir/blanc ;
-- un candidat qui échoue au cadre noir ou au fond clair ne peut plus devenir le meilleur candidat, même si son sous-motif 7×7 a un score élevé ;
-- score = 80 % motif complet + 10 % cadre noir + 10 % fond extérieur ;
-- seuil d'acceptation `0.82` ;
-- balayage global grossier puis raffinement local au pixel autour du meilleur candidat structurellement valide.
+Il retourne le meilleur `TargetObservation`. Si aucun code n'est validé mais qu'une zone candidate existe, il retourne cette localisation avec `valid=false` afin que `/target/preview.bmp` reste utile pour le diagnostic.
 
-Cette séparation est importante : un petit sous-motif interne peut ressembler au code mais ne possède pas simultanément un cadre noir complet et du fond clair tout autour.
+### `TargetCandidateFinder`
 
-L'orientation fine/perspective sera ajoutée seulement après validation robuste de la cible réelle.
+Responsabilité : **trouver la cible dans l'image**, sans connaître le contenu exact du code 7×7.
 
-**Tests prioritaires :** cible synthétique, cible réelle à faible contraste, quatre orientations, absence de cible, différentes tailles/résolutions, stabilité des coordonnées et du score, sous-motifs internes, faux positifs de grande taille, temps de balayage global.
+Méthode V5 :
+
+- réduction dynamique pour garder le plus grand côté proche de 400 px ;
+- moyenne des blocs source lors de la réduction ;
+- calcul de luminosité locale par tuiles ;
+- seuillage adaptatif : seules les zones significativement plus sombres que leur environnement sont retenues ;
+- composantes connexes 4-voisins ;
+- rejet des composantes trop petites, trop grandes ou trop allongées ;
+- estimation de quatre coins par extrema `x+y` / `x-y` de la composante ;
+- maximum 24 candidats conservés, classés principalement par forme carrée.
+
+À 1600×1200, la réduction est typiquement ×4 : une cible de 40 px reste donc de l'ordre de 10 px dans la carte de localisation. À 2560×1920, le facteur augmente automatiquement pour garder un coût voisin.
+
+**Frontières de test :** carré sombre sur fond clair, lignes verticales parasites, plusieurs objets, cible déplacée dans l'image, faible contraste local, légère rotation/perspective.
+
+### `TargetCodeDecoder`
+
+Responsabilité : **dire si un candidat géométrique est réellement notre cible**.
+
+Méthode V5 :
+
+- utilise les quatre coins fournis par le localisateur ;
+- teste plusieurs petites dilatations du quadrilatère pour compenser l'imprécision de la segmentation basse résolution ;
+- projette les centres de cellules 7×7 dans le quadrilatère ;
+- chaque cellule utilise plusieurs échantillons de l'image pleine résolution ;
+- teste les quatre rotations logiques 0/90/180/270 degrés ;
+- exige un contraste minimal, un cadre noir cohérent et un extérieur plus clair que le noir de la cible ;
+- retourne centre, taille, rotation logique et qualité.
+
+La projection quadrilatérale est volontairement déjà présente : elle rend le décodage moins sensible aux petits angles et prépare la future estimation d'orientation.
+
+**Frontières de test :** vrai code, faux carré noir, sous-motif interne, quatre rotations, perspective légère, contraste faible, fond extérieur sombre.
 
 ### `TargetDetectionService`
 
-Pont métier très fin entre l'image corrigée et `TargetDetector` :
-
-- vérifie qu'une image filtrée valide est disponible ;
-- construit un `GrayFrameView` sans copie ;
-- appelle `TargetDetector` ;
-- mémorise le dernier `TargetObservation`, le numéro de source et le temps de détection.
-
-Il ne déclenche volontairement ni capture ni filtrage : les trois étapes restent indépendantes pendant la validation fonctionnelle.
-
-**Frontière de test :** injecter une source grayscale connue et un détecteur, vérifier propagation du résultat et rejet d'une source indisponible.
+Pont très fin entre l'image corrigée et `TargetDetector` : construit un `GrayFrameView` sans copie, appelle le détecteur et mémorise résultat, source et temps de détection. Il ne déclenche ni capture ni filtrage.
 
 ### `TargetDetectionPreview`
 
-Diagnostic visuel séparé du détecteur :
-
-- construit à la demande une miniature grayscale de largeur maximale 640 px ;
-- conserve le ratio de l'image source ;
-- dessine un double rectangle noir/blanc autour du meilleur candidat ;
-- n'altère jamais le buffer grayscale métier utilisé par `TargetDetector` ;
-- évite une deuxième copie pleine résolution qui serait trop coûteuse en PSRAM à QSXGA.
+Diagnostic visuel séparé : construit à la demande une miniature grayscale de largeur maximale 640 px et dessine un rectangle noir/blanc autour du meilleur résultat. Il ne modifie jamais le buffer métier.
 
 ### `TargetDetectionApiHandler`
-
-Expose la validation de cible :
 
 ```text
 GET /target/detect
@@ -183,15 +181,15 @@ GET /target/status
 GET /target/preview.bmp
 ```
 
-`/target/detect` traite la dernière image filtrée ; `/target/status` relit le dernier résultat sans retraitement ; `/target/preview.bmp` génère une miniature annotée du meilleur candidat. `target_found` indique l'acceptation finale. Le bloc `target` correspond désormais au meilleur candidat ayant passé les contrôles structurels internes du détecteur.
+Les routes restent inchangées avec la V5.
 
 ### `MeasurementManager`
 
-Enchaînera `TargetDetector` puis `GeometryMeasurementEngine` une fois la cible réelle validée. Il conserve déjà la dernière mesure et le compteur de mesures valides.
+Enchaînera `TargetDetector` puis `GeometryMeasurementEngine` une fois la cible réelle suffisamment robuste. Il conserve déjà la dernière mesure et le compteur de mesures valides.
 
 ### `GeometryMeasurementEngine`
 
-Calcul mathématique de la mesure à partir de l'observation et de la calibration. Il doit rester indépendant du matériel et du réseau. Distance/orientation/calibration seront complétées après validation de la cible réelle.
+Calcul mathématique indépendant du matériel et du réseau. Distance, orientation et calibration seront complétées après validation de la détection de cible.
 
 ### `CameraResolutionController`
 
@@ -199,22 +197,11 @@ Maintient l'identité capteur et les résolutions supportées. Capteur confirmé
 
 ### `CameraSettingsController` / `CameraSettingsApiHandler`
 
-Conservés car exposition, gain, luminosité et contraste sont utiles lors de la validation cible et de la calibration.
-
-```text
-GET /api/camera/settings
-GET /api/camera/settings/set?<parametres>
-```
-
-Les réglages caméra doivent être évalués par comparaison A/B sur la même cible et la même scène en observant à la fois l'image filtrée et `target.quality` ; ne pas figer des valeurs seulement sur l'aspect visuel.
+Conservés pour exposition, gain, luminosité et contraste. Les réglages caméra doivent être jugés par comparaison A/B avec la qualité de détection et non seulement visuellement.
 
 ### `RuntimeDiagnostics` / `RuntimeDiagnosticsApiHandler`
 
-Instrumentation légère de la boucle et de la mémoire. Conservée pour les futures optimisations de temps de traitement.
-
-```text
-GET /api/runtime/status
-```
+Instrumentation légère de boucle et mémoire, conservée pour les futures optimisations.
 
 ### `ApiWsdlHandler`
 
@@ -244,16 +231,7 @@ GET /target/preview.bmp
 
 ## Sous-systèmes supprimés après validation
 
-Le nettoyage suivant est volontaire : ces composants correspondaient à des branches d'essai qui ne font plus partie de la voie retenue.
-
-- `GrayscaleDiagnostic` et son API ;
-- `Rgb565Diagnostic` et son API ;
-- ancien `TargetSearchDiagnostic` GRAYSCALE et son API ;
-- `Ov5640TimingController` / API de registres ;
-- `Ov3660CameraConfigurator` ;
-- `ImageProvider`, `PlaceholderImageProvider`, image placeholder ;
-- `CameraManager` historique ;
-- `CameraApiHandler` historique (`/api/status`, `/api/capture`, `/api/measure`, `/image.jpg`).
+Les anciens chemins GRAYSCALE, RGB565, TargetSearch GRAYSCALE, essais de registres OV5640, configurateur OV3660, placeholder/ImageProvider/CameraManager et anciennes API historiques ont été supprimés après validation de la voie JPEG.
 
 ## État matériel / image retenu
 
@@ -267,20 +245,18 @@ XCLK = 8 MHz
 idle_framerate = 0
 ```
 
-Les essais de timing ont servi à isoler le problème mais ne font plus partie du firmware : XCLK 20/16/10/8 puis runtime 7/6/5 MHz, PCLK divider, HTS/VTS, HREF blanking et JPEG mode 2/3 n'ont pas supprimé le motif parasite. La correction logicielle V3 est la voie retenue.
+Les essais de timing n'ont pas supprimé le motif parasite ; la correction logicielle V3 reste la voie retenue.
 
 ## Optimisations reportées après validation cible/distance/orientation
 
-Ne pas optimiser prématurément la voie actuelle. Après validation fonctionnelle :
+La V5 réduit déjà le coût de **localisation** parce que l'ancien balayage exhaustif empêchait une validation pratique. Les optimisations de pipeline restent reportées :
 
-1. première recherche sur l'image complète ;
-2. mémorisation de la boîte cible ;
-3. pour les mesures suivantes, travailler sur une ROI autour de la dernière cible ;
-4. limiter correction et recherche à cette ROI ;
-5. étudier aussi le décodage JPEG partiel/par blocs pour éviter le coût pleine image ;
-6. si la cible est perdue ou le score devient insuffisant, revenir automatiquement à une recherche globale.
-
-L'allègement du préfiltre V4 n'est pas considéré comme une optimisation prématurée : la V3 atteignait près de 90 s sur une recherche globale 1600×1200, ce qui empêchait simplement la validation fonctionnelle. Les optimisations de pipeline/ROI restent reportées.
+1. première recherche globale ;
+2. mémorisation de la dernière cible ;
+3. recherche suivante dans une ROI ;
+4. correction d'artefacts limitée à cette ROI ;
+5. décodage JPEG partiel/par blocs si nécessaire ;
+6. retour automatique à la recherche globale si la cible est perdue.
 
 ## Revue obligatoire avant nouvelle fonctionnalité
 
