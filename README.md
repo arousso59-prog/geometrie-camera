@@ -4,78 +4,38 @@ Capteur optique pour appareil de géométrie automobile maison, basé sur ESP32-
 
 ## Matériel validé
 
-- carte : GOOUUU ESP32-S3-CAM V1.5, ESP32-S3 N16R8 ;
-- capteur confirmé par PID : OV5640 (`0x5640`) ;
-- PSRAM : 8 Mo octal ;
-- résolution maximale exposée par ESPHome : 2560×1920 ;
-- XCLK retenu actuellement : 8 MHz.
-
-Brochage caméra :
-
-```text
-SIOD  GPIO4
-SIOC  GPIO5
-VSYNC GPIO6
-HREF  GPIO7
-XCLK  GPIO15
-Y2    GPIO11
-Y3    GPIO9
-Y4    GPIO8
-Y5    GPIO10
-Y6    GPIO12
-Y7    GPIO18
-Y8    GPIO17
-Y9    GPIO16
-PCLK  GPIO13
-```
+- GOOUUU ESP32-S3-CAM V1.5, ESP32-S3 N16R8 ;
+- OV5640 confirmé (`0x5640`) ;
+- PSRAM 8 Mo octal ;
+- résolution exposée jusqu'à 2560×1920 ;
+- XCLK actuel : 8 MHz.
 
 ## Pipeline actuel
 
 ```text
 OV5640 JPEG
    ↓
-frame fraîche
+JpegDiagnostic
+   ↓
+ImageSharpnessEvaluator (mode continu)
+   ├── décodage JPEG 1/8
+   └── recapture si flou important
    ↓
 JpegFilteredDiagnostic V2
    ↓
-JpegArtifactCorrector sparse / lookup masks
-   ↓
-buffer grayscale corrigé
+JpegArtifactCorrector
    ↓
 TargetDetector V5.4
-   ├── TargetCandidateFinder V5.2
-   ├── TargetCornerRefiner V5.4
-   └── TargetCodeDecoder V5.4
-   ↓
-TargetObservation + 4 coins
    ↓
 GeometryMeasurementEngine V2
    ├── distance robuste par taille apparente
-   ├── X/Y/Z + angles de visée
+   ├── X/Y/Z + bearing
    └── pose homographique validée séparément
 ```
 
-Le filtre V2 est la base de travail. À 1600×1200, un essai représentatif donne environ :
+## Calibration et distance
 
-```text
-decode JPEG   ≈ 1476 ms
-correction    ≈ 553 ms
-total filtre  ≈ 2036 ms
-```
-
-## Mesure V2 : distance robuste et angles
-
-La taille physique de cible par défaut est :
-
-```text
-50 mm
-```
-
-La focale réelle du module caméra doit être calibrée à partir d'une distance connue.
-
-### Calibration initiale
-
-Placer la cible approximativement de face, proche du centre de l'image et à une distance connue, puis :
+La cible par défaut mesure 50 mm. La focale est calibrée à partir d'une distance connue :
 
 ```text
 capture
@@ -84,17 +44,13 @@ capture
 → /measurement/calibrate?distance_mm=1000&target_size_mm=50
 ```
 
-Une calibration valide est ensuite **verrouillée**. Un nouvel appel sans `force=1` renvoie `calibration_locked`.
-
-Pour remplacer volontairement la calibration :
+Une calibration valide est verrouillée. Pour la remplacer volontairement :
 
 ```text
 GET /measurement/calibrate?distance_mm=1000&target_size_mm=50&force=1
 ```
 
-### Distance robuste
-
-La distance principale repose sur la taille apparente :
+La profondeur principale repose sur :
 
 ```text
 z_from_width_mm  = fx × target_size_mm / largeur_px
@@ -102,37 +58,20 @@ z_from_height_mm = fy × target_size_mm / hauteur_px
 z_mm             = min(z_from_width_mm, z_from_height_mm)
 ```
 
-Puis le centre de cible permet de calculer `x_mm`, `y_mm`, `distance_mm`, `bearing_yaw_deg` et `bearing_pitch_deg`.
-
-La pose homographique reste séparée. Si sa profondeur n'est pas cohérente avec la distance robuste, `pose_valid=false` et les angles `target_yaw/pitch/roll` sont rejetés.
+Puis le centre de cible donne `x_mm`, `y_mm`, `distance_mm`, `bearing_yaw_deg` et `bearing_pitch_deg`.
 
 ## Résolution de travail
-
-La résolution active est maintenant exposée avec les autres réglages caméra :
 
 ```text
 GET /api/camera/settings
 GET /api/camera/settings/set?resolution=800x600
 ```
 
-Le contrôleur de résolution reste propriétaire de cette configuration. Le mode continu utilise simplement la résolution active.
+Le mode continu utilise la résolution caméra active. `800x600` reste pratique pour les essais rapides ; une évolution haute résolution + ROI est prévue pour augmenter la précision sans traiter toute l'image.
 
-Pour les essais rapides, `800x600` est pratique. Plus tard, une résolution plus élevée combinée à une ROI permettra d'améliorer la précision sans traiter toute l'image.
+## Mode continu avec contrôle de netteté
 
-## Mode continu V1
-
-Le firmware peut maintenant automatiser :
-
-```text
-capture
-→ filtre
-→ détection
-→ mesure
-→ attente éventuelle
-→ cycle suivant
-```
-
-Le démarrage est **strictement interdit tant qu'aucune calibration valide n'existe**.
+Le démarrage est interdit sans calibration valide :
 
 ```text
 GET /continuous/start?interval_ms=1000
@@ -140,73 +79,85 @@ GET /continuous/status
 GET /continuous/stop
 ```
 
-L'intervalle admissible est actuellement `200..10000 ms`. Si un cycle prend plus longtemps que l'intervalle demandé, aucun travail n'est empilé : le cycle suivant repart dès que le précédent est terminé.
-
-Si la calibration est invalidée pendant le fonctionnement, le mode continu s'arrête avec `calibration_lost`.
-
-L'interface Web ESPHome affiche maintenant en priorité :
+Le cycle est :
 
 ```text
-état acquisition
-résolution de travail
-cible actuelle
-état pose
-distance
-profondeur Z
-X / Y
-angles de visée horizontal / vertical
-qualité
-temps de cycle
-compteurs de cycles et mesures
+capture
+→ contrôle rapide de netteté
+   ├── flou marqué → recapture immédiate, maximum 2 fois
+   └── OK
+→ filtre
+→ détection
+→ mesure
+→ cycle suivant
 ```
 
-Les anciennes commandes manuelles `fx/fy/cx/cy` ont été remplacées par les **vraies valeurs de calibration en lecture seule**.
+Le contrôle de netteté travaille sur un JPEG réduit à 1/8. Sa référence est relative à la session ; une chute sous 60 % de la référence déclenche une recapture. Si la troisième capture reste faible, le pipeline continue quand même afin de ne pas se bloquer.
 
-## Architecture
+`/continuous/status` expose maintenant les temps détaillés :
 
-Les responsabilités détaillées et les règles de développement sont dans [`ARCHITECTURE.md`](ARCHITECTURE.md).
+```text
+timing.capture_ms
+timing.sharpness_ms
+timing.filter_ms
+timing.detect_ms
+timing.compute_ms
+timing.cycle_ms
+```
+
+et les informations de netteté :
+
+```text
+sharpness.score_x100
+sharpness.reference_x100
+sharpness.ok
+sharpness.capture_retries
+sharpness.blur_retry_count
+```
+
+Cela permet de décider les futures optimisations à partir de mesures réelles.
+
+## Interface Web ESPHome
+
+La page principale garde désormais les **dernières valeurs valides** de distance, X/Y/Z, angles et qualité même si un cycle courant ne retrouve pas la cible. La ligne `03 Cible actuelle` indique séparément si la dernière détection a réussi.
+
+Les timings capture/netteté/filtre/détection/calcul et les compteurs de recapture sont affichés sous les mesures principales.
 
 ## API actuelle
 
 ```text
 GET /api/wsdl
 GET /api/runtime/status
-
 GET /api/camera/settings
 GET /api/camera/settings/set?<parametres>&resolution=<optionnel>
-
 GET /diagnostic-jpeg/capture?resolution=<optionnel>
 GET /diagnostic-jpeg/status
 GET /diagnostic-jpeg/image.jpg
 GET /diagnostic-jpeg/filter
 GET /diagnostic-jpeg/filter-status
 GET /diagnostic-jpeg/filtered.bmp
-
 GET /target/detect
 GET /target/status
 GET /target/preview.bmp
-
 GET /measurement/config
 GET /measurement/config/set?target_size_mm=<mm>
 GET /measurement/calibrate?distance_mm=<mm>&target_size_mm=<optionnel>&force=<0|1>
 GET /measurement/compute
 GET /measurement/status
-
 GET /continuous/start?interval_ms=<optionnel>
 GET /continuous/stop
 GET /continuous/status
 ```
 
-`/api/wsdl` est la référence du contrat HTTP compilé. Version actuelle : **12**.
+`/api/wsdl` est la référence du contrat HTTP. Version actuelle : **13**.
+
+Les responsabilités détaillées et les règles de développement sont dans [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ## Étape actuelle
 
-1. compiler/flasher le mode continu V1 ;
-2. choisir la résolution de travail, par exemple `800x600` ;
-3. calibrer une fois à une distance connue ;
-4. démarrer le mode continu ;
-5. observer plusieurs dizaines de cycles cible immobile pour quantifier la répétabilité ;
-6. valider ensuite les angles de visée par déplacements connus ;
-7. retravailler la pose yaw/pitch/roll ;
-8. tester 1600×1200 puis haute résolution + ROI ;
-9. intégrer la console PC sur les mêmes API.
+1. compiler/flasher la version avec contrôle de netteté ;
+2. observer les scores de netteté sur des captures normales ;
+3. provoquer volontairement un flou pour vérifier les recaptures ;
+4. comparer le taux de cibles trouvées avant/après ;
+5. utiliser les timings détaillés pour prioriser les optimisations ;
+6. reprendre ensuite la validation des angles et la future approche haute résolution + ROI.
