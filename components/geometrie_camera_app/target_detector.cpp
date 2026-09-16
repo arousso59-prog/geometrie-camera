@@ -17,30 +17,27 @@ constexpr uint8_t TARGET_GRID[7][7] = {
     {1, 1, 1, 1, 1, 1, 1},
 };
 
-// Le motif contient 7 cellules par cote. En dessous de 14 px, chaque cellule
-// aurait moins de 2 px et la reconnaissance devient trop fragile.
 constexpr uint16_t MIN_TARGET_SIZE_ABSOLUTE_PX = 14;
 
-// La recherche initiale reste volontairement large, mais on n'explore plus les
-// carrés gigantesques qui ne correspondent pas a une cible de geometrie.
+// V3 : la cible reelle observee represente quelques pourcents du petit cote.
+// On exclut les tres grands carres qui ont produit le faux positif V2 a 190 px
+// sur une image 1600x1200. A QSXGA, cette borne monte naturellement a 192 px.
 constexpr uint16_t MIN_TARGET_SIZE_DIVISOR = 100;
-constexpr uint16_t MAX_TARGET_SIZE_DIVISOR = 4;
+constexpr uint16_t MAX_TARGET_SIZE_DIVISOR = 10;
 
-// V2 : balayage plus grossier que la premiere version, suivi d'un raffinement
-// local autour du meilleur candidat. Cela reduit fortement le nombre de positions
-// testees sans sacrifier la precision finale.
+// Balayage global grossier, puis raffinement local autour du meilleur candidat.
 constexpr uint16_t MIN_SPATIAL_STEP_PX = 6;
 constexpr uint16_t SPATIAL_STEP_DIVISOR = 8;
-constexpr uint16_t MIN_SCALE_STEP_PX = 6;
-constexpr uint16_t SCALE_STEP_DIVISOR = 8;
-constexpr uint16_t REFINE_STEP_PX = 2;
+constexpr uint16_t MIN_SCALE_STEP_PX = 5;
+constexpr uint16_t SCALE_STEP_DIVISOR = 10;
+constexpr uint16_t REFINE_STEP_PX = 1;
 
-// La vraie cible observee apres decodage/correction est nettement moins contrastee
-// que les images synthetiques utilisees au depart. Le code 7x7 doit donc porter
-// l'essentiel du score ; le contraste est un garde-fou, pas un multiplicateur fort.
-constexpr float MIN_ACCEPTED_SCORE = 0.78f;
-constexpr int MIN_CONTRAST = 12;
-constexpr int MIN_PREFILTER_CONTRAST = 12;
+// Le motif 7x7 porte maintenant l'essentiel de la validation. Le contraste est
+// seulement un garde-fou car l'image JPEG corrigee est volontairement douce.
+constexpr float MIN_ACCEPTED_SCORE = 0.86f;
+constexpr float MIN_BORDER_BLACK_RATIO = 0.88f;
+constexpr int MIN_CONTRAST = 10;
+constexpr int MIN_PREFILTER_CONTRAST = 10;
 constexpr uint8_t MIN_PREFILTER_BRIGHT_CELLS = 3;
 }
 
@@ -123,9 +120,7 @@ TargetObservation TargetDetector::detect(const GrayFrameView &frame) const {
     }
   }
 
-  // Raffinement local : une fois une zone prometteuse trouvee, on reteste autour
-  // de sa position et de sa taille avec un pas de 2 px. Cela permet au balayage
-  // global de rester rapide tout en retrouvant correctement les centres de cellules.
+  // Raffinement local fin autour du meilleur candidat du balayage global.
   if (best_size != 0) {
     const uint16_t coarse_spatial_step =
         std::max<uint16_t>(MIN_SPATIAL_STEP_PX, static_cast<uint16_t>(best_size / SPATIAL_STEP_DIVISOR));
@@ -176,9 +171,8 @@ TargetObservation TargetDetector::detect(const GrayFrameView &frame) const {
     return best;
   }
 
-  // Toujours exposer le meilleur candidat pour le diagnostic, meme s'il reste
-  // sous le seuil d'acceptation. target_found/valid indique seul si la cible est
-  // consideree comme reconnue.
+  // Toujours exposer le meilleur candidat pour le diagnostic, meme s'il est
+  // refuse. Le champ valid/target_found reste la seule indication d'acceptation.
   best.valid = best_score >= MIN_ACCEPTED_SCORE;
   best.center_x_px = static_cast<float>(best_x) + static_cast<float>(best_size) * 0.5f;
   best.center_y_px = static_cast<float>(best_y) + static_cast<float>(best_size) * 0.5f;
@@ -270,6 +264,8 @@ float TargetDetector::score_candidate_(const GrayFrameView &frame, uint16_t x, u
 
     const int threshold = (white_mean + black_mean) / 2;
     uint16_t correct = 0;
+    uint16_t border_black = 0;
+    uint16_t border_total = 0;
 
     for (uint8_t row = 0; row < 7; row++) {
       for (uint8_t column = 0; column < 7; column++) {
@@ -278,13 +274,29 @@ float TargetDetector::score_candidate_(const GrayFrameView &frame, uint16_t x, u
         if (expected_black == measured_black) {
           correct++;
         }
+
+        if (row == 0 || row == 6 || column == 0 || column == 6) {
+          border_total++;
+          if (measured_black) {
+            border_black++;
+          }
+        }
       }
     }
 
-    // Le contraste a deja ete valide ci-dessus. On ne le penalise plus une
-    // seconde fois : le score exprime directement la proportion du code 7x7
-    // correctement classee.
-    const float score = static_cast<float>(correct) / 49.0f;
+    if (border_total == 0) {
+      continue;
+    }
+
+    const float border_ratio = static_cast<float>(border_black) / static_cast<float>(border_total);
+    if (border_ratio < MIN_BORDER_BLACK_RATIO) {
+      continue;
+    }
+
+    const float pattern_score = static_cast<float>(correct) / 49.0f;
+    // Le cadre noir fait partie du code et sert de garde-fou anti-faux-positifs.
+    // On donne encore 85 % du poids au motif complet et 15 % a la coherence du cadre.
+    const float score = 0.85f * pattern_score + 0.15f * border_ratio;
 
     if (score > best_score) {
       best_score = score;
@@ -317,9 +329,28 @@ uint8_t TargetDetector::sample_cell_(const GrayFrameView &frame, uint16_t x, uin
   const uint32_t sample_y = static_cast<uint32_t>(y) +
                             (static_cast<uint32_t>(2U * row + 1U) * size) / 14U;
 
-  const uint32_t clamped_x = std::min<uint32_t>(sample_x, frame.width - 1U);
-  const uint32_t clamped_y = std::min<uint32_t>(sample_y, frame.height - 1U);
-  return frame.data[clamped_y * frame.stride + clamped_x];
+  // V3 : un pixel unique est trop sensible au flou JPEG, au bruit residuel et aux
+  // petits artefacts. On moyenne une zone 3x3 ou 5x5 qui reste largement a
+  // l'interieur de la cellule 7x7.
+  const uint16_t cell_size = std::max<uint16_t>(1, static_cast<uint16_t>(size / 7U));
+  const uint16_t radius = std::min<uint16_t>(2, std::max<uint16_t>(1, static_cast<uint16_t>(cell_size / 5U)));
+
+  const uint32_t min_x = sample_x > radius ? sample_x - radius : 0;
+  const uint32_t min_y = sample_y > radius ? sample_y - radius : 0;
+  const uint32_t max_x = std::min<uint32_t>(frame.width - 1U, sample_x + radius);
+  const uint32_t max_y = std::min<uint32_t>(frame.height - 1U, sample_y + radius);
+
+  uint32_t sum = 0;
+  uint16_t count = 0;
+  for (uint32_t py = min_y; py <= max_y; ++py) {
+    const uint8_t *line = frame.data + py * frame.stride;
+    for (uint32_t px = min_x; px <= max_x; ++px) {
+      sum += line[px];
+      count++;
+    }
+  }
+
+  return count == 0 ? 0 : static_cast<uint8_t>(sum / count);
 }
 
 }  // namespace geometrie_camera_app
