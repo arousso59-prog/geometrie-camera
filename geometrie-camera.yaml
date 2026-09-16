@@ -25,6 +25,16 @@ preferences:
 
 logger:
   level: DEBUG
+  # Les logs vision ci-dessous contiennent plusieurs conversions flottantes.
+  # Sur le thread HTTP ESP-IDF, snprintf/_dtoa_r consomme beaucoup de pile et
+  # peut provoquer un StoreProhibited lorsque la detection est lancee par HTTP.
+  # Les timings et resultats restent disponibles via les API JSON ; on garde
+  # donc DEBUG globalement mais ces quatre tags au niveau INFO.
+  logs:
+    target_candidate_finder: INFO
+    target_corner_refiner: INFO
+    target_code_decoder: INFO
+    target_detector: INFO
 
 api:
 
