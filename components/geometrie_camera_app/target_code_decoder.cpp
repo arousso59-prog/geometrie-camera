@@ -163,14 +163,19 @@ TargetObservation TargetCodeDecoder::decode(const GrayFrameView &frame,
         best.height_px = adjusted.height;
         best.rotation_deg = static_cast<float>(rotation) * 90.0f;
         best.quality = score;
-        best.top_left_px.x = adjusted.top_left.x;
-        best.top_left_px.y = adjusted.top_left.y;
-        best.top_right_px.x = adjusted.top_right.x;
-        best.top_right_px.y = adjusted.top_right.y;
-        best.bottom_right_px.x = adjusted.bottom_right.x;
-        best.bottom_right_px.y = adjusted.bottom_right.y;
-        best.bottom_left_px.x = adjusted.bottom_left.x;
-        best.bottom_left_px.y = adjusted.bottom_left.y;
+
+        // Les facteurs d'expansion servent uniquement a echantillonner le code.
+        // Pour la mesure de pose, conserver la geometrie du candidat d'entree
+        // (raffinee quand TargetCornerRefiner a reussi) afin que la taille
+        // physique ne saute pas de 8 % quand le meilleur facteur change.
+        best.top_left_px.x = candidate.top_left.x;
+        best.top_left_px.y = candidate.top_left.y;
+        best.top_right_px.x = candidate.top_right.x;
+        best.top_right_px.y = candidate.top_right.y;
+        best.bottom_right_px.x = candidate.bottom_right.x;
+        best.bottom_right_px.y = candidate.bottom_right.y;
+        best.bottom_left_px.x = candidate.bottom_left.x;
+        best.bottom_left_px.y = candidate.bottom_left.y;
 
         best_pattern_score = pattern_score;
         best_border_ratio = border_ratio;
