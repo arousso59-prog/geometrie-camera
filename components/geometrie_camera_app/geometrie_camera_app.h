@@ -17,6 +17,8 @@
 #include "placeholder_image_provider.h"
 #include "rgb565_diagnostic.h"
 #include "rgb565_diagnostic_api.h"
+#include "runtime_diagnostics.h"
+#include "runtime_diagnostics_api.h"
 #include "target_search_diagnostic.h"
 #include "target_search_diagnostic_api.h"
 #include "types.h"
@@ -65,12 +67,14 @@ class GeometrieCameraApp : public Component {
   Rgb565Diagnostic rgb565_diagnostic_;
   TargetSearchDiagnostic target_search_diagnostic_;
   Ov3660CameraConfigurator camera_configurator_;
+  RuntimeDiagnostics runtime_diagnostics_;
   ApiWsdlHandler api_wsdl_handler_;
   CameraApiHandler api_handler_;
   CameraSettingsApiHandler settings_api_handler_;
   GrayscaleDiagnosticApiHandler diagnostic_api_handler_;
   Rgb565DiagnosticApiHandler rgb565_diagnostic_api_handler_;
   TargetSearchDiagnosticApiHandler target_search_diagnostic_api_handler_;
+  RuntimeDiagnosticsApiHandler runtime_diagnostics_api_handler_;
   bool api_registered_;
 };
 
