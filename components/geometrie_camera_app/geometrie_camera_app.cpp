@@ -16,6 +16,7 @@ GeometrieCameraApp::GeometrieCameraApp()
       resolution_controller_(),
       settings_controller_(),
       grayscale_diagnostic_(),
+      jpeg_diagnostic_(),
       rgb565_diagnostic_(),
       target_search_diagnostic_(&this->measurement_manager_.target_detector(), &this->grayscale_diagnostic_),
       camera_configurator_(),
@@ -24,6 +25,7 @@ GeometrieCameraApp::GeometrieCameraApp()
       api_handler_(&this->camera_manager_, &this->measurement_manager_),
       settings_api_handler_(&this->settings_controller_),
       diagnostic_api_handler_(&this->grayscale_diagnostic_, &this->resolution_controller_),
+      jpeg_diagnostic_api_handler_(&this->jpeg_diagnostic_),
       rgb565_diagnostic_api_handler_(&this->rgb565_diagnostic_),
       target_search_diagnostic_api_handler_(&this->target_search_diagnostic_, &this->grayscale_diagnostic_,
                                             &this->resolution_controller_),
@@ -57,11 +59,13 @@ void GeometrieCameraApp::dump_config() {
   ESP_LOGCONFIG(TAG, "  API WSDL: /api/wsdl");
   ESP_LOGCONFIG(TAG, "  Runtime diagnostics API: /api/runtime/status");
   ESP_LOGCONFIG(TAG, "  Camera settings API: /api/camera/settings");
+  ESP_LOGCONFIG(TAG, "  JPEG diagnostic API: /diagnostic-jpeg/*");
   ESP_LOGCONFIG(TAG, "  Camera service ready: %s", this->camera_manager_.ready() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Physical camera ready: %s", this->camera_manager_.physical_camera_ready() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Placeholder mode: %s", this->camera_manager_.placeholder_mode() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Resolution active: %s", this->resolution_controller_.active_resolution().c_str());
   ESP_LOGCONFIG(TAG, "  Grayscale diagnostic ready: %s", this->grayscale_diagnostic_.ready() ? "YES" : "NO");
+  ESP_LOGCONFIG(TAG, "  JPEG diagnostic ready: %s", this->jpeg_diagnostic_.ready() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  RGB565 diagnostic ready: %s", this->rgb565_diagnostic_.ready() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Target search diagnostic ready: %s", this->target_search_diagnostic_.ready() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  OV3660 detected: %s", this->camera_configurator_.sensor_detected() ? "YES" : "NO");
@@ -75,6 +79,7 @@ void GeometrieCameraApp::dump_config() {
 
 void GeometrieCameraApp::set_camera(esp32_camera::ESP32Camera *camera) {
   this->grayscale_diagnostic_.set_camera(camera);
+  this->jpeg_diagnostic_.set_camera(camera);
   this->rgb565_diagnostic_.set_camera(camera);
   this->target_search_diagnostic_.set_camera(camera);
 }
@@ -114,6 +119,7 @@ GeometryMeasurementEngine &GeometrieCameraApp::measurement_engine() { return thi
 CameraResolutionController &GeometrieCameraApp::resolution_controller() { return this->resolution_controller_; }
 CameraSettingsController &GeometrieCameraApp::settings_controller() { return this->settings_controller_; }
 GrayscaleDiagnostic &GeometrieCameraApp::grayscale_diagnostic() { return this->grayscale_diagnostic_; }
+JpegDiagnostic &GeometrieCameraApp::jpeg_diagnostic() { return this->jpeg_diagnostic_; }
 Rgb565Diagnostic &GeometrieCameraApp::rgb565_diagnostic() { return this->rgb565_diagnostic_; }
 TargetSearchDiagnostic &GeometrieCameraApp::target_search_diagnostic() { return this->target_search_diagnostic_; }
 Ov3660CameraConfigurator &GeometrieCameraApp::camera_configurator() { return this->camera_configurator_; }
@@ -127,6 +133,7 @@ void GeometrieCameraApp::register_api_if_possible_() {
   web_server_base::global_web_server_base->add_handler(&this->api_handler_);
   web_server_base::global_web_server_base->add_handler(&this->settings_api_handler_);
   web_server_base::global_web_server_base->add_handler(&this->diagnostic_api_handler_);
+  web_server_base::global_web_server_base->add_handler(&this->jpeg_diagnostic_api_handler_);
   web_server_base::global_web_server_base->add_handler(&this->rgb565_diagnostic_api_handler_);
   web_server_base::global_web_server_base->add_handler(&this->target_search_diagnostic_api_handler_);
   web_server_base::global_web_server_base->add_handler(&this->runtime_diagnostics_api_handler_);
@@ -134,7 +141,7 @@ void GeometrieCameraApp::register_api_if_possible_() {
 
   ESP_LOGI(TAG,
            "API HTTP camera enregistree: /api/wsdl, /api/*, /api/runtime/status, /diagnostic/*, "
-           "/diagnostic-rgb565/* et /target/*");
+           "/diagnostic-jpeg/*, /diagnostic-rgb565/* et /target/*");
 }
 
 }  // namespace geometrie_camera_app
