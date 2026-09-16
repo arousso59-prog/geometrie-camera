@@ -18,16 +18,22 @@ struct JpegArtifactCorrectionStats {
 class JpegArtifactCorrector {
  public:
   JpegArtifactCorrector();
+  ~JpegArtifactCorrector();
 
-  bool is_green_seed(uint8_t red, uint8_t green, uint8_t blue) const;
   bool correct(uint8_t *grayscale, size_t row_stride, const uint8_t *green_mask,
                uint16_t width, uint16_t height, uint32_t green_seed_count);
 
   const JpegArtifactCorrectionStats &stats() const;
 
  private:
+  bool ensure_workspace_(size_t mask_size);
+  bool build_fast_masks_(const uint8_t *green_mask, uint16_t width, uint16_t height);
+  void clear_workspace_();
   void reset_stats_();
 
+  uint8_t *near_green_mask_;
+  uint8_t *thin_green_mask_;
+  size_t mask_capacity_;
   JpegArtifactCorrectionStats stats_;
 };
 
