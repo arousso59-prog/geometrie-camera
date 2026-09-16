@@ -21,7 +21,8 @@ bool GrayscaleDiagnosticApiHandler::canHandle(AsyncWebServerRequest *request) co
   char url_buf[AsyncWebServerRequest::URL_BUF_SIZE];
   const auto url = request->url_to(url_buf);
 
-  return url == "/diagnostic/status" || url == "/diagnostic/capture" || url == "/diagnostic/raw.bmp";
+  return url == "/diagnostic/status" || url == "/diagnostic/capture" || url == "/diagnostic/raw.bmp" ||
+         url == "/diagnostic/preview.bmp";
 }
 
 void GrayscaleDiagnosticApiHandler::handleRequest(AsyncWebServerRequest *request) {
@@ -43,6 +44,11 @@ void GrayscaleDiagnosticApiHandler::handleRequest(AsyncWebServerRequest *request
     return;
   }
 
+  if (url == "/diagnostic/preview.bmp") {
+    this->handle_preview_(request);
+    return;
+  }
+
   request->send(404, "application/json", "{\"error\":\"not_found\"}");
 }
 
@@ -53,7 +59,7 @@ bool GrayscaleDiagnosticApiHandler::apply_requested_resolution_(AsyncWebServerRe
 
   const std::string requested = request->getParam("resolution")->value();
   if (!this->resolution_controller_->is_supported(requested)) {
-    char json[384];
+    char json[448];
     std::snprintf(json, sizeof(json),
                   "{\"accepted\":false,\"error\":\"unsupported_resolution\",\"requested\":\"%s\","
                   "\"allowed\":\"%s\"}",
@@ -95,8 +101,8 @@ void GrayscaleDiagnosticApiHandler::handle_status_(AsyncWebServerRequest *reques
                                   : 0U;
 
   std::string json;
-  json.reserve(1024);
-  char chunk[320];
+  json.reserve(1280);
+  char chunk[384];
 
   std::snprintf(chunk, sizeof(chunk),
                 "{\"status\":\"ok\",\"mode\":\"grayscale_raw\",\"ready\":%s,\"capture_pending\":%s,"
@@ -113,12 +119,22 @@ void GrayscaleDiagnosticApiHandler::handle_status_(AsyncWebServerRequest *reques
   json += chunk;
 
   std::snprintf(chunk, sizeof(chunk),
-                "\"width\":%u,\"height\":%u,\"bmp_size\":%u,"
-                "\"timing\":{\"request_started_ms\":%u,\"frame_received_ms\":%u,"
-                "\"acquisition_ms\":%u,\"diagnostic_processing_ms\":%u,\"total_cycle_ms\":%u},",
+                "\"width\":%u,\"height\":%u,\"bmp_size\":%u,\"full_bmp_available\":%s,"
+                "\"preview\":{\"available\":%s,\"width\":%u,\"height\":%u,\"bmp_size\":%u,"
+                "\"image\":\"/diagnostic/preview.bmp\"},",
                 static_cast<unsigned>(this->diagnostic_->width()),
                 static_cast<unsigned>(this->diagnostic_->height()),
                 static_cast<unsigned>(this->diagnostic_->bmp_size()),
+                this->diagnostic_->bmp_data() != nullptr && this->diagnostic_->bmp_size() > 0 ? "true" : "false",
+                this->diagnostic_->preview_ready() ? "true" : "false",
+                static_cast<unsigned>(this->diagnostic_->preview_width()),
+                static_cast<unsigned>(this->diagnostic_->preview_height()),
+                static_cast<unsigned>(this->diagnostic_->preview_bmp_size()));
+  json += chunk;
+
+  std::snprintf(chunk, sizeof(chunk),
+                "\"timing\":{\"request_started_ms\":%u,\"frame_received_ms\":%u,"
+                "\"acquisition_ms\":%u,\"diagnostic_processing_ms\":%u,\"total_cycle_ms\":%u},",
                 static_cast<unsigned>(this->diagnostic_->request_started_ms()),
                 static_cast<unsigned>(this->diagnostic_->frame_received_ms()),
                 static_cast<unsigned>(this->diagnostic_->acquisition_ms()),
@@ -174,13 +190,26 @@ void GrayscaleDiagnosticApiHandler::handle_capture_(AsyncWebServerRequest *reque
 }
 
 void GrayscaleDiagnosticApiHandler::handle_image_(AsyncWebServerRequest *request) {
-  if (this->diagnostic_ == nullptr || !this->diagnostic_->ready() || this->diagnostic_->bmp_data() == nullptr ||
-      this->diagnostic_->bmp_size() == 0) {
+  if (this->diagnostic_ == nullptr || this->diagnostic_->bmp_data() == nullptr || this->diagnostic_->bmp_size() == 0) {
     request->send(404, "application/json", "{\"error\":\"raw_image_unavailable\"}");
     return;
   }
 
   auto *response = request->beginResponse(200, "image/bmp", this->diagnostic_->bmp_data(), this->diagnostic_->bmp_size());
+  response->addHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+  response->addHeader("Pragma", "no-cache");
+  request->send(response);
+}
+
+void GrayscaleDiagnosticApiHandler::handle_preview_(AsyncWebServerRequest *request) {
+  if (this->diagnostic_ == nullptr || !this->diagnostic_->preview_ready() ||
+      this->diagnostic_->preview_bmp_data() == nullptr || this->diagnostic_->preview_bmp_size() == 0) {
+    request->send(404, "application/json", "{\"error\":\"preview_image_unavailable\"}");
+    return;
+  }
+
+  auto *response = request->beginResponse(200, "image/bmp", this->diagnostic_->preview_bmp_data(),
+                                          this->diagnostic_->preview_bmp_size());
   response->addHeader("Cache-Control", "no-store, no-cache, must-revalidate");
   response->addHeader("Pragma", "no-cache");
   request->send(response);
