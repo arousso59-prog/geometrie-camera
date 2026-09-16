@@ -85,7 +85,8 @@ geometrie_camera_app:
 # Test courant : JPEG produit directement par l'ISP OV5640.
 # Dernier essai XCLK bas pour verifier si les artefacts verticaux dependent de
 # l'horloge externe. Les essais precedents 20 -> 10 MHz n'avaient pas change le
-# defaut ; ce test a 5 MHz est volontairement isole, sans autre modification.
+# defaut. ESPHome 2026.7.3 impose 8 MHz minimum sur external_clock ; 8 MHz est donc
+# le dernier test supporte sans contourner le composant camera standard.
 # framebuffer unique en PSRAM ; acquisition uniquement sur demande.
 
 i2c:
@@ -101,7 +102,7 @@ esp32_camera:
 
   external_clock:
     pin: GPIO15
-    frequency: 5MHz
+    frequency: 8MHz
 
   i2c_id: camera_i2c
 
