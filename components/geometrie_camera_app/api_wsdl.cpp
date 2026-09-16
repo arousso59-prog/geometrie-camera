@@ -25,7 +25,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
                                         : "unknown";
 
   std::string xml;
-  xml.reserve(14336);
+  xml.reserve(15360);
   xml += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
   xml += "<api name=\"geometrie-camera\" version=\"1\" style=\"REST-over-HTTP\">\n";
   xml += "  <description>Catalogue WSDL-like des routes HTTP du projet. Ce document doit etre maintenu avec toute evolution d API.</description>\n";
@@ -84,7 +84,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
 
   xml += "  <method name=\"diagnostic_capture\" http=\"GET\" path=\"/diagnostic/capture\">\n";
-  xml += "    <comment>Declenche une capture brute GRAYSCALE de diagnostic.</comment>\n";
+  xml += "    <comment>Declenche une capture brute GRAYSCALE. En 2592x1944 le diagnostic conserve les statistiques et le preview, sans dupliquer la frame en BMP pleine resolution.</comment>\n";
   xml += "    <parameter name=\"resolution\" location=\"query\" required=\"false\" type=\"string\" allowed=\"";
   xml += allowed_resolutions;
   xml += "\">Resolution a appliquer avant la capture. Si absente, conserve la resolution active.</parameter>\n";
@@ -94,12 +94,18 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
 
   xml += "  <method name=\"diagnostic_status\" http=\"GET\" path=\"/diagnostic/status\">\n";
-  xml += "    <comment>Etat du diagnostic GRAYSCALE : identite capteur relue a la demande, PID, resolution maximale, resolution active, statistiques brutes et timings.</comment>\n";
+  xml += "    <comment>Etat du diagnostic GRAYSCALE : capteur, resolution, disponibilite BMP plein format et preview, statistiques brutes et timings.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
   xml += "  <method name=\"diagnostic_image\" http=\"GET\" path=\"/diagnostic/raw.bmp\">\n";
-  xml += "    <comment>Retourne le BMP 8 bits de la derniere capture GRAYSCALE de diagnostic.</comment>\n";
+  xml += "    <comment>Retourne le BMP 8 bits pleine resolution lorsqu il est disponible. A 5 MP il est volontairement omis pour economiser la PSRAM.</comment>\n";
+  xml += "    <response code=\"200\" content_type=\"image/bmp\"/>\n";
+  xml += "    <response code=\"404\" content_type=\"application/json\"/>\n";
+  xml += "  </method>\n";
+
+  xml += "  <method name=\"diagnostic_preview\" http=\"GET\" path=\"/diagnostic/preview.bmp\">\n";
+  xml += "    <comment>Retourne un BMP 8 bits reduit a 640x480 maximum pour controle visuel rapide, sans modifier la frame utilisee pour les calculs.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"image/bmp\"/>\n";
   xml += "    <response code=\"404\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
