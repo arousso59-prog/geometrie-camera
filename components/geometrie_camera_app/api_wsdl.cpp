@@ -25,16 +25,18 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
                                         : "unknown";
 
   std::string xml;
-  xml.reserve(13312);
+  xml.reserve(18000);
   xml += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-  xml += "<api name=\"geometrie-camera\" version=\"9\" style=\"REST-over-HTTP\">\n";
-  xml += "  <description>API de la voie camera validee : OV5640 JPEG, correction grayscale, detection cible, reglages et diagnostic runtime.</description>\n";
+  xml += "<api name=\"geometrie-camera\" version=\"10\" style=\"REST-over-HTTP\">\n";
+  xml += "  <description>API camera OV5640 : capture JPEG, correction grayscale, detection cible, calibration optique V1, distance et pose 3D.</description>\n";
   xml += "  <conventions>\n";
   xml += "    <item>Les routes de commande de mise au point utilisent encore HTTP GET.</item>\n";
   xml += "    <item>La detection cible travaille uniquement sur la derniere image grayscale corrigee.</item>\n";
   xml += "    <item>La V5 separe localisation de la cible et lecture du code 7x7 ; target_found indique l acceptation finale.</item>\n";
-  xml += "    <item>Depuis la V5.3, le decodeur accepte un score final superieur ou egal a 0.82 apres validation independante du contraste, du cadre noir et du fond exterieur.</item>\n";
-  xml += "    <item>Depuis la V5.4, les coins des candidats peuvent etre raffines sur l image pleine resolution puis le code 7x7 est projete par homographie pour mieux supporter la perspective ; le candidat brut reste teste en secours.</item>\n";
+  xml += "    <item>Depuis la V5.4, les coins des candidats peuvent etre raffines sur l image pleine resolution et le code 7x7 est projete par homographie ; le candidat brut reste teste en secours.</item>\n";
+  xml += "    <item>La mesure V1 exige une calibration de focale a distance connue. La cible doit etre approximativement centree et de face pendant cette calibration.</item>\n";
+  xml += "    <item>Le repere camera de la mesure est X vers la droite, Y vers le bas et Z vers l avant. distance_mm est la distance euclidienne au centre de la cible ; z_mm est la profondeur optique.</item>\n";
+  xml += "    <item>La calibration est stockee pour la resolution de reference puis fx, fy, cx et cy sont redimensionnes proportionnellement pour les autres resolutions de meme cadrage optique.</item>\n";
   xml += "  </conventions>\n";
 
   xml += "  <method name=\"api_wsdl\" http=\"GET\" path=\"/api/wsdl\">\n";
@@ -55,7 +57,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
 
   xml += "  <method name=\"camera_settings_set\" http=\"GET\" path=\"/api/camera/settings/set\">\n";
-  xml += "    <comment>Modifie les reglages utiles a la mise au point et a la future calibration optique.</comment>\n";
+  xml += "    <comment>Modifie les reglages utiles a la mise au point et a la calibration optique.</comment>\n";
   xml += "    <parameter name=\"brightness\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"-2..2\"/>\n";
   xml += "    <parameter name=\"contrast\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"-2..2\"/>\n";
   xml += "    <parameter name=\"exposure_ctrl\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0,1\"/>\n";
@@ -91,7 +93,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
 
   xml += "  <method name=\"jpeg_filter\" http=\"GET\" path=\"/diagnostic-jpeg/filter\">\n";
-  xml += "    <comment>Decode la derniere frame JPEG en grayscale et applique le correcteur V3 des artefacts verts/noirs.</comment>\n";
+  xml += "    <comment>Decode la derniere frame JPEG en grayscale et applique le correcteur sparse optimise des artefacts verts/noirs.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
@@ -108,23 +110,57 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
 
   xml += "  <method name=\"target_detect\" http=\"GET\" path=\"/target/detect\">\n";
-  xml += "    <comment>Lance TargetDetector V5.4 sur la derniere image grayscale corrigee. La localisation globale se fait sur une image reduite ; chaque candidat peut ensuite avoir ses quatre coins raffines sur l image pleine resolution. Le code 7x7 est teste sur le candidat brut et sur le candidat raffine avec une projection projective par homographie. Le score final est accepte a partir de 0.82 seulement apres les gardes structurelles du decodeur. Ne relance ni capture ni filtrage.</comment>\n";
+  xml += "    <comment>Lance TargetDetector V5.4 sur la derniere image grayscale corrigee. Les quatre coins du meilleur code valide sont conserves en interne pour la mesure de pose. Ne relance ni capture ni filtrage.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"409\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
   xml += "  <method name=\"target_status\" http=\"GET\" path=\"/target/status\">\n";
-  xml += "    <comment>Relit le dernier resultat V5.4. Le bloc target contient le meilleur code decode issu du candidat brut ou raffine ; si aucun code ne passe les gardes, il peut contenir le meilleur candidat de localisation avec target_found=false.</comment>\n";
+  xml += "    <comment>Relit le dernier resultat V5.4 sans relancer la detection.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
   xml += "  <method name=\"target_preview\" http=\"GET\" path=\"/target/preview.bmp\">\n";
-  xml += "    <comment>Genere une miniature grayscale de largeur maximale 640 px avec un rectangle noir/blanc autour du meilleur resultat de la derniere detection.</comment>\n";
+  xml += "    <comment>Genere une miniature grayscale annotee du meilleur resultat de la derniere detection.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"image/bmp\"/>\n";
   xml += "    <response code=\"409\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
+  xml += "  </method>\n";
+
+  xml += "  <method name=\"measurement_config\" http=\"GET\" path=\"/measurement/config\">\n";
+  xml += "    <comment>Expose la taille physique de cible et les intrinseques de calibration actuellement memorises.</comment>\n";
+  xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
+  xml += "  </method>\n";
+
+  xml += "  <method name=\"measurement_config_set\" http=\"GET\" path=\"/measurement/config/set\">\n";
+  xml += "    <comment>Definit la taille physique du carre cible. Modifier cette taille invalide la calibration de focale precedente.</comment>\n";
+  xml += "    <parameter name=\"target_size_mm\" location=\"query\" required=\"true\" type=\"number\" allowed=\"1..1000\"/>\n";
+  xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
+  xml += "    <response code=\"400\" content_type=\"application/json\"/>\n";
+  xml += "  </method>\n";
+
+  xml += "  <method name=\"measurement_calibrate\" http=\"GET\" path=\"/measurement/calibrate\">\n";
+  xml += "    <comment>Calibre fx et fy a partir de la derniere cible detectee, placee approximativement de face et centree a une distance connue. La calibration est enregistree a la resolution courante.</comment>\n";
+  xml += "    <parameter name=\"distance_mm\" location=\"query\" required=\"true\" type=\"number\" allowed=\"50..20000\"/>\n";
+  xml += "    <parameter name=\"target_size_mm\" location=\"query\" required=\"false\" type=\"number\" allowed=\"1..1000\"/>\n";
+  xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
+  xml += "    <response code=\"400\" content_type=\"application/json\"/>\n";
+  xml += "    <response code=\"409\" content_type=\"application/json\"/>\n";
+  xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
+  xml += "  </method>\n";
+
+  xml += "  <method name=\"measurement_compute\" http=\"GET\" path=\"/measurement/compute\">\n";
+  xml += "    <comment>Calcule la distance, X/Y/Z, les angles de visee et yaw/pitch/roll du plan cible par decomposition de l homographie des quatre coins. Reutilise uniquement la derniere detection courante.</comment>\n";
+  xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
+  xml += "    <response code=\"409\" content_type=\"application/json\"/>\n";
+  xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
+  xml += "  </method>\n";
+
+  xml += "  <method name=\"measurement_status\" http=\"GET\" path=\"/measurement/status\">\n";
+  xml += "    <comment>Relit la derniere mesure et la calibration sans nouveau calcul.</comment>\n";
+  xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
   xml += "</api>\n";
