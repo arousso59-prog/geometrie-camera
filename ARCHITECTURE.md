@@ -73,7 +73,7 @@ GrayFrameView corrigé
         ↓
 TargetDetectionService
         ↓
-TargetDetector V3
+TargetDetector V4
         ↓
 TargetObservation
 ```
@@ -129,22 +129,26 @@ Algorithme pur de correction du défaut observé sur la voie JPEG : petits segme
 
 Transforme un `GrayFrameView` non propriétaire en `TargetObservation`. Il reste indépendant d'ESPHome, du JPEG, du HTTP et du stockage d'image.
 
-La V3 vise à réduire les faux positifs observés avec la cible réelle :
+La V4 corrige le faux positif interne observé avec la cible réelle :
 
 - motif 7×7 inchangé ;
 - quatre orientations discrètes 0/90/180/270 degrés ;
 - taille maximale de recherche limitée à environ 10 % du petit côté : 120 px sur 1600×1200, 192 px sur 2560×1920 ;
-- échantillonnage de chaque cellule par moyenne locale 3×3 ou 5×5 plutôt que par un pixel unique ;
-- contraste minimal conservé comme garde-fou léger (`10`) ;
-- validation supplémentaire de la cohérence du cadre noir : au moins 88 % des cellules du bord doivent être classées noires ;
-- score final = 85 % motif complet + 15 % cohérence du cadre ;
-- seuil d'acceptation `0.86` ;
-- balayage global grossier puis raffinement local au pixel autour du meilleur candidat ;
-- même si le meilleur candidat reste sous le seuil, ses coordonnées/taille/score sont retournés avec `valid=false` pour diagnostic.
+- préfiltre global très léger avec lecture d'un seul pixel par point ;
+- moyenne locale 3×3 ou 5×5 réservée uniquement aux candidats ayant passé le préfiltre ;
+- contraste minimal léger (`10`) ;
+- cohérence du cadre noir obligatoire : au moins 88 % des cellules du bord classées noires ;
+- validation d'un anneau extérieur clair autour de la cible : au moins 67 % des points périphériques au-dessus du seuil noir/blanc ;
+- un candidat qui échoue au cadre noir ou au fond clair ne peut plus devenir le meilleur candidat, même si son sous-motif 7×7 a un score élevé ;
+- score = 80 % motif complet + 10 % cadre noir + 10 % fond extérieur ;
+- seuil d'acceptation `0.82` ;
+- balayage global grossier puis raffinement local au pixel autour du meilleur candidat structurellement valide.
+
+Cette séparation est importante : un petit sous-motif interne peut ressembler au code mais ne possède pas simultanément un cadre noir complet et du fond clair tout autour.
 
 L'orientation fine/perspective sera ajoutée seulement après validation robuste de la cible réelle.
 
-**Tests prioritaires :** cible synthétique, cible réelle à faible contraste, quatre orientations, absence de cible, différentes tailles/résolutions, stabilité des coordonnées et du score, faux positifs de grande taille, meilleur candidat sous le seuil.
+**Tests prioritaires :** cible synthétique, cible réelle à faible contraste, quatre orientations, absence de cible, différentes tailles/résolutions, stabilité des coordonnées et du score, sous-motifs internes, faux positifs de grande taille, temps de balayage global.
 
 ### `TargetDetectionService`
 
@@ -179,7 +183,7 @@ GET /target/status
 GET /target/preview.bmp
 ```
 
-`/target/detect` traite la dernière image filtrée ; `/target/status` relit le dernier résultat sans retraitement ; `/target/preview.bmp` génère une miniature annotée du meilleur candidat. `target_found` indique l'acceptation finale, tandis que le bloc `target` expose le meilleur candidat disponible même si celui-ci reste sous le seuil.
+`/target/detect` traite la dernière image filtrée ; `/target/status` relit le dernier résultat sans retraitement ; `/target/preview.bmp` génère une miniature annotée du meilleur candidat. `target_found` indique l'acceptation finale. Le bloc `target` correspond désormais au meilleur candidat ayant passé les contrôles structurels internes du détecteur.
 
 ### `MeasurementManager`
 
@@ -275,6 +279,8 @@ Ne pas optimiser prématurément la voie actuelle. Après validation fonctionnel
 4. limiter correction et recherche à cette ROI ;
 5. étudier aussi le décodage JPEG partiel/par blocs pour éviter le coût pleine image ;
 6. si la cible est perdue ou le score devient insuffisant, revenir automatiquement à une recherche globale.
+
+L'allègement du préfiltre V4 n'est pas considéré comme une optimisation prématurée : la V3 atteignait près de 90 s sur une recherche globale 1600×1200, ce qui empêchait simplement la validation fonctionnelle. Les optimisations de pipeline/ROI restent reportées.
 
 ## Revue obligatoire avant nouvelle fonctionnalité
 
