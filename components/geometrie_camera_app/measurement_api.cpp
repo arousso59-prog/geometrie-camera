@@ -168,9 +168,8 @@ void MeasurementApiHandler::handle_config_set_(AsyncWebServerRequest *request) {
     return;
   }
 
-  // La focale issue d'une calibration a distance connue depend de la taille
-  // physique de cible utilisee pour le calcul. Un changement de taille invalide
-  // donc volontairement la calibration precedente.
+  // Changer explicitement la taille physique invalide la calibration et leve
+  // donc son verrou. C'est volontaire : fx/fy ont ete derives de cette taille.
   this->manager_->measurement_engine().clear_calibration();
   this->manager_->reset();
   this->send_snapshot_(request, 200, "ok");
@@ -184,11 +183,14 @@ void MeasurementApiHandler::handle_calibrate_(AsyncWebServerRequest *request) {
 
   float distance_mm = 0.0f;
   float target_size_mm = 0.0f;
+  float force_value = 0.0f;
   bool has_distance = false;
   bool has_target_size = false;
+  bool has_force = false;
   std::string error;
   if (!this->parse_float_param_(request, "distance_mm", distance_mm, has_distance, error) ||
-      !this->parse_float_param_(request, "target_size_mm", target_size_mm, has_target_size, error)) {
+      !this->parse_float_param_(request, "target_size_mm", target_size_mm, has_target_size, error) ||
+      !this->parse_float_param_(request, "force", force_value, has_force, error)) {
     const std::string body = std::string("{\"status\":\"error\",\"error\":\"") + error + "\"}";
     request->send(400, "application/json", body.c_str());
     return;
@@ -200,9 +202,22 @@ void MeasurementApiHandler::handle_calibrate_(AsyncWebServerRequest *request) {
     return;
   }
 
+  if (has_force && force_value != 0.0f && force_value != 1.0f) {
+    request->send(400, "application/json",
+                  "{\"status\":\"error\",\"error\":\"force_must_be_0_or_1\"}");
+    return;
+  }
+  const bool force = has_force && force_value == 1.0f;
+
+  GeometryMeasurementEngine &engine = this->manager_->measurement_engine();
+  if (engine.has_calibration() && !force) {
+    this->send_snapshot_(request, 409, "error", "calibration_locked");
+    return;
+  }
+
   if (has_target_size) {
     if (target_size_mm < 1.0f || target_size_mm > 1000.0f ||
-        !this->manager_->measurement_engine().set_target_size_mm(target_size_mm)) {
+        !engine.set_target_size_mm(target_size_mm)) {
       request->send(400, "application/json",
                     "{\"status\":\"error\",\"error\":\"target_size_mm_out_of_range\"}");
       return;
@@ -218,7 +233,6 @@ void MeasurementApiHandler::handle_calibrate_(AsyncWebServerRequest *request) {
     return;
   }
 
-  GeometryMeasurementEngine &engine = this->manager_->measurement_engine();
   if (!engine.calibrate_from_known_distance(this->detection_service_->last_observation(),
                                             this->source_->width(), this->source_->height(),
                                             distance_mm)) {
@@ -239,7 +253,7 @@ void MeasurementApiHandler::handle_calibrate_(AsyncWebServerRequest *request) {
 void MeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *request, int response_code,
                                            const char *status, const char *error) const {
   std::string json;
-  json.reserve(1400);
+  json.reserve(1800);
   json += "{\"status\":\"";
   json += status;
   json += "\"";
@@ -274,6 +288,8 @@ void MeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *request, int r
 
     json += ",\"calibration\":{\"valid\":";
     json += engine.has_calibration() ? "true" : "false";
+    json += ",\"locked\":";
+    json += engine.has_calibration() ? "true" : "false";
     json += ",\"fx_px\":" + std::to_string(stored.fx_px);
     json += ",\"fy_px\":" + std::to_string(stored.fy_px);
     json += ",\"cx_px\":" + std::to_string(stored.cx_px);
@@ -288,15 +304,21 @@ void MeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *request, int r
 
     json += ",\"measurement\":{\"valid\":";
     json += measurement.valid ? "true" : "false";
+    json += ",\"pose_valid\":";
+    json += measurement.pose_valid ? "true" : "false";
     json += ",\"distance_mm\":" + std::to_string(measurement.distance_mm);
     json += ",\"x_mm\":" + std::to_string(measurement.x_mm);
     json += ",\"y_mm\":" + std::to_string(measurement.y_mm);
     json += ",\"z_mm\":" + std::to_string(measurement.z_mm);
+    json += ",\"z_from_width_mm\":" + std::to_string(measurement.z_from_width_mm);
+    json += ",\"z_from_height_mm\":" + std::to_string(measurement.z_from_height_mm);
     json += ",\"bearing_yaw_deg\":" + std::to_string(measurement.bearing_yaw_deg);
     json += ",\"bearing_pitch_deg\":" + std::to_string(measurement.bearing_pitch_deg);
     json += ",\"target_yaw_deg\":" + std::to_string(measurement.yaw_deg);
     json += ",\"target_pitch_deg\":" + std::to_string(measurement.pitch_deg);
     json += ",\"target_roll_deg\":" + std::to_string(measurement.roll_deg);
+    json += ",\"pose_z_mm\":" + std::to_string(measurement.pose_z_mm);
+    json += ",\"pose_scale_error_pct\":" + std::to_string(measurement.pose_scale_error_pct);
     json += ",\"quality\":" + std::to_string(measurement.quality);
     json += ",\"timestamp_ms\":" + std::to_string(measurement.timestamp_ms);
     json += "}";
