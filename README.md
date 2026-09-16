@@ -49,9 +49,10 @@ TargetDetector V5.4
    ↓
 TargetObservation + 4 coins
    ↓
-GeometryMeasurementEngine V1
-   ↓
-distance + X/Y/Z + angles de visée + yaw/pitch/roll cible
+GeometryMeasurementEngine V2
+   ├── distance robuste par taille apparente
+   ├── X/Y/Z + angles de visée
+   └── pose homographique validée séparément
 ```
 
 La détection V5.4 combine localisation rapide, raffinement pleine résolution des quatre coins et lecture projective du code 7×7. Le candidat brut reste toujours testé en secours.
@@ -66,7 +67,7 @@ total filtre  ≈ 2036 ms
 
 Les essais répétés sont du même ordre de grandeur et la détection n'a pas montré de régression par rapport à la version précédente.
 
-## Mesure V1 : distance et angles
+## Mesure V2 : distance robuste et angles
 
 La taille physique de cible par défaut est :
 
@@ -92,15 +93,29 @@ capture
 → /target/detect
 ```
 
-et appeler par exemple, pour une cible située à 2000 mm :
+et appeler par exemple, pour une cible située à 1000 mm :
 
 ```text
-GET /measurement/calibrate?distance_mm=2000&target_size_mm=50
+GET /measurement/calibrate?distance_mm=1000&target_size_mm=50
 ```
 
-Le firmware estime alors `fx` et `fy` à partir de la taille réelle de 50 mm et de la taille détectée en pixels. La résolution utilisée pendant cette calibration est mémorisée.
+Le firmware estime `fx` et `fy` à partir de la taille réelle de 50 mm et de la taille détectée en pixels. La résolution utilisée pendant cette calibration est mémorisée.
 
-Pour les autres résolutions de même cadrage optique, les paramètres intrinsèques sont redimensionnés automatiquement. Par exemple une calibration en 1600×1200 peut servir en 800×600 pour les premiers essais.
+Une calibration valide est ensuite **verrouillée**. Un nouvel appel de calibration sans demande explicite renvoie :
+
+```text
+calibration_locked
+```
+
+Pour remplacer volontairement la calibration :
+
+```text
+GET /measurement/calibrate?distance_mm=1000&target_size_mm=50&force=1
+```
+
+Modifier `target_size_mm` par `/measurement/config/set` invalide aussi la calibration précédente.
+
+Pour les autres résolutions de même cadrage optique, les paramètres intrinsèques sont redimensionnés automatiquement.
 
 ### Calcul d'une mesure
 
@@ -113,18 +128,33 @@ capture
 → /measurement/compute
 ```
 
-la réponse de mesure contient notamment :
+la distance principale n'est plus issue de la décomposition homographique. Elle repose sur la taille apparente des quatre coins :
+
+```text
+z_from_width_mm  = fx × target_size_mm / largeur_px
+z_from_height_mm = fy × target_size_mm / hauteur_px
+z_mm             = min(z_from_width_mm, z_from_height_mm)
+```
+
+Puis le centre de cible permet de calculer `x_mm`, `y_mm` et la distance euclidienne.
+
+La réponse contient notamment :
 
 ```text
 distance_mm
 x_mm
 y_mm
 z_mm
+z_from_width_mm
+z_from_height_mm
 bearing_yaw_deg
 bearing_pitch_deg
+pose_valid
 target_yaw_deg
 target_pitch_deg
 target_roll_deg
+pose_z_mm
+pose_scale_error_pct
 quality
 ```
 
@@ -138,9 +168,13 @@ Z positif = avant
 
 `distance_mm` est la distance euclidienne caméra → centre de cible, alors que `z_mm` représente la profondeur suivant l'axe optique.
 
-Les angles `bearing_*` décrivent la direction du centre de la cible. Les angles `target_*` décrivent l'orientation du plan de la cible, obtenue par décomposition de l'homographie des quatre coins.
+Les angles `bearing_*` décrivent la direction du centre de la cible et sont calculés indépendamment de la pose du plan.
 
-Cette V1 ne compense pas encore précisément la distorsion radiale de l'objectif. Elle doit d'abord permettre de mesurer l'erreur réelle et la répétabilité avant d'ajouter une calibration optique plus complète.
+Les angles `target_*` décrivent l'orientation du plan de la cible. L'homographie reste utilisée pour cette orientation, mais elle doit être cohérente avec la distance robuste : si `pose_z_mm` diffère de plus de 25 % de `z_mm`, `pose_valid=false` et les angles de pose ne sont pas considérés fiables.
+
+Le roulis accepté est normalisé modulo 180° afin qu'une cible presque droite ne soit pas affichée autour de ±180° uniquement à cause de l'orientation logique du code.
+
+Cette version ne compense pas encore précisément la distorsion radiale de l'objectif. Elle doit d'abord permettre de mesurer l'erreur réelle et la répétabilité avant d'ajouter une calibration optique plus complète.
 
 ## Architecture
 
@@ -168,21 +202,22 @@ GET /target/preview.bmp
 
 GET /measurement/config
 GET /measurement/config/set?target_size_mm=<mm>
-GET /measurement/calibrate?distance_mm=<mm>&target_size_mm=<optionnel>
+GET /measurement/calibrate?distance_mm=<mm>&target_size_mm=<optionnel>&force=<0|1>
 GET /measurement/compute
 GET /measurement/status
 ```
 
-`/api/wsdl` est la référence du contrat HTTP compilé. Version actuelle : **10**.
+`/api/wsdl` est la référence du contrat HTTP compilé. Version actuelle : **11**.
 
 ## Étape actuelle
 
-1. compiler/flasher la V1 de mesure ;
-2. calibrer avec la cible 50 mm à une distance connue ;
-3. vérifier la distance à plusieurs distances réelles ;
-4. vérifier les angles de visée en déplaçant la cible horizontalement et verticalement ;
-5. vérifier yaw/pitch/roll en inclinant la cible ;
-6. mesurer la répétabilité ;
-7. corriger ensuite la calibration optique/distorsion si nécessaire ;
-8. passer à l'acquisition continue ;
-9. revenir ensuite sur ROI et optimisation de performance.
+1. compiler/flasher la V2 de mesure ;
+2. calibrer une seule fois avec la cible 50 mm à une distance connue ;
+3. vérifier que la calibration est verrouillée ;
+4. déplacer la cible à plusieurs distances sans recalibrer ;
+5. comparer `z_from_width_mm`, `z_from_height_mm` et `z_mm` à la distance réelle ;
+6. vérifier les angles de visée en déplaçant la cible horizontalement et verticalement ;
+7. observer `pose_valid` avant de retravailler yaw/pitch/roll ;
+8. mesurer la répétabilité ;
+9. corriger ensuite calibration optique/distorsion si nécessaire ;
+10. passer à l'acquisition continue puis revenir sur ROI et optimisation de performance.
