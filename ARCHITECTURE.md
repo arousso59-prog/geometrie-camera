@@ -79,19 +79,20 @@ GrayFrameView corrigé
         ↓
 TargetDetectionService
         ↓
-TargetDetector V5.2
-  ├── TargetCandidateFinder
+TargetDetector V5.3
+  ├── TargetCandidateFinder V5.2
   │     - réduction de l'image à ~320 px max
   │     - seuillage local
   │     - composantes sombres
   │     - rejet des objets trop allongés
   │     - estimation de quatre coins
   │     - conservation des 8 meilleurs candidats
-  └── TargetCodeDecoder
+  └── TargetCodeDecoder V5.3
         - projection du quadrilatère sur l'image pleine résolution
         - lecture du motif 7×7
         - test des quatre orientations logiques
-        - validation du cadre noir et du fond extérieur
+        - validation du contraste, du cadre noir et du fond extérieur
+        - seuil final d'acceptation = 0.82
         ↓
 TargetObservation
 ```
@@ -120,6 +121,8 @@ grayscale_stride()
 width()
 height()
 ```
+
+À 1600×1200, cette étape est actuellement le principal goulot de la chaîne complète : les mesures observées tournent autour de ~1,6 s pour le décodage JPEG et ~2,4 s pour la correction d'artefacts, soit environ 4 s au total, alors que la détection V5.2/V5.3 est de l'ordre de 0,16 s. L'optimisation future doit donc porter prioritairement sur cette voie, sans dégrader la robustesse de la correction.
 
 ### `JpegArtifactCorrector`
 
@@ -150,7 +153,7 @@ Méthode V5.2 :
 - rejet des composantes trop petites, trop grandes ou trop allongées ;
 - estimation de quatre coins par extrema `x+y` / `x-y` de la composante ;
 - maximum 8 candidats conservés, classés principalement par forme carrée ;
-- pendant la validation V5.2, les huit candidats sont journalisés avec centre, taille et score sans modifier l'API.
+- pendant la validation, les huit candidats sont journalisés avec centre, taille et score sans modifier l'API.
 
 À 1600×1200, la réduction est typiquement ×5 et produit 320×240 pixels : une cible d'environ 40 px reste donc de l'ordre de 8 px dans la carte de localisation. À 2560×1920, le facteur augmente automatiquement pour garder un coût voisin.
 
@@ -162,19 +165,23 @@ Le workspace de localisation est persistant et alloué explicitement en PSRAM. �
 
 Responsabilité : **dire si un candidat géométrique est réellement notre cible**.
 
-Méthode V5 :
+Méthode V5.3 :
 
 - utilise les quatre coins fournis par le localisateur ;
 - teste plusieurs petites dilatations du quadrilatère pour compenser l'imprécision de la segmentation basse résolution ;
 - projette les centres de cellules 7×7 dans le quadrilatère ;
 - chaque cellule utilise plusieurs échantillons de l'image pleine résolution ;
 - teste les quatre rotations logiques 0/90/180/270 degrés ;
-- exige un contraste minimal, un cadre noir cohérent et un extérieur plus clair que le noir de la cible ;
-- retourne centre, taille, rotation logique et qualité.
+- exige indépendamment un contraste minimal, un cadre noir cohérent et un extérieur plus clair que le noir de la cible ;
+- calcule ensuite le score final ;
+- seuil final d'acceptation abaissé de 0.84 à 0.82 après plusieurs détections répétables de la vraie cible autour de 0.824 ;
+- journalise pour chaque candidat décodable : score, `pattern`, `border`, contraste, niveau extérieur, niveau noir, facteur d'expansion et rotation.
+
+Le seuil final n'est donc pas la seule barrière contre les faux positifs : les gardes structurelles restent obligatoires avant qu'un score puisse être retenu.
 
 La projection quadrilatérale est volontairement déjà présente : elle rend le décodage moins sensible aux petits angles et prépare la future estimation d'orientation.
 
-**Frontières de test :** vrai code, faux carré noir, sous-motif interne, quatre rotations, perspective légère, contraste faible, fond extérieur sombre.
+**Frontières de test :** vrai code, faux carré noir, sous-motif interne, quatre rotations, perspective légère, contraste faible, fond extérieur sombre, cible absente avec `target_found=false`.
 
 ### `TargetDetectionService`
 
@@ -192,7 +199,7 @@ GET /target/status
 GET /target/preview.bmp
 ```
 
-Les routes restent inchangées avec la V5.
+Les routes restent inchangées avec la V5.3.
 
 ### `MeasurementManager`
 
@@ -260,14 +267,15 @@ Les essais de timing n'ont pas supprimé le motif parasite ; la correction logic
 
 ## Optimisations reportées après validation cible/distance/orientation
 
-La V5 réduit déjà le coût de **localisation** parce que l'ancien balayage exhaustif empêchait une validation pratique. Les optimisations de pipeline restent reportées :
+La V5 réduit déjà le coût de **localisation/détection** au point qu'il n'est plus le goulot principal. La prochaine optimisation de performance doit cibler `JpegFilteredDiagnostic` / `JpegArtifactCorrector`, puis la future voie ROI :
 
-1. première recherche globale ;
-2. mémorisation de la dernière cible ;
-3. recherche suivante dans une ROI ;
-4. correction d'artefacts limitée à cette ROI ;
-5. décodage JPEG partiel/par blocs si nécessaire ;
-6. retour automatique à la recherche globale si la cible est perdue.
+1. mesurer séparément décodage JPEG et correction sur plusieurs frames ;
+2. réduire le coût du correcteur sans changer son résultat fonctionnel ;
+3. après première détection globale, mémoriser la dernière cible ;
+4. recherche suivante dans une ROI ;
+5. correction d'artefacts limitée à cette ROI lorsque l'architecture de décodage le permet ;
+6. étudier le décodage JPEG partiel/par blocs pour éviter de traiter toute l'image ;
+7. retour automatique à la recherche globale si la cible est perdue.
 
 ## Revue obligatoire avant nouvelle fonctionnalité
 
