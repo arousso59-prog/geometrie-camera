@@ -72,29 +72,6 @@ geometrie_camera_app:
 # ============================================================
 # CAMERA OV5640 - GOOUUU ESP32-S3-CAM V1.5
 # ============================================================
-# Brochage confirme :
-#   SIOD  = GPIO4
-#   SIOC  = GPIO5
-#   VSYNC = GPIO6
-#   HREF  = GPIO7
-#   XCLK  = GPIO15
-#   Y2    = GPIO11
-#   Y3    = GPIO9
-#   Y4    = GPIO8
-#   Y5    = GPIO10
-#   Y6    = GPIO12
-#   Y7    = GPIO18
-#   Y8    = GPIO17
-#   Y9    = GPIO16
-#   PCLK  = GPIO13
-#
-# Capteur confirme par PID : OV5640 (0x5640), matrice physique 2592x1944.
-# ESPHome 2026.7.3 expose QSXGA 2560x1920 comme mode maximal.
-#
-# Voie retenue apres validation : JPEG natif OV5640 -> decodage grayscale ->
-# correction logicielle V3 des artefacts verts/noirs -> TargetDetector.
-# XCLK reste fixe a 8 MHz : les essais de timing/registres n'ont pas supprime
-# les artefacts et les frequences plus basses n'apportent pas de solution.
 
 i2c:
   - id: camera_i2c
@@ -104,7 +81,7 @@ i2c:
 
 esp32_camera:
   id: camera_geometrie
-  name: "Camera geometrie JPEG OV5640 QSXGA"
+  name: "Camera geometrie JPEG OV5640"
   internal: true
 
   external_clock:
@@ -136,121 +113,274 @@ esp32_camera:
   idle_framerate: 0 fps
   test_pattern: false
 
-# Routes encore utiles pendant la validation cible :
-#   GET /diagnostic-jpeg/capture?resolution=...
-#   GET /diagnostic-jpeg/status
-#   GET /diagnostic-jpeg/image.jpg
-#   GET /diagnostic-jpeg/filter
-#   GET /diagnostic-jpeg/filter-status
-#   GET /diagnostic-jpeg/filtered.bmp
-#
-# Les anciens diagnostics GRAYSCALE/RGB565, tests de registres OV5640,
-# configurateur OV3660 et API placeholder ont ete retires du code.
+# La resolution de travail est maintenant lisible/modifiable avec :
+#   GET /api/camera/settings
+#   GET /api/camera/settings/set?resolution=800x600
+# Le mode continu reutilise toujours la resolution camera active.
 
 # ============================================================
-# PARAMETRES DE DEVELOPPEMENT / CALIBRATION
+# COMMANDES DE MESURE CONTINUE
 # ============================================================
+
+button:
+  - platform: template
+    name: "05 Demarrer mesures continues"
+    on_press:
+      - lambda: |-
+          id(geometrie_camera_app_id).start_continuous_measurement();
+
+  - platform: template
+    name: "06 Arreter mesures continues"
+    on_press:
+      - lambda: |-
+          id(geometrie_camera_app_id).stop_continuous_measurement();
 
 number:
   - platform: template
-    name: "Intervalle acquisition"
+    name: "07 Intervalle acquisition"
     id: intervalle_acquisition_ms
     min_value: 200
     max_value: 10000
     step: 100
     initial_value: 1000
-    restore_value: true
+    restore_value: false
     optimistic: true
     unit_of_measurement: "ms"
-
-  - platform: template
-    name: "Focale calibration X"
-    id: focale_fx
-    min_value: 100
-    max_value: 10000
-    step: 0.1
-    initial_value: 1000
-    restore_value: true
-    optimistic: true
-    unit_of_measurement: "px"
-
-  - platform: template
-    name: "Focale calibration Y"
-    id: focale_fy
-    min_value: 100
-    max_value: 10000
-    step: 0.1
-    initial_value: 1000
-    restore_value: true
-    optimistic: true
-    unit_of_measurement: "px"
-
-  - platform: template
-    name: "Centre optique X"
-    id: centre_optique_cx
-    min_value: 0
-    max_value: 3000
-    step: 0.1
-    initial_value: 1280
-    restore_value: true
-    optimistic: true
-    unit_of_measurement: "px"
-
-  - platform: template
-    name: "Centre optique Y"
-    id: centre_optique_cy
-    min_value: 0
-    max_value: 2200
-    step: 0.1
-    initial_value: 960
-    restore_value: true
-    optimistic: true
-    unit_of_measurement: "px"
+    set_action:
+      - lambda: |-
+          id(geometrie_camera_app_id).set_continuous_interval_ms(static_cast<uint32_t>(x));
 
 # ============================================================
-# ETAT / MESURES
+# ETAT PRINCIPAL - noms prefixes pour ordre de lecture Web UI
 # ============================================================
 
 text_sensor:
   - platform: template
-    name: "Etat capteur geometrie"
+    name: "01 Etat acquisition"
     id: etat_capteur_geometrie
-    update_interval: 5s
+    update_interval: 1s
     lambda: |-
       return {id(geometrie_camera_app_id).status_text()};
 
+  - platform: template
+    name: "02 Resolution travail"
+    update_interval: 2s
+    lambda: |-
+      return {id(geometrie_camera_app_id).active_resolution_text()};
+
+  - platform: template
+    name: "03 Cible dernier cycle"
+    update_interval: 1s
+    lambda: |-
+      if (!id(geometrie_camera_app_id).continuous_running() &&
+          !id(geometrie_camera_app_id).last_measurement().valid) {
+        return {"inconnue"};
+      }
+      return {id(geometrie_camera_app_id).continuous_target_found() ? "trouvee" : "absente"};
+
+  - platform: template
+    name: "04 Pose cible"
+    update_interval: 1s
+    lambda: |-
+      const auto &m = id(geometrie_camera_app_id).last_measurement();
+      if (!m.valid) return {"indisponible"};
+      return {m.pose_valid ? "valide" : "rejetee"};
+
 sensor:
   - platform: template
-    name: "Mesures valides"
-    id: compteur_mesures_valides
+    name: "10 Distance cible"
+    unit_of_measurement: "mm"
+    accuracy_decimals: 1
+    update_interval: 1s
+    lambda: |-
+      const auto &app = id(geometrie_camera_app_id);
+      const auto &m = app.last_measurement();
+      if (!m.valid || (app.continuous_running() && !app.continuous_measurement_valid())) return NAN;
+      return m.distance_mm;
+
+  - platform: template
+    name: "11 Profondeur Z"
+    unit_of_measurement: "mm"
+    accuracy_decimals: 1
+    update_interval: 1s
+    lambda: |-
+      const auto &app = id(geometrie_camera_app_id);
+      const auto &m = app.last_measurement();
+      if (!m.valid || (app.continuous_running() && !app.continuous_measurement_valid())) return NAN;
+      return m.z_mm;
+
+  - platform: template
+    name: "12 Position X"
+    unit_of_measurement: "mm"
+    accuracy_decimals: 1
+    update_interval: 1s
+    lambda: |-
+      const auto &m = id(geometrie_camera_app_id).last_measurement();
+      return m.valid ? m.x_mm : NAN;
+
+  - platform: template
+    name: "13 Position Y"
+    unit_of_measurement: "mm"
+    accuracy_decimals: 1
+    update_interval: 1s
+    lambda: |-
+      const auto &m = id(geometrie_camera_app_id).last_measurement();
+      return m.valid ? m.y_mm : NAN;
+
+  - platform: template
+    name: "14 Angle visee horizontal"
+    unit_of_measurement: "deg"
+    accuracy_decimals: 4
+    update_interval: 1s
+    lambda: |-
+      const auto &m = id(geometrie_camera_app_id).last_measurement();
+      return m.valid ? m.bearing_yaw_deg : NAN;
+
+  - platform: template
+    name: "15 Angle visee vertical"
+    unit_of_measurement: "deg"
+    accuracy_decimals: 4
+    update_interval: 1s
+    lambda: |-
+      const auto &m = id(geometrie_camera_app_id).last_measurement();
+      return m.valid ? m.bearing_pitch_deg : NAN;
+
+  - platform: template
+    name: "16 Qualite detection"
+    accuracy_decimals: 3
+    update_interval: 1s
+    lambda: |-
+      const auto &m = id(geometrie_camera_app_id).last_measurement();
+      return m.valid ? m.quality : NAN;
+
+  - platform: template
+    name: "17 Temps dernier cycle"
+    unit_of_measurement: "ms"
     accuracy_decimals: 0
-    update_interval: 5s
+    update_interval: 1s
+    lambda: |-
+      return id(geometrie_camera_app_id).continuous_last_cycle_ms();
+
+  - platform: template
+    name: "18 Cycles continus"
+    accuracy_decimals: 0
+    update_interval: 1s
+    lambda: |-
+      return id(geometrie_camera_app_id).continuous_cycle_count();
+
+  - platform: template
+    name: "19 Mesures valides session"
+    accuracy_decimals: 0
+    update_interval: 1s
+    lambda: |-
+      return id(geometrie_camera_app_id).continuous_measurement_controller().valid_measurement_count();
+
+  - platform: template
+    name: "20 Mesures valides total"
+    accuracy_decimals: 0
+    update_interval: 2s
     lambda: |-
       return id(geometrie_camera_app_id).valid_measurement_count();
 
-  - platform: template
-    name: "Angle horizontal cible"
-    id: angle_horizontal_cible
-    unit_of_measurement: "deg"
-    accuracy_decimals: 4
-    update_interval: 1s
-    lambda: |-
-      return id(geometrie_camera_app_id).last_measurement().yaw_deg;
+# ============================================================
+# DIAGNOSTIC - valeurs reelles, plus de sliders calibration manuels
+# ============================================================
 
   - platform: template
-    name: "Angle vertical cible"
-    id: angle_vertical_cible
-    unit_of_measurement: "deg"
-    accuracy_decimals: 4
-    update_interval: 1s
+    name: "90 Focale calibration X"
+    unit_of_measurement: "px"
+    accuracy_decimals: 2
+    update_interval: 5s
     lambda: |-
-      return id(geometrie_camera_app_id).last_measurement().pitch_deg;
+      const auto &c = id(geometrie_camera_app_id).measurement_engine().calibration();
+      return c.fx_px > 0.0f ? c.fx_px : NAN;
 
   - platform: template
-    name: "Rotation cible"
-    id: rotation_cible
+    name: "91 Focale calibration Y"
+    unit_of_measurement: "px"
+    accuracy_decimals: 2
+    update_interval: 5s
+    lambda: |-
+      const auto &c = id(geometrie_camera_app_id).measurement_engine().calibration();
+      return c.fy_px > 0.0f ? c.fy_px : NAN;
+
+  - platform: template
+    name: "92 Centre optique X"
+    unit_of_measurement: "px"
+    accuracy_decimals: 2
+    update_interval: 5s
+    lambda: |-
+      const auto &c = id(geometrie_camera_app_id).measurement_engine().calibration();
+      return c.reference_width_px > 0 ? c.cx_px : NAN;
+
+  - platform: template
+    name: "93 Centre optique Y"
+    unit_of_measurement: "px"
+    accuracy_decimals: 2
+    update_interval: 5s
+    lambda: |-
+      const auto &c = id(geometrie_camera_app_id).measurement_engine().calibration();
+      return c.reference_height_px > 0 ? c.cy_px : NAN;
+
+  - platform: template
+    name: "94 Z estime largeur"
+    unit_of_measurement: "mm"
+    accuracy_decimals: 1
+    update_interval: 1s
+    lambda: |-
+      const auto &m = id(geometrie_camera_app_id).last_measurement();
+      return m.valid ? m.z_from_width_mm : NAN;
+
+  - platform: template
+    name: "95 Z estime hauteur"
+    unit_of_measurement: "mm"
+    accuracy_decimals: 1
+    update_interval: 1s
+    lambda: |-
+      const auto &m = id(geometrie_camera_app_id).last_measurement();
+      return m.valid ? m.z_from_height_mm : NAN;
+
+  - platform: template
+    name: "96 Pose Z homographie"
+    unit_of_measurement: "mm"
+    accuracy_decimals: 1
+    update_interval: 1s
+    lambda: |-
+      const auto &m = id(geometrie_camera_app_id).last_measurement();
+      return m.valid ? m.pose_z_mm : NAN;
+
+  - platform: template
+    name: "97 Erreur echelle pose"
+    unit_of_measurement: "%"
+    accuracy_decimals: 1
+    update_interval: 1s
+    lambda: |-
+      const auto &m = id(geometrie_camera_app_id).last_measurement();
+      return m.valid ? m.pose_scale_error_pct : NAN;
+
+  - platform: template
+    name: "98 Yaw cible"
     unit_of_measurement: "deg"
     accuracy_decimals: 4
     update_interval: 1s
     lambda: |-
-      return id(geometrie_camera_app_id).last_measurement().roll_deg;
+      const auto &m = id(geometrie_camera_app_id).last_measurement();
+      return m.valid && m.pose_valid ? m.yaw_deg : NAN;
+
+  - platform: template
+    name: "99 Pitch cible"
+    unit_of_measurement: "deg"
+    accuracy_decimals: 4
+    update_interval: 1s
+    lambda: |-
+      const auto &m = id(geometrie_camera_app_id).last_measurement();
+      return m.valid && m.pose_valid ? m.pitch_deg : NAN;
+
+  - platform: template
+    name: "99 Rotation cible"
+    unit_of_measurement: "deg"
+    accuracy_decimals: 4
+    update_interval: 1s
+    lambda: |-
+      const auto &m = id(geometrie_camera_app_id).last_measurement();
+      return m.valid && m.pose_valid ? m.roll_deg : NAN;
