@@ -15,7 +15,6 @@ esp32:
   framework:
     type: esp-idf
 
-# Carte GOOUUU ESP32-S3-CAM N16R8 : 8 Mo de PSRAM octal.
 psram:
   mode: octal
   speed: 80MHz
@@ -25,11 +24,6 @@ preferences:
 
 logger:
   level: DEBUG
-  # Les logs vision ci-dessous contiennent plusieurs conversions flottantes.
-  # Sur le thread HTTP ESP-IDF, snprintf/_dtoa_r consomme beaucoup de pile et
-  # peut provoquer un StoreProhibited lorsque la detection est lancee par HTTP.
-  # Les timings et resultats restent disponibles via les API JSON ; on garde
-  # donc DEBUG globalement mais ces quatre tags au niveau INFO.
   logs:
     target_candidate_finder: INFO
     target_corner_refiner: INFO
@@ -43,7 +37,6 @@ wifi:
   password: !secret wifi_password
   power_save_mode: NONE
   fast_connect: true
-
   ap:
     ssid: "Geometrie Camera Fallback"
     password: "geometrie"
@@ -58,20 +51,12 @@ ota:
   - platform: esphome
   - platform: web_server
 
-# ============================================================
-# APPLICATION C++
-# ============================================================
-
 external_components:
   - source: geometrie-camera/components
 
 geometrie_camera_app:
   id: geometrie_camera_app_id
   camera_id: camera_geometrie
-
-# ============================================================
-# CAMERA OV5640 - GOOUUU ESP32-S3-CAM V1.5
-# ============================================================
 
 i2c:
   - id: camera_i2c
@@ -83,27 +68,22 @@ esp32_camera:
   id: camera_geometrie
   name: "Camera geometrie JPEG OV5640"
   internal: true
-
   external_clock:
     pin: GPIO15
     frequency: 8MHz
-
   i2c_id: camera_i2c
-
   data_pins:
-    - GPIO11  # Y2 / D0
-    - GPIO9   # Y3 / D1
-    - GPIO8   # Y4 / D2
-    - GPIO10  # Y5 / D3
-    - GPIO12  # Y6 / D4
-    - GPIO18  # Y7 / D5
-    - GPIO17  # Y8 / D6
-    - GPIO16  # Y9 / D7
-
+    - GPIO11
+    - GPIO9
+    - GPIO8
+    - GPIO10
+    - GPIO12
+    - GPIO18
+    - GPIO17
+    - GPIO16
   vsync_pin: GPIO6
   href_pin: GPIO7
   pixel_clock_pin: GPIO13
-
   pixel_format: JPEG
   resolution: 2560x1920
   jpeg_quality: 10
@@ -113,14 +93,9 @@ esp32_camera:
   idle_framerate: 0 fps
   test_pattern: false
 
-# La resolution de travail est maintenant lisible/modifiable avec :
-#   GET /api/camera/settings
-#   GET /api/camera/settings/set?resolution=800x600
-# Le mode continu reutilise toujours la resolution camera active.
-
-# ============================================================
-# COMMANDES DE MESURE CONTINUE
-# ============================================================
+# Resolution de travail :
+# GET /api/camera/settings
+# GET /api/camera/settings/set?resolution=800x600
 
 button:
   - platform: template
@@ -150,10 +125,6 @@ number:
       - lambda: |-
           id(geometrie_camera_app_id).set_continuous_interval_ms(static_cast<uint32_t>(x));
 
-# ============================================================
-# ETAT PRINCIPAL - noms prefixes pour ordre de lecture Web UI
-# ============================================================
-
 text_sensor:
   - platform: template
     name: "01 Etat acquisition"
@@ -169,21 +140,22 @@ text_sensor:
       return {id(geometrie_camera_app_id).active_resolution_text()};
 
   - platform: template
-    name: "03 Cible dernier cycle"
+    name: "03 Cible actuelle"
     update_interval: 1s
     lambda: |-
-      if (!id(geometrie_camera_app_id).continuous_running() &&
-          !id(geometrie_camera_app_id).last_measurement().valid) {
-        return {"inconnue"};
-      }
-      return {id(geometrie_camera_app_id).continuous_target_found() ? "trouvee" : "absente"};
+      const auto &service = id(geometrie_camera_app_id).target_detection_service();
+      if (!service.ready()) return {"inconnue"};
+      return {service.target_found() ? "trouvee" : "absente"};
 
   - platform: template
     name: "04 Pose cible"
     update_interval: 1s
     lambda: |-
-      const auto &m = id(geometrie_camera_app_id).last_measurement();
-      if (!m.valid) return {"indisponible"};
+      const auto &app = id(geometrie_camera_app_id);
+      const auto &m = app.last_measurement();
+      if (!m.valid || (app.continuous_running() && !app.continuous_measurement_valid())) {
+        return {"indisponible"};
+      }
       return {m.pose_valid ? "valide" : "rejetee"};
 
 sensor:
@@ -215,8 +187,10 @@ sensor:
     accuracy_decimals: 1
     update_interval: 1s
     lambda: |-
-      const auto &m = id(geometrie_camera_app_id).last_measurement();
-      return m.valid ? m.x_mm : NAN;
+      const auto &app = id(geometrie_camera_app_id);
+      const auto &m = app.last_measurement();
+      if (!m.valid || (app.continuous_running() && !app.continuous_measurement_valid())) return NAN;
+      return m.x_mm;
 
   - platform: template
     name: "13 Position Y"
@@ -224,8 +198,10 @@ sensor:
     accuracy_decimals: 1
     update_interval: 1s
     lambda: |-
-      const auto &m = id(geometrie_camera_app_id).last_measurement();
-      return m.valid ? m.y_mm : NAN;
+      const auto &app = id(geometrie_camera_app_id);
+      const auto &m = app.last_measurement();
+      if (!m.valid || (app.continuous_running() && !app.continuous_measurement_valid())) return NAN;
+      return m.y_mm;
 
   - platform: template
     name: "14 Angle visee horizontal"
@@ -233,8 +209,10 @@ sensor:
     accuracy_decimals: 4
     update_interval: 1s
     lambda: |-
-      const auto &m = id(geometrie_camera_app_id).last_measurement();
-      return m.valid ? m.bearing_yaw_deg : NAN;
+      const auto &app = id(geometrie_camera_app_id);
+      const auto &m = app.last_measurement();
+      if (!m.valid || (app.continuous_running() && !app.continuous_measurement_valid())) return NAN;
+      return m.bearing_yaw_deg;
 
   - platform: template
     name: "15 Angle visee vertical"
@@ -242,16 +220,20 @@ sensor:
     accuracy_decimals: 4
     update_interval: 1s
     lambda: |-
-      const auto &m = id(geometrie_camera_app_id).last_measurement();
-      return m.valid ? m.bearing_pitch_deg : NAN;
+      const auto &app = id(geometrie_camera_app_id);
+      const auto &m = app.last_measurement();
+      if (!m.valid || (app.continuous_running() && !app.continuous_measurement_valid())) return NAN;
+      return m.bearing_pitch_deg;
 
   - platform: template
     name: "16 Qualite detection"
     accuracy_decimals: 3
     update_interval: 1s
     lambda: |-
-      const auto &m = id(geometrie_camera_app_id).last_measurement();
-      return m.valid ? m.quality : NAN;
+      const auto &app = id(geometrie_camera_app_id);
+      const auto &m = app.last_measurement();
+      if (!m.valid || (app.continuous_running() && !app.continuous_measurement_valid())) return NAN;
+      return m.quality;
 
   - platform: template
     name: "17 Temps dernier cycle"
@@ -281,10 +263,6 @@ sensor:
     update_interval: 2s
     lambda: |-
       return id(geometrie_camera_app_id).valid_measurement_count();
-
-# ============================================================
-# DIAGNOSTIC - valeurs reelles, plus de sliders calibration manuels
-# ============================================================
 
   - platform: template
     name: "90 Focale calibration X"
@@ -377,7 +355,7 @@ sensor:
       return m.valid && m.pose_valid ? m.pitch_deg : NAN;
 
   - platform: template
-    name: "99 Rotation cible"
+    name: "100 Rotation cible"
     unit_of_measurement: "deg"
     accuracy_decimals: 4
     update_interval: 1s
