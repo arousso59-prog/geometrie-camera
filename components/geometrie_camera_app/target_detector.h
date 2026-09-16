@@ -16,6 +16,7 @@ class TargetDetector {
  private:
   TargetCandidateFinder candidate_finder_;
   TargetCodeDecoder code_decoder_;
+  TargetCandidateSet candidates_;
 };
 
 }  // namespace geometrie_camera_app
