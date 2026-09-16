@@ -81,10 +81,12 @@ geometrie_camera_app:
 # Capteur confirme par PID : OV5640 (0x5640), resolution physique max 2592x1944.
 # ESPHome 2026.7.3 n'expose pas 2592x1944 dans son schema YAML ; le mode maximal
 # directement supporte est QSXGA 2560x1920, soit seulement ~2,5 % de pixels en moins.
-# Voie de mesure : GRAYSCALE brut, sans JPEG capteur.
-# A QSXGA, le diagnostic HTTP utilise surtout le preview 640x480 pour eviter
-# de dupliquer une frame brute d'environ 4,9 Mo en BMP pleine resolution.
-# XCLK = 16 MHz, configuration non-JPEG deja validee.
+#
+# Test courant : JPEG produit directement par l'ISP OV5640 a QSXGA.
+# Objectif : verifier si le traitement interne du capteur donne une image propre et
+# peu bruitee, puis mesurer les temps avant de decider si la mesure utilisera un
+# decodage JPEG vers luminance.
+# XCLK conserve a 16 MHz pour comparer avec la voie brute precedente.
 # framebuffer unique en PSRAM ; acquisition uniquement sur demande.
 
 i2c:
@@ -95,7 +97,7 @@ i2c:
 
 esp32_camera:
   id: camera_geometrie
-  name: "Camera geometrie GRAYSCALE OV5640 QSXGA"
+  name: "Camera geometrie JPEG OV5640 QSXGA"
   internal: true
 
   external_clock:
@@ -118,24 +120,23 @@ esp32_camera:
   href_pin: GPIO7
   pixel_clock_pin: GPIO13
 
-  pixel_format: GRAYSCALE
+  pixel_format: JPEG
   resolution: 2560x1920
-  jpeg_quality: 0
+  jpeg_quality: 10
   frame_buffer_count: 1
   frame_buffer_location: PSRAM
   max_framerate: 5 fps
   idle_framerate: 0 fps
   test_pattern: false
 
-# Pas de serveur snapshot JPEG dans cette voie : le calcul travaille sur la frame brute.
+# Routes du test JPEG natif :
+#   GET /diagnostic-jpeg/capture   -> demande une nouvelle frame JPEG au capteur
+#   GET /diagnostic-jpeg/status    -> taille, marqueurs JPEG et timings
+#   GET /diagnostic-jpeg/image.jpg -> derniere image JPEG recue
 #
-# Routes du diagnostic GRAYSCALE :
-#   GET /diagnostic/capture      -> demande une frame brute
-#   GET /diagnostic/status       -> dimensions, statistiques et temps mesures
-#   GET /diagnostic/preview.bmp  -> preview 640x480 environ pour controle rapide
-#   GET /diagnostic/raw.bmp      -> BMP pleine resolution si disponible
-#
-# Le diagnostic RGB565 reste compile dans le projet mais n'est pas utilise ici.
+# Les diagnostics GRAYSCALE et RGB565 restent compiles mais leur capture exige que
+# la camera soit configuree dans le format correspondant. La recherche de cible
+# GRAYSCALE n'est donc pas utilisee pendant ce test JPEG.
 
 # ============================================================
 # PARAMETRES DE DEVELOPPEMENT / CALIBRATION
