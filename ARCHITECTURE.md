@@ -105,7 +105,7 @@ GET /api/camera/settings/set?<parametres>
 
 ### `Ov5640TimingController` / `Ov5640TimingApiHandler`
 
-Diagnostic bas niveau du timing DVP et du timing de trame spécifique au vrai capteur OV5640.
+Diagnostic bas niveau du timing DVP, du timing de trame et de quelques registres de sortie JPEG spécifiques au vrai capteur OV5640.
 
 Le contrôleur :
 
@@ -113,8 +113,10 @@ Le contrôleur :
 - lit et peut modifier le registre `PCLK_RATIO` `0x3824` ;
 - lit `VFIFO_CTRL0C` `0x460C` pour vérifier que le PCLK manuel est actif ;
 - lit `HTS` via `0x380C/0x380D` et `VTS` via `0x380E/0x380F` ;
-- permet de modifier HTS et VTS avec relecture immédiate de contrôle ;
-- mémorise automatiquement les valeurs HTS/VTS courantes avant la première modification d'une série de tests ;
+- lit et peut modifier, dans une liste blanche stricte, `JPEG mode` `0x4713` et `DVP HREF control` `0x471F` ;
+- limite `jpeg_mode` aux valeurs de test 2 ou 3 ;
+- permet de modifier HTS/VTS/JPEG mode/HREF blanking avec relecture immédiate de contrôle ;
+- mémorise automatiquement les valeurs HTS/VTS/JPEG/HREF courantes avant la première modification d'une série de tests ;
 - peut restaurer cette référence sans reflasher ;
 - n'expose pas d'écriture arbitraire vers les autres registres du capteur ;
 - n'effectue aucune capture et ne traite aucune image.
@@ -123,17 +125,17 @@ Routes temporaires de mise au point :
 
 ```text
 GET /api/camera/timing
-GET /api/camera/timing/set?pclk_divider=<1..31>&hts=<optionnel>&vts=<optionnel>
+GET /api/camera/timing/set?pclk_divider=<optionnel>&hts=<optionnel>&vts=<optionnel>&jpeg_mode=<2|3>&href_blanking=<0..255>
 GET /api/camera/timing/restore
 ```
 
-Les valeurs `hts` et `vts` peuvent être données en décimal ou en notation `0x...`.
+Les valeurs numériques peuvent être données en décimal ou en notation `0x...` lorsque cela est pertinent.
 
-**Important :** un changement de `framesize` peut reprogrammer les registres de timing du driver. Pour un test reproductible : choisir d'abord la résolution, lire le timing de référence, appliquer HTS/VTS, puis effectuer les captures sans changer de résolution. La restauration mémorisée est destinée à cette même série de tests.
+**Important :** un changement de `framesize` peut reprogrammer les registres du driver. Pour un test reproductible : choisir d'abord la résolution, lire la référence, appliquer les paramètres, puis effectuer les captures sans changer de résolution. La restauration mémorisée est destinée à cette même série de tests.
 
-Le test HTS/VTS actuel est motivé par le correctif expérimental Espressif/OV5640 connu pour les lignes verticales : commencer par `HTS=0x1FFF`, puis, uniquement si nécessaire, ajouter `VTS=0x2FFF`.
+Les essais HTS/VTS (`HTS=0x1FFF`, puis `VTS=0x2FFF`) ont amélioré la netteté/exposition mais n'ont pas supprimé les lignes vertes. La piste active est donc maintenant la sortie JPEG/DVP, en commençant par le HREF blanking `0x471F`, puis si nécessaire le JPEG mode `0x4713`.
 
-**Tests à prévoir :** rejet d'un PID différent, échec si accès registres absent, validation des plages, capture unique de la référence, vérification des readbacks HTS/VTS/PCLK, restauration de la référence et sérialisation HTTP cohérente. L'accès réel aux registres reste un test d'intégration matériel tant qu'il n'est pas abstrait derrière une interface capteur.
+**Tests à prévoir :** rejet d'un PID différent, échec si accès registres absent, validation des plages, capture unique de la référence, vérification des readbacks HTS/VTS/PCLK/JPEG/HREF, restauration de la référence et sérialisation HTTP cohérente. L'accès réel aux registres reste un test d'intégration matériel tant qu'il n'est pas abstrait derrière une interface capteur.
 
 ### `RuntimeDiagnostics` / `RuntimeDiagnosticsApiHandler`
 
@@ -195,7 +197,7 @@ GET /diagnostic-jpeg/status
 GET /diagnostic-jpeg/image.jpg
 ```
 
-**But du test courant :** conserver la bonne qualité générale et le faible bruit du JPEG natif tout en supprimant les lignes vertes périodiques. Les essais de diviseur PCLK 4/8/10 et de XCLK 20/16/10/8 MHz n'ont pas supprimé le défaut. La piste active est maintenant HTS/VTS, d'après le correctif expérimental connu sur OV5640.
+**But du test courant :** conserver la bonne qualité générale et le faible bruit du JPEG natif tout en supprimant les lignes vertes périodiques. Les essais PCLK, XCLK et HTS/VTS n'ont pas supprimé le défaut. La piste active est maintenant le contrôle de sortie JPEG/DVP de l'OV5640, d'abord `0x471F`, puis éventuellement `0x4713`.
 
 **Tests à prévoir :** rejet d'un format non JPEG, première frame non publiée, seconde frame publiée, compteur utile/purge, changement de résolution suivi d'une purge, copie exacte d'un buffer connu, détection SOI/EOI, réutilisation/allocation du buffer, état en cas d'échec mémoire.
 
