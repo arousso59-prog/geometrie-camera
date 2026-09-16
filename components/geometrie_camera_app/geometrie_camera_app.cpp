@@ -18,6 +18,7 @@ GeometrieCameraApp::GeometrieCameraApp()
       timing_controller_(),
       grayscale_diagnostic_(),
       jpeg_diagnostic_(),
+      jpeg_filtered_diagnostic_(&this->jpeg_diagnostic_),
       rgb565_diagnostic_(),
       target_search_diagnostic_(&this->measurement_manager_.target_detector(), &this->grayscale_diagnostic_),
       camera_configurator_(),
@@ -28,6 +29,7 @@ GeometrieCameraApp::GeometrieCameraApp()
       timing_api_handler_(&this->timing_controller_),
       diagnostic_api_handler_(&this->grayscale_diagnostic_, &this->resolution_controller_),
       jpeg_diagnostic_api_handler_(&this->jpeg_diagnostic_, &this->resolution_controller_),
+      jpeg_filtered_diagnostic_api_handler_(&this->jpeg_filtered_diagnostic_),
       rgb565_diagnostic_api_handler_(&this->rgb565_diagnostic_),
       target_search_diagnostic_api_handler_(&this->target_search_diagnostic_, &this->grayscale_diagnostic_,
                                             &this->resolution_controller_),
@@ -70,6 +72,8 @@ void GeometrieCameraApp::dump_config() {
   ESP_LOGCONFIG(TAG, "  Resolution active: %s", this->resolution_controller_.active_resolution().c_str());
   ESP_LOGCONFIG(TAG, "  Grayscale diagnostic ready: %s", this->grayscale_diagnostic_.ready() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  JPEG diagnostic ready: %s", this->jpeg_diagnostic_.ready() ? "YES" : "NO");
+  ESP_LOGCONFIG(TAG, "  JPEG filtered diagnostic ready: %s",
+                this->jpeg_filtered_diagnostic_.ready() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  RGB565 diagnostic ready: %s", this->rgb565_diagnostic_.ready() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Target search diagnostic ready: %s", this->target_search_diagnostic_.ready() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  OV3660 detected: %s", this->camera_configurator_.sensor_detected() ? "YES" : "NO");
@@ -139,6 +143,7 @@ void GeometrieCameraApp::register_api_if_possible_() {
   web_server_base::global_web_server_base->add_handler(&this->timing_api_handler_);
   web_server_base::global_web_server_base->add_handler(&this->diagnostic_api_handler_);
   web_server_base::global_web_server_base->add_handler(&this->jpeg_diagnostic_api_handler_);
+  web_server_base::global_web_server_base->add_handler(&this->jpeg_filtered_diagnostic_api_handler_);
   web_server_base::global_web_server_base->add_handler(&this->rgb565_diagnostic_api_handler_);
   web_server_base::global_web_server_base->add_handler(&this->target_search_diagnostic_api_handler_);
   web_server_base::global_web_server_base->add_handler(&this->runtime_diagnostics_api_handler_);
