@@ -209,21 +209,20 @@ void MeasurementApiHandler::handle_calibrate_(AsyncWebServerRequest *request) {
   }
   const bool force = has_force && force_value == 1.0f;
 
+  if (has_target_size && (target_size_mm < 1.0f || target_size_mm > 1000.0f)) {
+    request->send(400, "application/json",
+                  "{\"status\":\"error\",\"error\":\"target_size_mm_out_of_range\"}");
+    return;
+  }
+
   GeometryMeasurementEngine &engine = this->manager_->measurement_engine();
   if (engine.has_calibration() && !force) {
     this->send_snapshot_(request, 409, "error", "calibration_locked");
     return;
   }
 
-  if (has_target_size) {
-    if (target_size_mm < 1.0f || target_size_mm > 1000.0f ||
-        !engine.set_target_size_mm(target_size_mm)) {
-      request->send(400, "application/json",
-                    "{\"status\":\"error\",\"error\":\"target_size_mm_out_of_range\"}");
-      return;
-    }
-  }
-
+  // Verifier toute la chaine de detection avant de toucher a la configuration
+  // existante. Une requete de recalibration forcee mais stale ne doit rien muter.
   if (!this->detection_is_current_()) {
     this->send_snapshot_(request, 409, "error", "current_target_detection_required");
     return;
@@ -233,9 +232,20 @@ void MeasurementApiHandler::handle_calibrate_(AsyncWebServerRequest *request) {
     return;
   }
 
+  const float previous_target_size = engine.target_size_mm();
+  const CameraCalibration previous_calibration = engine.calibration();
+
+  if (has_target_size && !engine.set_target_size_mm(target_size_mm)) {
+    request->send(400, "application/json",
+                  "{\"status\":\"error\",\"error\":\"target_size_mm_out_of_range\"}");
+    return;
+  }
+
   if (!engine.calibrate_from_known_distance(this->detection_service_->last_observation(),
                                             this->source_->width(), this->source_->height(),
                                             distance_mm)) {
+    engine.set_target_size_mm(previous_target_size);
+    engine.set_calibration(previous_calibration);
     this->send_snapshot_(request, 500, "error", "calibration_failed");
     return;
   }
@@ -243,6 +253,9 @@ void MeasurementApiHandler::handle_calibrate_(AsyncWebServerRequest *request) {
   this->manager_->reset();
   if (!this->manager_->process(this->detection_service_->last_observation(),
                                this->source_->width(), this->source_->height(), millis())) {
+    engine.set_target_size_mm(previous_target_size);
+    engine.set_calibration(previous_calibration);
+    this->manager_->reset();
     this->send_snapshot_(request, 500, "error", "measurement_after_calibration_failed");
     return;
   }
