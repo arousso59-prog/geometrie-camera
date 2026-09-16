@@ -53,7 +53,7 @@ JpegDiagnostic
 ImageSharpnessEvaluator (mode continu uniquement)
    ├── ROI autour de la dernière cible valide
    ├── TJpgDec en 1/4
-   ├── score de netteté par Laplacien dans la ROI
+   ├── score sur les 20 % de Laplaciens les plus forts
    └── recapture possible avant traitement lourd
    ↓
 JpegFilteredDiagnostic V2
@@ -119,12 +119,16 @@ Méthode actuelle :
 - 800×600 devient 200×150 ;
 - conserve un petit buffer grayscale persistant ;
 - projette la ROI source dans cette image réduite ;
-- calcule la moyenne de la valeur absolue du Laplacien uniquement dans la ROI ;
+- calcule le Laplacien absolu dans la ROI ;
+- classe ces réponses dans un histogramme compact ;
+- conserve uniquement les **20 % de réponses les plus fortes** et moyenne leur amplitude ;
 - ne connaît ni la cible ni le détecteur et ne décide pas seul du rejet d'une image.
 
-Le passage de 1/8 à 1/4 est volontaire : à environ 2 m en 800×600, une cible de ~15 px ne représentait qu'environ 2 px en 1/8, contre ~4 px en 1/4.
+Cette sélection des contours forts évite qu'un grand nombre de pixels de mur uniforme dilue le score de la cible. L'histogramme fait 256 cases et représente le Laplacien 0..1020 par pas de 4, ce qui évite un gros buffer temporaire.
 
-**Frontière de test :** même ROI nette/floue -> score relatif ; ROI proche des bords ; variation de résolution ; erreur de décodage -> évaluation invalide sans bloquer le pipeline principal.
+Le passage de 1/8 à 1/4 reste volontaire : à environ 2 m en 800×600, une cible de ~15 px ne représentait qu'environ 2 px en 1/8, contre ~4 px en 1/4.
+
+**Frontière de test :** même ROI nette/floue -> score relatif ; mur uniforme autour de la cible ; ROI proche des bords ; variation de résolution ; erreur de décodage -> évaluation invalide sans bloquer le pipeline principal.
 
 ### `JpegFilteredDiagnostic`
 
@@ -139,6 +143,8 @@ total_ms       ≈ 2036 ms
 ```
 
 À 800×600, les essais continus observés sont autour de 400 ms de filtre total, dont environ 350 ms de décodage et 50 ms de correction.
+
+Le mini-décodage de netteté 1/4 coûte encore environ 315–320 ms sur les premiers essais. Il reste donc un candidat clair pour une future fusion avec le décodage principal afin d'éviter de décoder deux fois le JPEG.
 
 ### `TargetDetector`
 
@@ -186,17 +192,22 @@ TargetDetectionService
 MeasurementManager
 ```
 
-Politique de netteté ROI :
+Politique de netteté ROI V2 :
 
 - la ROI est centrée sur la **dernière cible réellement détectée** ;
-- sa taille est environ `4 × max(width_px, height_px)` avec un minimum de `64×64 px` dans l'image source ;
+- sa taille est environ `2,5 × max(width_px, height_px)` avec un minimum de `48×48 px` dans l'image source ;
 - la calibration/détection effectuée avant le démarrage peut fournir la ROI initiale ;
 - sans ROI connue, le contrôleur ne rejette jamais une image sur un score global du décor ;
-- la référence de netteté n'est mise à jour qu'après une nouvelle détection valide ;
-- une image dont le score ROI tombe sous 60 % de la référence est considérée fortement dégradée ;
+- le score correspond aux 20 % de contours les plus forts de la ROI ;
+- la référence n'est mise à jour qu'après une nouvelle détection valide ;
+- avant intégration, une nouvelle mesure de référence est limitée à ±15 % de la référence précédente ;
+- la référence est ensuite filtrée lentement avec `7/8 ancienne + 1/8 nouvelle bornée` ;
+- une image dont le score ROI tombe sous **45 %** de la référence est considérée fortement dégradée ;
 - au maximum **2 recaptures immédiates** sont effectuées par cycle ;
 - si la troisième image reste faible, le pipeline continue malgré tout pour éviter un blocage ;
 - en cas d'échec du mini-décodage de netteté, le filtre/détecteur principal continue.
+
+Cette politique est volontairement permissive : le contrôle de netteté doit éliminer seulement les captures manifestement inutilisables, pas remplacer le détecteur de cible.
 
 Le contrôleur chronomètre le dernier cycle par poste :
 
@@ -222,7 +233,7 @@ sharpness.roi_x / roi_y
 sharpness.roi_width / roi_height
 ```
 
-**Frontières de test :** calibration absente -> démarrage refusé ; première image sans ROI -> pas de rejet ; cible valide -> ROI mémorisée ; flou dans ROI -> recapture ; décor uniforme hors ROI sans influence ; maximum deux recaptures ; déplacement cible -> nouvelle ROI après détection ; cible absente -> cycle suivant ; perte calibration -> arrêt.
+**Frontières de test :** calibration absente -> démarrage refusé ; première image sans ROI -> pas de rejet ; cible valide -> ROI mémorisée ; flou net dans ROI -> recapture ; image exploitable à score moyen -> pas de faux rejet ; pic de score -> référence ne s'emballe pas ; décor uniforme hors ROI sans influence ; maximum deux recaptures ; déplacement cible -> nouvelle ROI après détection ; cible absente -> cycle suivant ; perte calibration -> arrêt.
 
 ### `CameraResolutionController` / `CameraSettingsApiHandler`
 
@@ -241,7 +252,7 @@ Les timings capture/netteté/filtre/détection/calcul et les compteurs de recapt
 
 ### `ApiWsdlHandler`
 
-`GET /api/wsdl` est la référence du contrat HTTP. Version actuelle : **14** depuis le passage du contrôle de netteté à une ROI suivie sur la cible et l'exposition de cette ROI dans `/continuous/status`.
+`GET /api/wsdl` est la référence du contrat HTTP. Version actuelle : **15** depuis la stabilisation du score de netteté ROI, du seuil de recapture et de la référence de session.
 
 ## API actuelle
 
@@ -271,10 +282,9 @@ GET /continuous/status
 
 ## Feuille de route immédiate
 
-1. compiler/flasher la netteté ROI ;
-2. vérifier dans `/continuous/status` que `sharpness.roi_active=true` et que la ROI encadre bien la dernière cible ;
-3. provoquer volontairement un flou de la cible sans changer le décor et observer les recaptures ;
-4. vérifier que le mur uniforme hors ROI n'influence plus le score ;
-5. comparer le taux de cibles trouvées avant/après ;
-6. utiliser les timings détaillés pour prioriser les optimisations ;
-7. reprendre ensuite la validation des angles et la future approche haute résolution + ROI.
+1. compiler/flasher la netteté ROI V2 ;
+2. laisser une cible immobile plusieurs dizaines de cycles et vérifier la stabilité `score_x100` / `reference_x100` ;
+3. provoquer volontairement du flou et vérifier que les recaptures concernent surtout ces événements ;
+4. comparer le nombre de `blur_retry_count` et le taux de cibles trouvées avec le test précédent ;
+5. mesurer le coût du double décodage JPEG et préparer ensuite sa suppression si le filtre de netteté est validé ;
+6. reprendre la validation des angles et la future approche haute résolution + ROI.
