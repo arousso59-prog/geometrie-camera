@@ -59,6 +59,11 @@ class ContinuousMeasurementController {
   bool last_sharpness_ok() const;
   uint8_t last_capture_retry_count() const;
   uint32_t blur_retry_count() const;
+  bool sharpness_roi_valid() const;
+  uint16_t sharpness_roi_x() const;
+  uint16_t sharpness_roi_y() const;
+  uint16_t sharpness_roi_width() const;
+  uint16_t sharpness_roi_height() const;
 
  private:
   void begin_cycle_();
@@ -68,6 +73,7 @@ class ContinuousMeasurementController {
   bool request_capture_();
   bool sharpness_is_too_low_(uint32_t score) const;
   void update_sharpness_reference_(uint32_t score);
+  void update_sharpness_roi_from_target_();
 
   JpegDiagnostic *jpeg_source_;
   ImageSharpnessEvaluator *sharpness_evaluator_;
@@ -99,6 +105,12 @@ class ContinuousMeasurementController {
   bool last_sharpness_ok_;
   uint8_t last_capture_retry_count_;
   uint32_t blur_retry_count_;
+
+  bool sharpness_roi_valid_;
+  uint16_t sharpness_roi_x_;
+  uint16_t sharpness_roi_y_;
+  uint16_t sharpness_roi_width_;
+  uint16_t sharpness_roi_height_;
 };
 
 }  // namespace geometrie_camera_app
