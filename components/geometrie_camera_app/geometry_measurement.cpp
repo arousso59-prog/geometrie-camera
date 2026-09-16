@@ -9,6 +9,7 @@ namespace geometrie_camera_app {
 namespace {
 constexpr float RAD_TO_DEG_F = 57.29577951308232f;
 constexpr float MIN_VECTOR_NORM = 1.0e-6f;
+constexpr float MAX_POSE_SCALE_ERROR_PCT = 25.0f;
 
 struct Vec3 {
   float x;
@@ -53,6 +54,16 @@ float point_distance(const ImagePoint &a, const ImagePoint &b) {
   const float dx = b.x - a.x;
   const float dy = b.y - a.y;
   return std::sqrt(dx * dx + dy * dy);
+}
+
+float normalize_half_turn(float angle_deg) {
+  while (angle_deg >= 90.0f) {
+    angle_deg -= 180.0f;
+  }
+  while (angle_deg < -90.0f) {
+    angle_deg += 180.0f;
+  }
+  return angle_deg;
 }
 
 void canonical_corners(const TargetObservation &observation, ImagePoint (&points)[4]) {
@@ -241,14 +252,51 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
 
   ImagePoint points[4];
   canonical_corners(observation, points);
+  const float width_px = 0.5f * (point_distance(points[0], points[1]) +
+                                 point_distance(points[3], points[2]));
+  const float height_px = 0.5f * (point_distance(points[0], points[3]) +
+                                  point_distance(points[1], points[2]));
+  if (!std::isfinite(width_px) || !std::isfinite(height_px) || width_px < 4.0f || height_px < 4.0f) {
+    return result;
+  }
 
+  // Distance V2 robuste : la taille apparente du carre pilote la profondeur.
+  // Une inclinaison raccourcit une dimension et ferait surestimer la distance
+  // correspondante. La plus petite des deux estimations est donc retenue comme
+  // profondeur principale ; les deux valeurs restent exposees pour diagnostic.
+  result.z_from_width_mm = calibration.fx_px * this->target_size_mm_ / width_px;
+  result.z_from_height_mm = calibration.fy_px * this->target_size_mm_ / height_px;
+  if (!std::isfinite(result.z_from_width_mm) || !std::isfinite(result.z_from_height_mm) ||
+      result.z_from_width_mm <= 0.0f || result.z_from_height_mm <= 0.0f) {
+    return result;
+  }
+
+  result.z_mm = std::min(result.z_from_width_mm, result.z_from_height_mm);
+
+  const float normalized_x = (observation.center_x_px - calibration.cx_px) / calibration.fx_px;
+  const float normalized_y = (observation.center_y_px - calibration.cy_px) / calibration.fy_px;
+  result.x_mm = normalized_x * result.z_mm;
+  result.y_mm = normalized_y * result.z_mm;
+  result.distance_mm = std::sqrt(result.x_mm * result.x_mm +
+                                 result.y_mm * result.y_mm +
+                                 result.z_mm * result.z_mm);
+  if (!std::isfinite(result.distance_mm) || result.distance_mm <= 0.0f) {
+    return result;
+  }
+
+  result.bearing_yaw_deg = std::atan2(normalized_x, 1.0f) * RAD_TO_DEG_F;
+  result.bearing_pitch_deg = std::atan2(normalized_y, 1.0f) * RAD_TO_DEG_F;
+  result.valid = true;
+
+  // La decomposition projective n'est plus autorisee a piloter la distance.
+  // Elle ne sert qu'a l'orientation du plan et doit d'abord produire une
+  // profondeur coherente avec la taille apparente.
   float unit_h[9];
   if (!build_unit_square_homography(points, unit_h)) {
     return result;
   }
 
   const float inverse_size = 1.0f / this->target_size_mm_;
-
   const Vec3 h1 = {
       unit_h[0] * inverse_size,
       unit_h[3] * inverse_size,
@@ -278,11 +326,22 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
 
   const float pose_scale = 2.0f / scale_denominator;
   Vec3 translation = scale(v3, pose_scale);
-
   if (translation.z < 0.0f) {
     v1 = scale(v1, -1.0f);
     v2 = scale(v2, -1.0f);
     translation = scale(translation, -1.0f);
+  }
+
+  if (!std::isfinite(translation.z) || translation.z <= 0.0f) {
+    return result;
+  }
+
+  result.pose_z_mm = translation.z;
+  result.pose_scale_error_pct =
+      std::fabs(result.pose_z_mm - result.z_mm) * 100.0f / std::max(result.z_mm, 1.0f);
+  if (!std::isfinite(result.pose_scale_error_pct) ||
+      result.pose_scale_error_pct > MAX_POSE_SCALE_ERROR_PCT) {
+    return result;
   }
 
   Vec3 r1 = v1;
@@ -300,18 +359,6 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
     return result;
   }
 
-  const float distance_mm = norm(translation);
-  if (!std::isfinite(distance_mm) || distance_mm <= 0.0f || translation.z <= 0.0f) {
-    return result;
-  }
-
-  result.x_mm = translation.x;
-  result.y_mm = translation.y;
-  result.z_mm = translation.z;
-  result.distance_mm = distance_mm;
-  result.bearing_yaw_deg = std::atan2(translation.x, translation.z) * RAD_TO_DEG_F;
-  result.bearing_pitch_deg = std::atan2(translation.y, translation.z) * RAD_TO_DEG_F;
-
   result.yaw_deg = std::atan2(normal.x, normal.z) * RAD_TO_DEG_F;
   result.pitch_deg = std::atan2(-normal.y,
                                 std::sqrt(normal.x * normal.x + normal.z * normal.z)) * RAD_TO_DEG_F;
@@ -325,8 +372,9 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
     return result;
   }
 
-  result.roll_deg = std::atan2(dot(r1, reference_down), dot(r1, reference_right)) * RAD_TO_DEG_F;
-  result.valid = true;
+  result.roll_deg = normalize_half_turn(
+      std::atan2(dot(r1, reference_down), dot(r1, reference_right)) * RAD_TO_DEG_F);
+  result.pose_valid = true;
   return result;
 }
 
