@@ -2,310 +2,229 @@
 
 ## Règles de développement
 
-Ces règles s'appliquent aux nouveaux développements du projet.
-
 1. **Les fichiers `.h` sont déclaratifs uniquement.**
    - déclarations de classes, structures, enums et méthodes ;
-   - pas de corps de méthode significatif dans les headers ;
-   - constructeurs, destructeurs, getters et setters dans les `.cpp`.
+   - implémentations, données significatives et logique dans les `.cpp`.
 
 2. **Une classe = une responsabilité principale.**
-   - une classe qui commence à gérer plusieurs responsabilités doit être découpée ;
-   - `GeometrieCameraApp` reste un orchestrateur et ne contient ni algorithme vision, ni calcul géométrique, ni sérialisation HTTP métier.
+   - `GeometrieCameraApp` reste un orchestrateur ;
+   - aucun algorithme vision, calcul géométrique ou parsing HTTP métier dans l'orchestrateur.
 
-3. **Avant une nouvelle fonction, revoir l'architecture.**
+3. **Avant toute nouvelle fonction, revoir l'architecture.**
    - identifier la responsabilité ;
-   - décider si elle appartient à une classe existante ;
-   - sinon créer une classe ou un sous-système dédié ;
+   - choisir une classe existante seulement si la responsabilité lui appartient réellement ;
+   - sinon créer un sous-système dédié ;
    - éviter les dépendances vers l'application complète.
 
 4. **Penser chaque évolution avec les tests.**
    - séparer logique pure et matériel ESP32 ;
-   - garder des frontières testables ;
-   - utiliser injection/interface lorsque cela devient utile.
+   - conserver des frontières testables ;
+   - injecter les dépendances lorsqu'un accès matériel empêcherait un test unitaire.
 
 5. **Toute évolution de l'API HTTP met à jour `GET /api/wsdl` dans le même changement.**
-   - nouvelle route, suppression, méthode HTTP, paramètre ou comportement contractuel : mise à jour du WSDL-like ;
-   - chaque méthode conserve un commentaire fonctionnel et les valeurs autorisées connues.
+   - ajout/suppression de route ;
+   - changement de méthode, paramètre ou comportement contractuel ;
+   - le WSDL-like doit refléter exactement les routes compilées.
 
 ## Architecture actuelle
 
 ```text
 GeometrieCameraApp
-├── PlaceholderImageProvider : ImageProvider
-├── CameraManager
-├── MeasurementManager
-│   ├── TargetDetector
-│   └── GeometryMeasurementEngine
 ├── CameraResolutionController
 ├── CameraSettingsController
 │   └── CameraSettingsApiHandler
-├── Ov5640TimingController
-│   └── Ov5640TimingApiHandler
+├── JpegDiagnostic
+│   └── JpegDiagnosticApiHandler
+├── JpegFilteredDiagnostic
+│   ├── JpegArtifactCorrector
+│   └── JpegFilteredDiagnosticApiHandler
+├── MeasurementManager
+│   ├── TargetDetector
+│   └── GeometryMeasurementEngine
 ├── RuntimeDiagnostics
 │   └── RuntimeDiagnosticsApiHandler
-├── ApiWsdlHandler
-├── CameraApiHandler
-├── Ov3660CameraConfigurator
-└── Diagnostics camera temporaires
-    ├── GrayscaleDiagnostic
-    │   └── GrayscaleDiagnosticApiHandler
-    ├── JpegDiagnostic
-    │   ├── JpegDiagnosticApiHandler
-    │   └── JpegFilteredDiagnostic
-    │       ├── JpegArtifactCorrector
-    │       └── JpegFilteredDiagnosticApiHandler
-    ├── Rgb565Diagnostic
-    │   └── Rgb565DiagnosticApiHandler
-    └── TargetSearchDiagnostic
-        └── TargetSearchDiagnosticApiHandler
+└── ApiWsdlHandler
 ```
 
-## Responsabilités principales
+## Chaîne image validée
+
+```text
+OV5640 / JPEG natif
+        ↓
+JpegDiagnostic
+  - purge de la frame ESPHome pré-acquise
+  - demande d'une frame fraîche
+  - copie JPEG persistante en PSRAM
+        ↓
+JpegFilteredDiagnostic
+  - décodage JPEG par blocs
+  - conversion immédiate en luminance 8 bits
+        ↓
+JpegArtifactCorrector V3
+  - détection des impulsions vertes fines
+  - correction locale des segments verts/noirs
+  - pas de flou global
+        ↓
+GrayFrameView corrigé
+        ↓
+TargetDetector
+        ↓
+MeasurementManager / GeometryMeasurementEngine
+```
+
+La liaison `JpegFilteredDiagnostic -> TargetDetector` est la prochaine étape à implémenter. `JpegFilteredDiagnostic` expose désormais directement `grayscale_data()` et `grayscale_stride()` afin que le détecteur n'ait aucune dépendance au format BMP.
+
+## Responsabilités
 
 ### `GeometrieCameraApp`
 
-Orchestration ESPHome uniquement : initialise les sous-systèmes, injecte la vraie `ESP32Camera`, enregistre les handlers HTTP et appelle les boucles légères.
+Orchestration uniquement : initialisation, injection de la caméra ESPHome, appel des boucles légères et enregistrement des handlers HTTP.
 
-### `ImageProvider` / `CameraManager`
+### `JpegDiagnostic`
 
-`ImageProvider` abstrait une source d'image. `CameraManager` pilote le cycle historique d'acquisition et conserve les métadonnées de la dernière image. Le `PlaceholderImageProvider` reste un bouchon de développement.
+Acquisition JPEG native de l'OV5640.
 
-**Frontière de test :** `CameraManager` doit pouvoir être testé avec un faux `ImageProvider`.
+ESPHome conserve une frame pré-acquise. Une demande de capture suit donc volontairement deux étapes :
 
-### `MeasurementManager`
+1. consommer et jeter la frame déjà en attente ;
+2. rendre le framebuffer au driver puis demander une nouvelle frame ;
+3. publier uniquement cette nouvelle frame.
 
-Chaîne de mesure : demande une observation à `TargetDetector`, puis le calcul à `GeometryMeasurementEngine`, conserve la dernière mesure et le compteur de mesures valides.
+Le JPEG est copié en PSRAM parce que le framebuffer caméra est éphémère.
+
+**Frontières de test :** première frame non publiée, seconde frame publiée, compteurs purge/capture, SOI/EOI, réutilisation du buffer, changement de résolution.
+
+### `JpegFilteredDiagnostic`
+
+Prépare l'image exploitable par la vision :
+
+- décode le JPEG par blocs avec TJpgDec ;
+- écrit directement une luminance 8 bits ;
+- applique `JpegArtifactCorrector` ;
+- conserve le buffer grayscale corrigé ;
+- construit encore un en-tête/palette BMP pour validation visuelle, mais le BMP n'est pas une dépendance du pipeline métier.
+
+Accès métier prévus :
+
+```text
+grayscale_data()
+grayscale_stride()
+width()
+height()
+```
+
+### `JpegArtifactCorrector`
+
+Algorithme pur de correction du défaut observé sur la voie JPEG : petits segments verts/noirs périodiques. La V3 corrige localement les défauts reconnus par interpolation depuis des pixels sains, sans lisser l'image complète.
+
+**Tests prioritaires :** motifs synthétiques verts/noirs, vrais traits noirs verticaux à préserver, bords de cible, absence d'artefact, différentes résolutions.
 
 ### `TargetDetector`
 
-Transforme un `GrayFrameView` non propriétaire en observation de cible. Il reste indépendant d'ESPHome, du HTTP et du stockage d'image. La cible actuelle est le motif 7×7 asymétrique.
+Transforme un `GrayFrameView` non propriétaire en `TargetObservation`. Il reste indépendant d'ESPHome, du JPEG, du HTTP et du stockage d'image.
 
 **Tests prioritaires :** cible synthétique, quatre orientations, absence de cible, contraste insuffisant, différentes tailles/résolutions, stabilité des coordonnées et du score.
 
-Si l'algorithme grossit, le découpage prévu pourra faire apparaître des classes comme `ThresholdProcessor`, `ContourDetector`, `CornerExtractor`, `TargetValidator` et `SubpixelRefiner`.
+### `MeasurementManager`
+
+Enchaîne `TargetDetector` puis `GeometryMeasurementEngine` et conserve la dernière mesure valide.
 
 ### `GeometryMeasurementEngine`
 
-Calcul mathématique des angles à partir d'une observation et d'une calibration. Cette classe doit rester indépendante du matériel et du réseau.
+Calcul mathématique de la mesure à partir de l'observation et de la calibration. Il doit rester indépendant du matériel et du réseau. Distance/orientation/calibration seront complétées après validation de la cible réelle.
 
 ### `CameraResolutionController`
 
-Lit le PID, expose l'identité du capteur, maintient la résolution active et applique les changements de `framesize` autorisés.
-
-Le capteur confirmé est un OV5640 (PID `0x5640`) physiquement 2592×1944. ESPHome 2026.7.3 expose actuellement au maximum le mode QSXGA 2560×1920.
+Maintient l'identité capteur et les résolutions supportées. Capteur confirmé : OV5640 PID `0x5640`, matrice physique 2592×1944 ; ESPHome 2026.7.3 expose QSXGA 2560×1920 comme mode maximal.
 
 ### `CameraSettingsController` / `CameraSettingsApiHandler`
 
-Lecture et application des réglages capteur : brightness, contrast, exposition automatique/manuelle et gain automatique/manuel. La logique matérielle est séparée du parsing HTTP.
-
-Routes :
+Conservés car exposition, gain, luminosité et contraste seront utiles lors de la validation cible et de la calibration.
 
 ```text
 GET /api/camera/settings
 GET /api/camera/settings/set?<parametres>
 ```
 
-### `Ov5640TimingController` / `Ov5640TimingApiHandler`
-
-Diagnostic bas niveau du timing DVP, du timing de trame, de XCLK et de quelques registres de sortie JPEG spécifiques au vrai capteur OV5640.
-
-Le contrôleur :
-
-- refuse les opérations matérielles si le PID n'est pas `OV5640` ;
-- lit la fréquence XCLK nominale connue du driver via `sensor_t::xclk_freq_hz` ;
-- peut demander dynamiquement `XCLK=5..8 MHz` via le callback `sensor_t::set_xclk`, ce qui permet de tester sous la limite YAML ESPHome de 8 MHz sans reflasher ;
-- lit et peut modifier le registre `PCLK_RATIO` `0x3824` ;
-- lit `VFIFO_CTRL0C` `0x460C` pour vérifier que le PCLK manuel est actif ;
-- lit `HTS` via `0x380C/0x380D` et `VTS` via `0x380E/0x380F` ;
-- lit et peut modifier, dans une liste blanche stricte, `JPEG mode` `0x4713` et `DVP HREF control` `0x471F` ;
-- limite `jpeg_mode` aux valeurs de test 2 ou 3 ;
-- permet de modifier XCLK/HTS/VTS/JPEG mode/HREF blanking avec contrôle immédiat ;
-- mémorise automatiquement XCLK/HTS/VTS/JPEG/HREF avant la première modification d'une série de tests ;
-- peut restaurer cette référence sans reflasher ;
-- n'expose pas d'écriture arbitraire vers les autres registres du capteur ;
-- n'effectue aucune capture et ne traite aucune image.
-
-Routes temporaires de mise au point :
-
-```text
-GET /api/camera/timing
-GET /api/camera/timing/set?xclk_mhz=<5..8>&pclk_divider=<optionnel>&hts=<optionnel>&vts=<optionnel>&jpeg_mode=<2|3>&href_blanking=<0..255>
-GET /api/camera/timing/restore
-```
-
-Les valeurs numériques peuvent être données en décimal ou en notation `0x...` lorsque cela est pertinent.
-
-**Important :** un changement de `framesize` peut reprogrammer plusieurs paramètres du driver. Pour un test reproductible : choisir d'abord la résolution, lire la référence, appliquer XCLK ou les paramètres de registre, puis effectuer les captures sans changer de résolution. Après un changement de XCLK, `JpegDiagnostic` purge de toute façon la frame pré-acquise avant de publier la frame fraîche suivante. La restauration mémorisée est destinée à cette même série de tests.
-
-Les essais PCLK 4/8/10, XCLK 20/16/10/8 MHz puis XCLK runtime 7/6/5 MHz, HTS/VTS, HREF blanking 0x40/0x60/0x80/0xC0 et JPEG mode 2/3 n'ont pas supprimé les lignes vertes/noires. Les timings peuvent modifier la netteté/exposition et le temps de capture, mais pas le motif parasite. La piste active n'est donc plus le timing : elle est maintenant la correction logicielle sélective du JPEG natif.
-
-**Tests à prévoir :** rejet d'un PID différent, absence de callback `set_xclk`, validation de la plage XCLK 5..8, validation des autres plages, capture unique de la référence, vérification des readbacks HTS/VTS/PCLK/JPEG/HREF, restauration XCLK et registres, sérialisation HTTP cohérente. L'accès réel au capteur reste un test d'intégration matériel tant qu'il n'est pas abstrait derrière une interface capteur.
-
 ### `RuntimeDiagnostics` / `RuntimeDiagnosticsApiHandler`
 
-Instrumentation légère des intervalles entre passages de la boucle ESPHome et de la mémoire interne/PSRAM disponible. Aucun traitement d'image n'est effectué ici.
-
-Route :
+Instrumentation légère de la boucle et de la mémoire. Conservée pour les futures optimisations de temps de traitement.
 
 ```text
 GET /api/runtime/status
 ```
 
-Le maximum d'intervalle est conservé depuis le démarrage pour détecter les blocages provoqués par les callbacks image.
-
-### `GrayscaleDiagnostic`
-
-Diagnostic de la voie brute `PIXFORMAT_GRAYSCALE`.
-
-- demande une frame uniquement sur ordre explicite ;
-- calcule les statistiques brutes ;
-- peut produire un BMP pleine résolution lorsque la mémoire le permet ;
-- produit un preview réduit à haute résolution ;
-- le framebuffer caméra reste la source des futurs calculs, le BMP ne sert qu'à l'affichage.
-
-Routes :
-
-```text
-GET /diagnostic/capture?resolution=<optionnel>
-GET /diagnostic/status
-GET /diagnostic/raw.bmp
-GET /diagnostic/preview.bmp
-```
-
-Ces routes d'acquisition exigent que la caméra soit configurée en GRAYSCALE.
-
-### `JpegDiagnostic`
-
-Diagnostic dédié au JPEG natif produit directement par l'ISP de l'OV5640. Cette classe ne décode ni ne recompresse l'image.
-
-ESPHome maintient une frame pré-acquise dans sa tâche caméra. Avec un framebuffer unique et une acquisition sur demande, cette frame peut être antérieure à la requête HTTP. `JpegDiagnostic` utilise donc un cycle en deux temps :
-
-1. la première frame reçue est volontairement purgée et n'est jamais publiée ;
-2. une seconde demande est lancée depuis `GeometrieCameraApp::loop()` après retour du callback ;
-3. seule cette seconde frame est copiée dans le buffer JPEG persistant et devient l'image publiée.
-
-Cette purge est également nécessaire après un changement de `framesize` ou de XCLK, car la frame pré-acquise peut encore correspondre aux paramètres précédents.
-
-- accepte uniquement `PIXFORMAT_JPEG` ;
-- copie le JPEG natif dans un buffer persistant, de préférence en PSRAM, car le framebuffer caméra est éphémère ;
-- conserve dimensions et taille ;
-- vérifie les marqueurs JPEG SOI (`FF D8`) et EOI (`FF D9`) pour repérer une troncature grossière ;
-- mesure séparément demande initiale, purge, demande fraîche, acquisition fraîche, copie et cycle total ;
-- compte séparément les frames utiles et les frames purgées.
-
-Routes :
-
-```text
-GET /diagnostic-jpeg/capture?resolution=<optionnel>
-GET /diagnostic-jpeg/status
-GET /diagnostic-jpeg/image.jpg
-```
-
-**But courant :** conserver la bonne qualité générale et le faible bruit du JPEG natif, puis retirer le motif vert/noir de manière sélective après décodage. Les essais matériels/timing n'ayant pas supprimé le défaut, ils ne sont plus la piste principale.
-
-**Tests à prévoir :** rejet d'un format non JPEG, première frame non publiée, seconde frame publiée, compteur utile/purge, changement de résolution suivi d'une purge, copie exacte d'un buffer connu, détection SOI/EOI, réutilisation/allocation du buffer, état en cas d'échec mémoire.
-
-### `JpegFilteredDiagnostic` / `JpegArtifactCorrector`
-
-Chaîne de validation de la correction logicielle du JPEG natif, séparée de `JpegDiagnostic` et de `TargetDetector`.
-
-`JpegFilteredDiagnostic` :
-
-- ne déclenche aucune capture et consomme uniquement le dernier JPEG frais conservé par `JpegDiagnostic` ;
-- ne tourne pas en arrière-plan : le traitement est lancé explicitement par `GET /diagnostic-jpeg/filter` ;
-- décode le JPEG avec TJpgDec par blocs RGB, afin de ne jamais allouer une image RGB pleine résolution ;
-- écrit directement la luminance dans un BMP grayscale 8 bits pleine résolution en PSRAM ;
-- alloue un masque binaire d'environ un bit par pixel pour mémoriser les candidats chromatiques verts ;
-- mesure séparément le temps de décodage, le temps de correction et le total ;
-- conserve le BMP corrigé pour validation visuelle et, si la méthode est validée, comme future source possible de `GrayFrameView`.
-
-`JpegArtifactCorrector` contient uniquement la logique de correction :
-
-- un candidat vert doit présenter une forte dominance de G sur R/B ;
-- une vraie surface verte continue verticalement est rejetée : la signature visée est une impulsion verte fine d'une à deux lignes ;
-- une ligne n'est considérée affectée que si elle contient plusieurs impulsions fines, ce qui évite un filtre global ;
-- autour de ces lignes uniquement, les pixels verts et les petits creux noirs isolés sont remplacés par interpolation verticale depuis des lignes non affectées ;
-- aucune moyenne/flou n'est appliqué au reste de l'image.
-
-Routes :
-
-```text
-GET /diagnostic-jpeg/filter
-GET /diagnostic-jpeg/filter-status
-GET /diagnostic-jpeg/filtered.bmp
-```
-
-Cette V1 est volontairement diagnostique et synchrone. Elle sert d'abord à vérifier visuellement que les traits sont supprimés sans détériorer les vrais contours. Si elle est validée, la logique pure de `JpegArtifactCorrector` pourra être conservée et l'exécution lourde pourra être déplacée vers un worker dédié avant intégration à la mesure.
-
-**Frontière de test :** `JpegArtifactCorrector` doit pouvoir être testé hors ESP32 avec des images synthétiques contenant une surface verte réelle, des impulsions vertes fines, des tirets noirs isolés et des contours noir/blanc de cible. Le décodeur TJpgDec et l'allocation PSRAM restent des tests d'intégration matériel.
-
-### `Rgb565Diagnostic`
-
-Diagnostic temporaire couleur `PIXFORMAT_RGB565`, séparé des autres formats. Il convertit la frame reçue en BMP uniquement pour inspection.
-
-Routes :
-
-```text
-GET /diagnostic-rgb565/capture
-GET /diagnostic-rgb565/status
-GET /diagnostic-rgb565/raw.bmp
-```
-
-### `TargetSearchDiagnostic`
-
-Diagnostic de la chaîne de recherche GRAYSCALE : demande une frame, transmet directement le framebuffer à `TargetDetector`, mesure acquisition/détection/visualisation et produit une image de contrôle.
-
-Routes :
-
-```text
-GET /target/search?resolution=<optionnel>
-GET /target/status
-GET /target/image.bmp
-```
-
-Il n'est pas utilisé pendant le test JPEG filtré actuel.
-
 ### `ApiWsdlHandler`
 
-Publie le contrat descriptif de toutes les routes HTTP :
+Catalogue des routes HTTP réellement compilées :
 
 ```text
 GET /api/wsdl
 ```
 
-Le document reste un catalogue REST WSDL-like et non un service SOAP.
+## API actuelle
 
-### `Ov3660CameraConfigurator`
+```text
+GET /api/wsdl
+GET /api/runtime/status
+GET /api/camera/settings
+GET /api/camera/settings/set?<parametres>
+GET /diagnostic-jpeg/capture?resolution=<optionnel>
+GET /diagnostic-jpeg/status
+GET /diagnostic-jpeg/image.jpg
+GET /diagnostic-jpeg/filter
+GET /diagnostic-jpeg/filter-status
+GET /diagnostic-jpeg/filtered.bmp
+```
 
-Ancien outil d'essai bas niveau spécifique OV3660/PCLK. Le capteur réel étant désormais confirmé OV5640, cette classe reste inactive tant qu'aucun diviseur n'est demandé. Elle sera renommée ou supprimée uniquement lors d'un refactoring ciblé, pas pendant la validation JPEG.
+## Sous-systèmes supprimés après validation
 
-## État courant de la voie caméra
+Le nettoyage suivant est volontaire : ces composants correspondaient à des branches d'essai qui ne font plus partie de la voie retenue.
 
-Le YAML est temporairement configuré en :
+- `GrayscaleDiagnostic` et son API ;
+- `Rgb565Diagnostic` et son API ;
+- `TargetSearchDiagnostic` GRAYSCALE et son API ;
+- `Ov5640TimingController` / API de registres ;
+- `Ov3660CameraConfigurator` ;
+- `ImageProvider`, `PlaceholderImageProvider`, image placeholder ;
+- `CameraManager` historique ;
+- `CameraApiHandler` historique (`/api/status`, `/api/capture`, `/api/measure`, `/image.jpg`).
+
+Une nouvelle API de cible/mesure sera créée uniquement quand la chaîne JPEG corrigée sera réellement raccordée à `TargetDetector`.
+
+## État matériel / image retenu
 
 ```text
 OV5640
-2560×1920 QSXGA
-PIXFORMAT_JPEG
+JPEG
+2560×1920 QSXGA au démarrage
 jpeg_quality = 10
 XCLK = 8 MHz
 1 framebuffer en PSRAM
 idle_framerate = 0
 ```
 
-Le YAML reste à 8 MHz : cette valeur donne actuellement une image plus fine visuellement que les fréquences supérieures, même si elle ne supprime pas les artefacts. Les essais à 7/6/5 MHz peuvent toujours être appliqués à chaud pour diagnostic et disparaissent au redémarrage.
+Les essais de timing ont servi à isoler le problème mais ne font plus partie du firmware : XCLK 20/16/10/8 puis runtime 7/6/5 MHz, PCLK divider, HTS/VTS, HREF blanking et JPEG mode 2/3 n'ont pas supprimé le motif parasite. La correction logicielle V3 est la voie retenue.
 
-Cette configuration sert à valider la piste JPEG native puis son filtre de correction. Le code GRAYSCALE et RGB565 reste présent pour permettre un retour rapide sans réécriture.
+## Optimisations reportées après validation cible/distance/orientation
+
+Ne pas optimiser prématurément la voie actuelle. Après validation fonctionnelle :
+
+1. première recherche sur l'image complète ;
+2. mémorisation de la boîte cible ;
+3. pour les mesures suivantes, travailler sur une ROI autour de la dernière cible ;
+4. limiter correction et recherche à cette ROI ;
+5. étudier aussi le décodage JPEG partiel/par blocs pour éviter le coût pleine image ;
+6. si la cible est perdue ou le score devient insuffisant, revenir automatiquement à une recherche globale.
 
 ## Revue obligatoire avant nouvelle fonctionnalité
 
-Avant de coder une nouvelle fonctionnalité, vérifier :
+Avant de coder :
 
-1. Quelle est sa responsabilité ?
-2. Quelle classe doit la porter ?
-3. La classe reste-t-elle cohérente et suffisamment petite ?
-4. Faut-il créer une nouvelle classe ou interface ?
-5. La logique peut-elle être testée sans ESP32 ni matériel ?
-6. Quels tests doivent être ajoutés ou modifiés ?
-7. Si l'API HTTP change, `GET /api/wsdl` a-t-il été mis à jour dans le même changement ?
+1. quelle est sa responsabilité ?
+2. quelle classe doit la porter ?
+3. la classe reste-t-elle cohérente ?
+4. faut-il une nouvelle interface ?
+5. quelle logique peut être testée sans ESP32 ?
+6. quels tests doivent être ajoutés ?
+7. si l'API change, `/api/wsdl` a-t-il été modifié dans le même changement ?
