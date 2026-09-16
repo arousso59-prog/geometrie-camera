@@ -16,6 +16,8 @@
 #include "jpeg_diagnostic_api.h"
 #include "measurement_manager.h"
 #include "ov3660_camera_configurator.h"
+#include "ov5640_timing_api.h"
+#include "ov5640_timing_controller.h"
 #include "placeholder_image_provider.h"
 #include "rgb565_diagnostic.h"
 #include "rgb565_diagnostic_api.h"
@@ -66,6 +68,7 @@ class GeometrieCameraApp : public Component {
   MeasurementManager measurement_manager_;
   CameraResolutionController resolution_controller_;
   CameraSettingsController settings_controller_;
+  Ov5640TimingController timing_controller_;
   GrayscaleDiagnostic grayscale_diagnostic_;
   JpegDiagnostic jpeg_diagnostic_;
   Rgb565Diagnostic rgb565_diagnostic_;
@@ -75,6 +78,7 @@ class GeometrieCameraApp : public Component {
   ApiWsdlHandler api_wsdl_handler_;
   CameraApiHandler api_handler_;
   CameraSettingsApiHandler settings_api_handler_;
+  Ov5640TimingApiHandler timing_api_handler_;
   GrayscaleDiagnosticApiHandler diagnostic_api_handler_;
   JpegDiagnosticApiHandler jpeg_diagnostic_api_handler_;
   Rgb565DiagnosticApiHandler rgb565_diagnostic_api_handler_;
