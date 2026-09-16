@@ -20,7 +20,8 @@ JpegDiagnostic
 ImageSharpnessEvaluator (mode continu)
    ├── ROI autour de la dernière cible détectée
    ├── décodage JPEG 1/4
-   └── recapture si la cible devient nettement floue
+   ├── score sur les 20 % de contours les plus forts
+   └── recapture seulement si flou important
    ↓
 JpegFilteredDiagnostic V2
    ↓
@@ -70,7 +71,7 @@ GET /api/camera/settings/set?resolution=800x600
 
 Le mode continu utilise la résolution caméra active. `800x600` reste pratique pour les essais rapides ; une évolution haute résolution + ROI est prévue pour augmenter la précision sans traiter toute l'image.
 
-## Mode continu avec contrôle de netteté ciblé
+## Mode continu avec contrôle de netteté ciblé V2
 
 Le démarrage est interdit sans calibration valide :
 
@@ -86,7 +87,7 @@ Le cycle est :
 capture
 → contrôle netteté dans la ROI de la dernière cible connue
    ├── aucune ROI connue → pas de rejet, passage direct au filtre
-   ├── cible fortement floue → recapture immédiate, maximum 2 fois
+   ├── cible manifestement floue → recapture immédiate, maximum 2 fois
    └── OK
 → filtre
 → détection
@@ -97,9 +98,13 @@ capture
 
 La netteté ne dépend donc plus du décor complet. Sur un mur uniforme, seul le voisinage de la cible influence le score.
 
-La ROI vaut environ quatre fois la taille détectée de la cible, avec un minimum de `64×64 px` dans l'image source. Le JPEG est décodé à `1/4` pour ce contrôle afin de conserver assez de détails quand la cible devient petite.
+La ROI vaut maintenant environ **2,5 fois la taille détectée de la cible**, avec un minimum de `48×48 px` dans l'image source. Le JPEG est décodé à `1/4` pour conserver assez de détails quand la cible devient petite.
 
-La référence de netteté est mise à jour uniquement après une détection valide. Une chute du score ROI sous 60 % de cette référence déclenche une recapture. Si la troisième capture reste faible, le pipeline continue quand même pour ne pas se bloquer.
+Le score ne moyenne plus tous les pixels de la ROI : il utilise les **20 % de réponses Laplaciennes les plus fortes**, qui correspondent principalement aux transitions noir/blanc du motif. Cela réduit fortement l'influence du fond uniforme.
+
+La référence de netteté est mise à jour uniquement après une détection valide. Une nouvelle valeur est d'abord limitée à ±15 % de la référence précédente, puis intégrée lentement (`7/8` ancienne référence + `1/8` nouvelle valeur bornée). Une capture n'est recapturée que si son score tombe sous **45 %** de cette référence. Si la troisième capture reste faible, le pipeline continue quand même pour ne pas se bloquer.
+
+Les essais V1 ont montré que le mini-décodage de netteté 1/4 coûte encore environ `315–320 ms`. Cette V2 vise d'abord à vérifier que les recaptures deviennent réellement utiles ; ensuite, si le principe est validé, le double décodage JPEG sera un axe prioritaire d'optimisation.
 
 `/continuous/status` expose les temps détaillés :
 
@@ -126,8 +131,6 @@ sharpness.roi_y
 sharpness.roi_width
 sharpness.roi_height
 ```
-
-Cela permet de vérifier que le contrôle travaille bien autour de la cible et de guider les futures optimisations.
 
 ## Interface Web ESPHome
 
@@ -161,15 +164,16 @@ GET /continuous/stop
 GET /continuous/status
 ```
 
-`/api/wsdl` est la référence du contrat HTTP. Version actuelle : **14**.
+`/api/wsdl` est la référence du contrat HTTP. Version actuelle : **15**.
 
 Les responsabilités détaillées et les règles de développement sont dans [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ## Étape actuelle
 
-1. compiler/flasher la version avec netteté ROI ;
-2. vérifier que `/continuous/status` expose une ROI cohérente autour de la cible ;
-3. provoquer volontairement un flou de la cible ;
-4. comparer le taux de cibles trouvées avant/après ;
-5. exploiter les timings détaillés ;
-6. reprendre ensuite la validation des angles et la future approche haute résolution + ROI.
+1. compiler/flasher la netteté ROI V2 ;
+2. observer `score_x100`, `reference_x100` et `blur_retry_count` avec cible immobile ;
+3. provoquer volontairement quelques flous rapides ;
+4. vérifier que les recaptures sont beaucoup moins fréquentes sur les images normalement exploitables ;
+5. comparer le taux de cibles trouvées ;
+6. si le filtre est validé, supprimer à terme le coût du double décodage JPEG ;
+7. reprendre ensuite la validation des angles et la future approche haute résolution + ROI.
