@@ -20,6 +20,7 @@ class GrayscaleDiagnosticApiHandler : public AsyncWebHandler {
   void handle_status_(AsyncWebServerRequest *request);
   void handle_capture_(AsyncWebServerRequest *request);
   void handle_image_(AsyncWebServerRequest *request);
+  void handle_preview_(AsyncWebServerRequest *request);
 
   GrayscaleDiagnostic *diagnostic_;
   CameraResolutionController *resolution_controller_;
