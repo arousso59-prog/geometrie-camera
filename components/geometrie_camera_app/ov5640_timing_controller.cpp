@@ -9,6 +9,12 @@ namespace geometrie_camera_app {
 
 namespace {
 static const char *const TAG = "ov5640_timing";
+constexpr uint16_t PCLK_RATIO_REGISTER = 0x3824;
+constexpr uint16_t VFIFO_CTRL0C_REGISTER = 0x460C;
+constexpr uint8_t PCLK_RATIO_MASK = 0x1F;
+constexpr uint8_t PCLK_MANUAL_ENABLE_MASK = 0x02;
+constexpr uint8_t MIN_PCLK_DIVIDER = 1;
+constexpr uint8_t MAX_PCLK_DIVIDER = PCLK_RATIO_MASK;
 }
 
 Ov5640TimingController::Ov5640TimingController() {}
@@ -114,8 +120,8 @@ bool Ov5640TimingController::set_pclk_divider(uint8_t divider) {
   return true;
 }
 
-uint8_t Ov5640TimingController::min_pclk_divider() { return 1; }
-uint8_t Ov5640TimingController::max_pclk_divider() { return PCLK_RATIO_MASK; }
+uint8_t Ov5640TimingController::min_pclk_divider() { return MIN_PCLK_DIVIDER; }
+uint8_t Ov5640TimingController::max_pclk_divider() { return MAX_PCLK_DIVIDER; }
 
 }  // namespace geometrie_camera_app
 }  // namespace esphome
