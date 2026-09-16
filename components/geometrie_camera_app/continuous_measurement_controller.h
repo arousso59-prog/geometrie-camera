@@ -6,6 +6,7 @@
 namespace esphome {
 namespace geometrie_camera_app {
 
+class ImageSharpnessEvaluator;
 class JpegDiagnostic;
 class JpegFilteredDiagnostic;
 class MeasurementManager;
@@ -15,6 +16,7 @@ enum class ContinuousMeasurementState : uint8_t {
   STOPPED,
   REQUEST_CAPTURE,
   WAIT_CAPTURE,
+  SHARPNESS,
   FILTER,
   DETECT,
   COMPUTE,
@@ -25,6 +27,7 @@ enum class ContinuousMeasurementState : uint8_t {
 class ContinuousMeasurementController {
  public:
   ContinuousMeasurementController(JpegDiagnostic *jpeg_source,
+                                  ImageSharpnessEvaluator *sharpness_evaluator,
                                   JpegFilteredDiagnostic *filtered_source,
                                   TargetDetectionService *detection_service,
                                   MeasurementManager *measurement_manager);
@@ -46,13 +49,28 @@ class ContinuousMeasurementController {
   bool last_cycle_measurement_valid() const;
   const std::string &last_error() const;
 
+  uint32_t last_capture_ms() const;
+  uint32_t last_sharpness_ms() const;
+  uint32_t last_filter_ms() const;
+  uint32_t last_detect_ms() const;
+  uint32_t last_compute_ms() const;
+  uint32_t last_sharpness_score_x100() const;
+  uint32_t sharpness_reference_score_x100() const;
+  bool last_sharpness_ok() const;
+  uint8_t last_capture_retry_count() const;
+  uint32_t blur_retry_count() const;
+
  private:
   void begin_cycle_();
   void finish_cycle_(bool target_found, bool measurement_valid);
   void fail_cycle_(const char *error);
   void stop_with_error_(const char *error);
+  bool request_capture_();
+  bool sharpness_is_too_low_(uint32_t score) const;
+  void update_sharpness_reference_(uint32_t score);
 
   JpegDiagnostic *jpeg_source_;
+  ImageSharpnessEvaluator *sharpness_evaluator_;
   JpegFilteredDiagnostic *filtered_source_;
   TargetDetectionService *detection_service_;
   MeasurementManager *measurement_manager_;
@@ -70,6 +88,17 @@ class ContinuousMeasurementController {
   bool last_cycle_target_found_;
   bool last_cycle_measurement_valid_;
   std::string last_error_;
+
+  uint32_t last_capture_ms_;
+  uint32_t last_sharpness_ms_;
+  uint32_t last_filter_ms_;
+  uint32_t last_detect_ms_;
+  uint32_t last_compute_ms_;
+  uint32_t last_sharpness_score_x100_;
+  uint32_t sharpness_reference_score_x100_;
+  bool last_sharpness_ok_;
+  uint8_t last_capture_retry_count_;
+  uint32_t blur_retry_count_;
 };
 
 }  // namespace geometrie_camera_app
