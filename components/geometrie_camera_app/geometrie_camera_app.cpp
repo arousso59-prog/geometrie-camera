@@ -30,7 +30,7 @@ GeometrieCameraApp::GeometrieCameraApp()
       target_search_diagnostic_api_handler_(&this->target_search_diagnostic_, &this->grayscale_diagnostic_,
                                             &this->resolution_controller_),
       runtime_diagnostics_api_handler_(&this->runtime_diagnostics_, &this->grayscale_diagnostic_,
-                                       &this->target_search_diagnostic_),
+                                       &this->jpeg_diagnostic_, &this->target_search_diagnostic_),
       api_registered_(false) {}
 
 void GeometrieCameraApp::setup() {
