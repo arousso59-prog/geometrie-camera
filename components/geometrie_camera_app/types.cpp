@@ -29,15 +29,20 @@ TargetObservation::TargetObservation()
 GeometryMeasurement::GeometryMeasurement()
     : valid(false),
       calibrated(false),
+      pose_valid(false),
       distance_mm(0.0f),
       x_mm(0.0f),
       y_mm(0.0f),
       z_mm(0.0f),
+      z_from_width_mm(0.0f),
+      z_from_height_mm(0.0f),
       bearing_yaw_deg(0.0f),
       bearing_pitch_deg(0.0f),
       yaw_deg(0.0f),
       pitch_deg(0.0f),
       roll_deg(0.0f),
+      pose_z_mm(0.0f),
+      pose_scale_error_pct(0.0f),
       quality(0.0f),
       timestamp_ms(0) {}
 
