@@ -7,11 +7,13 @@
 namespace esphome {
 namespace geometrie_camera_app {
 
+class CameraResolutionController;
 class CameraSettingsController;
 
 class CameraSettingsApiHandler : public AsyncWebHandler {
  public:
-  explicit CameraSettingsApiHandler(CameraSettingsController *controller);
+  CameraSettingsApiHandler(CameraSettingsController *controller,
+                           CameraResolutionController *resolution_controller);
 
   bool canHandle(AsyncWebServerRequest *request) const override;
   void handleRequest(AsyncWebServerRequest *request) override;
@@ -26,6 +28,7 @@ class CameraSettingsApiHandler : public AsyncWebHandler {
   void send_snapshot_(AsyncWebServerRequest *request, bool applied, const char *status) const;
 
   CameraSettingsController *controller_;
+  CameraResolutionController *resolution_controller_;
 };
 
 }  // namespace geometrie_camera_app
