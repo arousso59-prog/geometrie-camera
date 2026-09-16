@@ -45,15 +45,20 @@ struct GeometryMeasurement {
 
   bool valid;
   bool calibrated;
+  bool pose_valid;
   float distance_mm;
   float x_mm;
   float y_mm;
   float z_mm;
+  float z_from_width_mm;
+  float z_from_height_mm;
   float bearing_yaw_deg;
   float bearing_pitch_deg;
   float yaw_deg;
   float pitch_deg;
   float roll_deg;
+  float pose_z_mm;
+  float pose_scale_error_pct;
   float quality;
   uint32_t timestamp_ms;
 };
