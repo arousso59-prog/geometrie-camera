@@ -122,7 +122,7 @@ void ContinuousMeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *requ
                                                        const char *status,
                                                        const char *error) const {
   std::string json;
-  json.reserve(640);
+  json.reserve(1200);
   json += "{\"status\":\"";
   json += status;
   json += "\"";
@@ -143,11 +143,29 @@ void ContinuousMeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *requ
     json += ",\"cycle_count\":" + std::to_string(this->controller_->cycle_count());
     json += ",\"target_found_count\":" + std::to_string(this->controller_->target_found_count());
     json += ",\"valid_measurement_count\":" + std::to_string(this->controller_->valid_measurement_count());
-    json += ",\"last_cycle_ms\":" + std::to_string(this->controller_->last_cycle_ms());
     json += ",\"target_found\":";
     json += this->controller_->last_cycle_target_found() ? "true" : "false";
     json += ",\"measurement_valid\":";
     json += this->controller_->last_cycle_measurement_valid() ? "true" : "false";
+
+    json += ",\"timing\":{";
+    json += "\"capture_ms\":" + std::to_string(this->controller_->last_capture_ms());
+    json += ",\"sharpness_ms\":" + std::to_string(this->controller_->last_sharpness_ms());
+    json += ",\"filter_ms\":" + std::to_string(this->controller_->last_filter_ms());
+    json += ",\"detect_ms\":" + std::to_string(this->controller_->last_detect_ms());
+    json += ",\"compute_ms\":" + std::to_string(this->controller_->last_compute_ms());
+    json += ",\"cycle_ms\":" + std::to_string(this->controller_->last_cycle_ms());
+    json += "}";
+
+    json += ",\"sharpness\":{";
+    json += "\"score_x100\":" + std::to_string(this->controller_->last_sharpness_score_x100());
+    json += ",\"reference_x100\":" + std::to_string(this->controller_->sharpness_reference_score_x100());
+    json += ",\"ok\":";
+    json += this->controller_->last_sharpness_ok() ? "true" : "false";
+    json += ",\"capture_retries\":" + std::to_string(this->controller_->last_capture_retry_count());
+    json += ",\"blur_retry_count\":" + std::to_string(this->controller_->blur_retry_count());
+    json += "}";
+
     json += ",\"last_error\":\"";
     json += this->controller_->last_error();
     json += "\"";
