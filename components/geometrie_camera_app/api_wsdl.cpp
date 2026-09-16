@@ -25,14 +25,14 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
                                         : "unknown";
 
   std::string xml;
-  xml.reserve(15872);
+  xml.reserve(17408);
   xml += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
   xml += "<api name=\"geometrie-camera\" version=\"1\" style=\"REST-over-HTTP\">\n";
   xml += "  <description>Catalogue WSDL-like des routes HTTP du projet. Ce document doit etre maintenu avec toute evolution d API.</description>\n";
   xml += "  <conventions>\n";
   xml += "    <item>Les routes sont actuellement en HTTP GET.</item>\n";
   xml += "    <item>Les reponses de statut et de commande sont en JSON sauf les images et ce document XML.</item>\n";
-  xml += "    <item>Les commentaires de chaque methode sont a completer au fil de la realisation.</item>\n";
+  xml += "    <item>Les diagnostics dependants d un format image exigent que ESP32Camera soit configure dans ce format.</item>\n";
   xml += "  </conventions>\n";
 
   xml += "  <method name=\"api_wsdl\" http=\"GET\" path=\"/api/wsdl\">\n";
@@ -90,7 +90,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
 
   xml += "  <method name=\"diagnostic_capture\" http=\"GET\" path=\"/diagnostic/capture\">\n";
-  xml += "    <comment>Declenche une capture brute GRAYSCALE. Le capteur OV5640 est physiquement 2592x1944, mais ESPHome 2026.7.3 expose au maximum QSXGA 2560x1920. A cette resolution le diagnostic conserve les statistiques et le preview sans dupliquer la frame en BMP pleine resolution.</comment>\n";
+  xml += "    <comment>Declenche une capture brute GRAYSCALE lorsque la camera est configuree en GRAYSCALE. En QSXGA le diagnostic conserve surtout statistiques et preview sans dupliquer la frame en BMP pleine resolution.</comment>\n";
   xml += "    <parameter name=\"resolution\" location=\"query\" required=\"false\" type=\"string\" allowed=\"";
   xml += allowed_resolutions;
   xml += "\">Resolution a appliquer avant la capture. Si absente, conserve la resolution active.</parameter>\n";
@@ -105,19 +105,37 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
 
   xml += "  <method name=\"diagnostic_image\" http=\"GET\" path=\"/diagnostic/raw.bmp\">\n";
-  xml += "    <comment>Retourne le BMP 8 bits pleine resolution lorsqu il est disponible. En QSXGA il est volontairement omis pour economiser la PSRAM.</comment>\n";
+  xml += "    <comment>Retourne le BMP 8 bits pleine resolution lorsqu il est disponible.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"image/bmp\"/>\n";
   xml += "    <response code=\"404\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
   xml += "  <method name=\"diagnostic_preview\" http=\"GET\" path=\"/diagnostic/preview.bmp\">\n";
-  xml += "    <comment>Retourne un BMP 8 bits reduit a 640x480 maximum pour controle visuel rapide, sans modifier la frame utilisee pour les calculs.</comment>\n";
+  xml += "    <comment>Retourne un BMP 8 bits reduit a 640x480 maximum pour controle visuel rapide d une capture GRAYSCALE.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"image/bmp\"/>\n";
   xml += "    <response code=\"404\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
+  xml += "  <method name=\"jpeg_capture\" http=\"GET\" path=\"/diagnostic-jpeg/capture\">\n";
+  xml += "    <comment>Demande une nouvelle frame JPEG produite directement par l ISP du capteur. Utilisee pour valider qualite, artefacts, taille et latence sans conversion logicielle.</comment>\n";
+  xml += "    <response code=\"202\" content_type=\"application/json\"/>\n";
+  xml += "    <response code=\"503\" content_type=\"application/json\"/>\n";
+  xml += "  </method>\n";
+
+  xml += "  <method name=\"jpeg_status\" http=\"GET\" path=\"/diagnostic-jpeg/status\">\n";
+  xml += "    <comment>Expose dimensions, taille JPEG, presence des marqueurs SOI/EOI et timings acquisition/copie/cycle.</comment>\n";
+  xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
+  xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
+  xml += "  </method>\n";
+
+  xml += "  <method name=\"jpeg_image\" http=\"GET\" path=\"/diagnostic-jpeg/image.jpg\">\n";
+  xml += "    <comment>Retourne sans recompression la derniere frame JPEG native copiee depuis le framebuffer camera.</comment>\n";
+  xml += "    <response code=\"200\" content_type=\"image/jpeg\"/>\n";
+  xml += "    <response code=\"404\" content_type=\"application/json\"/>\n";
+  xml += "  </method>\n";
+
   xml += "  <method name=\"rgb565_capture\" http=\"GET\" path=\"/diagnostic-rgb565/capture\">\n";
-  xml += "    <comment>Declenche le diagnostic temporaire RGB565. Route conservee pour les essais materiels.</comment>\n";
+  xml += "    <comment>Declenche le diagnostic temporaire RGB565 lorsque la camera est configuree en RGB565.</comment>\n";
   xml += "    <response code=\"202\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"503\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
@@ -134,7 +152,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
 
   xml += "  <method name=\"target_search\" http=\"GET\" path=\"/target/search\">\n";
-  xml += "    <comment>Declenche une acquisition GRAYSCALE et une recherche de cible sur le framebuffer recu.</comment>\n";
+  xml += "    <comment>Declenche une acquisition et une recherche de cible lorsque la camera est configuree en GRAYSCALE. Cette route n est pas utilisee pendant le test JPEG natif.</comment>\n";
   xml += "    <parameter name=\"resolution\" location=\"query\" required=\"false\" type=\"string\" allowed=\"";
   xml += allowed_resolutions;
   xml += "\">Resolution a appliquer avant la recherche. Si absente, conserve la resolution active.</parameter>\n";
@@ -144,12 +162,12 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
 
   xml += "  <method name=\"target_status\" http=\"GET\" path=\"/target/status\">\n";
-  xml += "    <comment>Etat de la derniere recherche : identite capteur relue a la demande, PID, resolution, cible trouvee, boite, orientation, qualite et timings.</comment>\n";
+  xml += "    <comment>Etat de la derniere recherche : identite capteur, resolution, cible trouvee, boite, orientation, qualite et timings.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
   xml += "  <method name=\"target_image\" http=\"GET\" path=\"/target/image.bmp\">\n";
-  xml += "    <comment>Retourne le BMP de visualisation partage. Si une cible est reconnue, son cadre vert est dessine dans ce meme buffer.</comment>\n";
+  xml += "    <comment>Retourne le BMP de visualisation de la derniere recherche GRAYSCALE lorsqu il est disponible.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"image/bmp\"/>\n";
   xml += "    <response code=\"404\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
