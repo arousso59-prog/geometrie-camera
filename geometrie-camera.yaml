@@ -78,10 +78,12 @@ geometrie_camera_app:
 #   Y9    = GPIO16
 #   PCLK  = GPIO13
 #
-# Capteur confirme par PID : OV5640 (0x5640), resolution native max 2592x1944.
+# Capteur confirme par PID : OV5640 (0x5640), resolution physique max 2592x1944.
+# ESPHome 2026.7.3 n'expose pas 2592x1944 dans son schema YAML ; le mode maximal
+# directement supporte est QSXGA 2560x1920, soit seulement ~2,5 % de pixels en moins.
 # Voie de mesure : GRAYSCALE brut, sans JPEG capteur.
-# A 5 MP, le diagnostic HTTP utilise surtout le preview 640x480 pour eviter
-# de dupliquer une frame brute d'environ 5 Mo en BMP pleine resolution.
+# A QSXGA, le diagnostic HTTP utilise surtout le preview 640x480 pour eviter
+# de dupliquer une frame brute d'environ 4,9 Mo en BMP pleine resolution.
 # XCLK = 16 MHz, configuration non-JPEG deja validee.
 # framebuffer unique en PSRAM ; acquisition uniquement sur demande.
 
@@ -93,7 +95,7 @@ i2c:
 
 esp32_camera:
   id: camera_geometrie
-  name: "Camera geometrie GRAYSCALE OV5640 5MP"
+  name: "Camera geometrie GRAYSCALE OV5640 QSXGA"
   internal: true
 
   external_clock:
@@ -117,7 +119,7 @@ esp32_camera:
   pixel_clock_pin: GPIO13
 
   pixel_format: GRAYSCALE
-  resolution: 2592x1944
+  resolution: 2560x1920
   jpeg_quality: 0
   frame_buffer_count: 1
   frame_buffer_location: PSRAM
@@ -179,7 +181,7 @@ number:
     min_value: 0
     max_value: 3000
     step: 0.1
-    initial_value: 1296
+    initial_value: 1280
     restore_value: true
     optimistic: true
     unit_of_measurement: "px"
@@ -190,7 +192,7 @@ number:
     min_value: 0
     max_value: 2200
     step: 0.1
-    initial_value: 972
+    initial_value: 960
     restore_value: true
     optimistic: true
     unit_of_measurement: "px"
