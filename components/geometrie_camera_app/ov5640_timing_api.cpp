@@ -28,6 +28,18 @@ bool parse_integer_parameter(AsyncWebServerRequest *request, const char *name, l
   *parsed_value = parsed;
   return true;
 }
+
+void append_hex_byte(std::string *json, int value) {
+  char buffer[5];
+  std::snprintf(buffer, sizeof(buffer), "%02X", value >= 0 ? value & 0xFF : 0);
+  json->append(buffer);
+}
+
+void append_hex_word(std::string *json, int value) {
+  char buffer[5];
+  std::snprintf(buffer, sizeof(buffer), "%04X", value >= 0 ? value & 0xFFFF : 0);
+  json->append(buffer);
+}
 }
 
 Ov5640TimingApiHandler::Ov5640TimingApiHandler(Ov5640TimingController *controller)
@@ -124,8 +136,7 @@ void Ov5640TimingApiHandler::handle_set_(AsyncWebServerRequest *request) const {
     return;
   }
 
-  if (has_jpeg_mode &&
-      !parse_integer_parameter(request, "jpeg_mode", 2, 3, &jpeg_mode)) {
+  if (has_jpeg_mode && !parse_integer_parameter(request, "jpeg_mode", 2, 3, &jpeg_mode)) {
     request->send(400, "application/json",
                   "{\"status\":\"error\",\"error\":\"invalid_jpeg_mode\",\"allowed\":\"2,3\"}");
     return;
@@ -193,46 +204,60 @@ void Ov5640TimingApiHandler::send_snapshot_(AsyncWebServerRequest *request, bool
                                            const char *status, int response_code) const {
   const Ov5640TimingSnapshot snapshot = this->controller_->snapshot();
 
-  char json[1152];
-  std::snprintf(
-      json, sizeof(json),
-      "{\"status\":\"%s\",\"applied\":%s,\"sensor_available\":%s,"
-      "\"sensor\":{\"is_ov5640\":%s,\"pid\":\"0x%04X\"},"
-      "\"timing\":{\"pclk_divider\":%d,\"vfifo_ctrl0c\":%d,\"pclk_manual\":%s,"
-      "\"hts\":%d,\"vts\":%d,\"hts_hex\":\"0x%04X\",\"vts_hex\":\"0x%04X\","
-      "\"jpeg_mode\":%d,\"jpeg_mode_hex\":\"0x%02X\","
-      "\"href_blanking\":%d,\"href_blanking_hex\":\"0x%02X\"},"
-      "\"baseline\":{\"available\":%s,\"hts\":%u,\"vts\":%u,"
-      "\"hts_hex\":\"0x%04X\",\"vts_hex\":\"0x%04X\","
-      "\"jpeg_mode\":%u,\"jpeg_mode_hex\":\"0x%02X\","
-      "\"href_blanking\":%u,\"href_blanking_hex\":\"0x%02X\"},"
-      "\"ranges\":{\"pclk_divider\":\"1..31\",\"hts\":\"1..65535\","
-      "\"vts\":\"1..65535\",\"jpeg_mode\":\"2,3\",\"href_blanking\":\"0..255\"}}",
-      status,
-      applied ? "true" : "false",
-      snapshot.sensor_available ? "true" : "false",
-      snapshot.sensor_is_ov5640 ? "true" : "false",
-      static_cast<unsigned>(snapshot.sensor_pid),
-      snapshot.pclk_divider,
-      snapshot.vfifo_ctrl0c,
-      snapshot.pclk_manual ? "true" : "false",
-      snapshot.hts,
-      snapshot.vts,
-      static_cast<unsigned>(snapshot.hts >= 0 ? snapshot.hts : 0),
-      static_cast<unsigned>(snapshot.vts >= 0 ? snapshot.vts : 0),
-      snapshot.jpeg_mode,
-      static_cast<unsigned>(snapshot.jpeg_mode >= 0 ? snapshot.jpeg_mode : 0),
-      snapshot.href_blanking,
-      static_cast<unsigned>(snapshot.href_blanking >= 0 ? snapshot.href_blanking : 0),
-      snapshot.baseline_available ? "true" : "false",
-      static_cast<unsigned>(snapshot.baseline_hts),
-      static_cast<unsigned>(snapshot.baseline_vts),
-      static_cast<unsigned>(snapshot.baseline_hts),
-      static_cast<unsigned>(snapshot.baseline_vts),
-      static_cast<unsigned>(snapshot.baseline_jpeg_mode),
-      static_cast<unsigned>(snapshot.baseline_jpeg_mode),
-      static_cast<unsigned>(snapshot.baseline_href_blanking),
-      static_cast<unsigned>(snapshot.baseline_href_blanking));
+  std::string json;
+  json.reserve(896);
+  json += "{\"status\":\"";
+  json += status;
+  json += "\",\"applied\":";
+  json += applied ? "true" : "false";
+  json += ",\"sensor_available\":";
+  json += snapshot.sensor_available ? "true" : "false";
+  json += ",\"sensor\":{\"is_ov5640\":";
+  json += snapshot.sensor_is_ov5640 ? "true" : "false";
+  json += ",\"pid\":\"0x";
+  append_hex_word(&json, snapshot.sensor_pid);
+  json += "\"},\"timing\":{\"pclk_divider\":";
+  json += std::to_string(snapshot.pclk_divider);
+  json += ",\"vfifo_ctrl0c\":";
+  json += std::to_string(snapshot.vfifo_ctrl0c);
+  json += ",\"pclk_manual\":";
+  json += snapshot.pclk_manual ? "true" : "false";
+  json += ",\"hts\":";
+  json += std::to_string(snapshot.hts);
+  json += ",\"vts\":";
+  json += std::to_string(snapshot.vts);
+  json += ",\"hts_hex\":\"0x";
+  append_hex_word(&json, snapshot.hts);
+  json += "\",\"vts_hex\":\"0x";
+  append_hex_word(&json, snapshot.vts);
+  json += "\",\"jpeg_mode\":";
+  json += std::to_string(snapshot.jpeg_mode);
+  json += ",\"jpeg_mode_hex\":\"0x";
+  append_hex_byte(&json, snapshot.jpeg_mode);
+  json += "\",\"href_blanking\":";
+  json += std::to_string(snapshot.href_blanking);
+  json += ",\"href_blanking_hex\":\"0x";
+  append_hex_byte(&json, snapshot.href_blanking);
+  json += "\"},\"baseline\":{\"available\":";
+  json += snapshot.baseline_available ? "true" : "false";
+  json += ",\"hts\":";
+  json += std::to_string(snapshot.baseline_hts);
+  json += ",\"vts\":";
+  json += std::to_string(snapshot.baseline_vts);
+  json += ",\"hts_hex\":\"0x";
+  append_hex_word(&json, snapshot.baseline_hts);
+  json += "\",\"vts_hex\":\"0x";
+  append_hex_word(&json, snapshot.baseline_vts);
+  json += "\",\"jpeg_mode\":";
+  json += std::to_string(snapshot.baseline_jpeg_mode);
+  json += ",\"jpeg_mode_hex\":\"0x";
+  append_hex_byte(&json, snapshot.baseline_jpeg_mode);
+  json += "\",\"href_blanking\":";
+  json += std::to_string(snapshot.baseline_href_blanking);
+  json += ",\"href_blanking_hex\":\"0x";
+  append_hex_byte(&json, snapshot.baseline_href_blanking);
+  json += "\"},\"ranges\":{\"pclk_divider\":\"1..31\",\"hts\":\"1..65535\",";
+  json += "\"vts\":\"1..65535\",\"jpeg_mode\":\"2,3\",\"href_blanking\":\"0..255\"}}";
 
   auto *response = request->beginResponse(response_code, "application/json", json);
   response->addHeader("Cache-Control", "no-store");
