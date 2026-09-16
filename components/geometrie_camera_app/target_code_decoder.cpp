@@ -3,10 +3,14 @@
 #include <algorithm>
 #include <cmath>
 
+#include "esphome/core/log.h"
+
 namespace esphome {
 namespace geometrie_camera_app {
 
 namespace {
+static const char *const TAG = "target_code_decoder";
+
 constexpr uint8_t TARGET_GRID[7][7] = {
     {1, 1, 1, 1, 1, 1, 1},
     {1, 1, 0, 1, 1, 0, 1},
@@ -18,7 +22,11 @@ constexpr uint8_t TARGET_GRID[7][7] = {
 };
 
 constexpr float EXPANSION_FACTORS[] = {0.92f, 1.00f, 1.08f, 1.16f, 1.24f, 1.32f};
-constexpr float MIN_ACCEPTED_SCORE = 0.84f;
+
+// V5.3 : la cible reelle est localisee de facon repetable par la V5.2 avec un
+// score observe autour de 0.824. Les gardes structurelles restent independantes
+// (contraste, bord noir, fond exterieur) ; seul le seuil final est ajuste.
+constexpr float MIN_ACCEPTED_SCORE = 0.82f;
 constexpr float MIN_BORDER_BLACK_RATIO = 0.84f;
 constexpr int MIN_CODE_CONTRAST = 8;
 constexpr int MIN_OUTSIDE_BLACK_SEPARATION = 5;
@@ -43,6 +51,13 @@ TargetObservation TargetCodeDecoder::decode(const GrayFrameView &frame,
                                             const TargetCandidate &candidate) const {
   TargetObservation best;
   float best_score = 0.0f;
+  float best_pattern_score = 0.0f;
+  float best_border_ratio = 0.0f;
+  float best_outside_mean = 0.0f;
+  float best_expansion = 0.0f;
+  int best_contrast = 0;
+  int best_black_mean = 0;
+  uint8_t best_rotation = 0;
 
   if (frame.data == nullptr || frame.width == 0 || frame.height == 0 || frame.stride < frame.width) {
     return best;
@@ -151,8 +166,26 @@ TargetObservation TargetCodeDecoder::decode(const GrayFrameView &frame,
         best.height_px = adjusted.height;
         best.rotation_deg = static_cast<float>(rotation) * 90.0f;
         best.quality = score;
+
+        best_pattern_score = pattern_score;
+        best_border_ratio = border_ratio;
+        best_outside_mean = outside_mean;
+        best_expansion = expansion;
+        best_contrast = contrast;
+        best_black_mean = black_mean;
+        best_rotation = rotation;
       }
     }
+  }
+
+  if (best_score > 0.0f) {
+    ESP_LOGD(TAG,
+             "V5.3 candidate center=(%.1f,%.1f) size=%.1fx%.1f rot=%u score=%.4f valid=%s "
+             "pattern=%.4f border=%.4f contrast=%d outside=%.1f black=%d expansion=%.2f",
+             candidate.center_x, candidate.center_y, best.width_px, best.height_px,
+             static_cast<unsigned>(best_rotation) * 90U, best_score, best.valid ? "YES" : "NO",
+             best_pattern_score, best_border_ratio, best_contrast, best_outside_mean,
+             best_black_mean, best_expansion);
   }
 
   return best;
