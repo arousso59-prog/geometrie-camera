@@ -21,6 +21,7 @@ constexpr uint8_t GREEN_OVERLAY_INDEX = 254;
 constexpr uint8_t GREEN_REMAP_INDEX = 253;
 constexpr uint16_t PREVIEW_MAX_WIDTH = 640;
 constexpr uint16_t PREVIEW_MAX_HEIGHT = 480;
+constexpr size_t MAX_FULL_BMP_PIXELS = static_cast<size_t>(2048) * 1536;
 
 void write_u16_le(uint8_t *buffer, size_t offset, uint16_t value) {
   buffer[offset] = static_cast<uint8_t>(value & 0xFF);
@@ -126,14 +127,30 @@ void GrayscaleDiagnostic::on_camera_image(const std::shared_ptr<camera::CameraIm
     return;
   }
 
+  this->width_ = frame->width;
+  this->height_ = frame->height;
   this->calculate_statistics_(frame->buf, expected_pixels);
 
-  if (!this->update_visualization(frame->buf, frame->len, frame->width, frame->height, false)) {
-    ESP_LOGE(TAG, "Construction BMP diagnostic impossible");
+  if (!this->build_preview_bmp_(frame->buf, frame->len, frame->width, frame->height)) {
+    ESP_LOGE(TAG, "Construction preview BMP impossible");
     this->capture_pending_ = false;
+    this->ready_ = false;
     return;
   }
 
+  if (expected_pixels <= MAX_FULL_BMP_PIXELS) {
+    if (!this->build_bmp_(frame->buf, frame->len, frame->width, frame->height, false)) {
+      ESP_LOGW(TAG, "Construction BMP pleine resolution impossible; preview conservee");
+      this->clear_buffer_();
+    }
+  } else {
+    // Une frame OV5640 5 MP fait deja environ 5 Mo. La dupliquer en BMP
+    // pleine resolution depasserait la marge memoire utile des 8 Mo de PSRAM.
+    // Le diagnostic conserve donc uniquement le preview a cette resolution.
+    this->clear_buffer_();
+  }
+
+  this->ready_ = true;
   this->capture_count_++;
   this->last_capture_ms_ = millis();
   this->diagnostic_processing_ms_ = this->last_capture_ms_ - processing_started_ms;
