@@ -4,6 +4,8 @@
 #include <cmath>
 #include <limits>
 
+#include "esp_heap_caps.h"
+
 namespace esphome {
 namespace geometrie_camera_app {
 
@@ -46,9 +48,14 @@ TargetCandidateFinder::TargetCandidateFinder()
       reduced_height_(0),
       tile_columns_(0),
       tile_rows_(0),
-      reduced_(),
-      tile_means_(),
-      queue_() {}
+      reduced_(nullptr),
+      tile_means_(nullptr),
+      queue_(nullptr),
+      reduced_capacity_(0),
+      tile_capacity_(0),
+      queue_capacity_(0) {}
+
+TargetCandidateFinder::~TargetCandidateFinder() { this->clear_workspace_(); }
 
 bool TargetCandidateFinder::find(const GrayFrameView &frame, TargetCandidateSet &result) {
   result = TargetCandidateSet();
@@ -66,9 +73,78 @@ bool TargetCandidateFinder::find(const GrayFrameView &frame, TargetCandidateSet 
     return false;
   }
 
-  this->build_local_threshold_map_();
+  if (!this->build_local_threshold_map_()) {
+    return false;
+  }
+
   this->collect_components_(frame, scale, result);
   return true;
+}
+
+bool TargetCandidateFinder::ensure_workspace_(size_t pixel_count, size_t tile_count) {
+  if (pixel_count == 0 || tile_count == 0) {
+    return false;
+  }
+
+  if (this->reduced_capacity_ < pixel_count) {
+    auto *new_buffer = static_cast<uint8_t *>(
+        heap_caps_malloc(pixel_count * sizeof(uint8_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (new_buffer == nullptr) {
+      return false;
+    }
+    if (this->reduced_ != nullptr) {
+      heap_caps_free(this->reduced_);
+    }
+    this->reduced_ = new_buffer;
+    this->reduced_capacity_ = pixel_count;
+  }
+
+  if (this->queue_capacity_ < pixel_count) {
+    auto *new_queue = static_cast<uint32_t *>(
+        heap_caps_malloc(pixel_count * sizeof(uint32_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (new_queue == nullptr) {
+      return false;
+    }
+    if (this->queue_ != nullptr) {
+      heap_caps_free(this->queue_);
+    }
+    this->queue_ = new_queue;
+    this->queue_capacity_ = pixel_count;
+  }
+
+  if (this->tile_capacity_ < tile_count) {
+    auto *new_tiles = static_cast<uint16_t *>(
+        heap_caps_malloc(tile_count * sizeof(uint16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (new_tiles == nullptr) {
+      return false;
+    }
+    if (this->tile_means_ != nullptr) {
+      heap_caps_free(this->tile_means_);
+    }
+    this->tile_means_ = new_tiles;
+    this->tile_capacity_ = tile_count;
+  }
+
+  return this->reduced_ != nullptr && this->queue_ != nullptr && this->tile_means_ != nullptr;
+}
+
+void TargetCandidateFinder::clear_workspace_() {
+  if (this->reduced_ != nullptr) {
+    heap_caps_free(this->reduced_);
+  }
+  if (this->tile_means_ != nullptr) {
+    heap_caps_free(this->tile_means_);
+  }
+  if (this->queue_ != nullptr) {
+    heap_caps_free(this->queue_);
+  }
+
+  this->reduced_ = nullptr;
+  this->tile_means_ = nullptr;
+  this->queue_ = nullptr;
+  this->reduced_capacity_ = 0;
+  this->tile_capacity_ = 0;
+  this->queue_capacity_ = 0;
 }
 
 bool TargetCandidateFinder::build_reduced_image_(const GrayFrameView &frame, uint16_t scale) {
@@ -77,8 +153,16 @@ bool TargetCandidateFinder::build_reduced_image_(const GrayFrameView &frame, uin
   this->reduced_height_ = static_cast<uint16_t>(
       (static_cast<uint32_t>(frame.height) + scale - 1U) / scale);
 
+  this->tile_columns_ = static_cast<uint16_t>(
+      (static_cast<uint32_t>(this->reduced_width_) + LOCAL_TILE_SIZE - 1U) / LOCAL_TILE_SIZE);
+  this->tile_rows_ = static_cast<uint16_t>(
+      (static_cast<uint32_t>(this->reduced_height_) + LOCAL_TILE_SIZE - 1U) / LOCAL_TILE_SIZE);
+
   const size_t pixel_count = static_cast<size_t>(this->reduced_width_) * this->reduced_height_;
-  this->reduced_.assign(pixel_count, 0);
+  const size_t tile_count = static_cast<size_t>(this->tile_columns_) * this->tile_rows_;
+  if (!this->ensure_workspace_(pixel_count, tile_count)) {
+    return false;
+  }
 
   for (uint16_t ry = 0; ry < this->reduced_height_; ++ry) {
     const uint32_t source_y0 = static_cast<uint32_t>(ry) * scale;
@@ -106,12 +190,11 @@ bool TargetCandidateFinder::build_reduced_image_(const GrayFrameView &frame, uin
   return true;
 }
 
-void TargetCandidateFinder::build_local_threshold_map_() {
-  this->tile_columns_ = static_cast<uint16_t>(
-      (static_cast<uint32_t>(this->reduced_width_) + LOCAL_TILE_SIZE - 1U) / LOCAL_TILE_SIZE);
-  this->tile_rows_ = static_cast<uint16_t>(
-      (static_cast<uint32_t>(this->reduced_height_) + LOCAL_TILE_SIZE - 1U) / LOCAL_TILE_SIZE);
-  this->tile_means_.assign(static_cast<size_t>(this->tile_columns_) * this->tile_rows_, 0);
+bool TargetCandidateFinder::build_local_threshold_map_() {
+  if (this->reduced_ == nullptr || this->tile_means_ == nullptr || this->reduced_width_ == 0 ||
+      this->reduced_height_ == 0 || this->tile_columns_ == 0 || this->tile_rows_ == 0) {
+    return false;
+  }
 
   for (uint16_t ty = 0; ty < this->tile_rows_; ++ty) {
     const uint16_t y0 = static_cast<uint16_t>(ty * LOCAL_TILE_SIZE);
@@ -161,15 +244,19 @@ void TargetCandidateFinder::build_local_threshold_map_() {
       this->reduced_[index] = static_cast<uint16_t>(value) + LOCAL_DARK_MARGIN < local_mean ? 1 : 0;
     }
   }
+
+  return true;
 }
 
 void TargetCandidateFinder::collect_components_(const GrayFrameView &frame, uint16_t scale,
                                                 TargetCandidateSet &result) {
+  if (this->reduced_ == nullptr || this->queue_ == nullptr) {
+    return;
+  }
+
   const uint16_t maximum_side = std::max<uint16_t>(
       MIN_TARGET_SIDE_PX,
       static_cast<uint16_t>(std::min<uint16_t>(frame.width, frame.height) / MAX_TARGET_SIDE_DIVISOR));
-
-  this->queue_.clear();
 
   for (uint16_t start_y = 0; start_y < this->reduced_height_; ++start_y) {
     for (uint16_t start_x = 0; start_x < this->reduced_width_; ++start_x) {
@@ -178,11 +265,11 @@ void TargetCandidateFinder::collect_components_(const GrayFrameView &frame, uint
         continue;
       }
 
-      this->queue_.clear();
-      this->queue_.push_back(static_cast<uint32_t>(start_index));
+      size_t queue_size = 0;
+      size_t queue_position = 0;
+      this->queue_[queue_size++] = static_cast<uint32_t>(start_index);
       this->reduced_[start_index] = 2;
 
-      size_t queue_position = 0;
       uint32_t component_count = 0;
       uint16_t min_x = start_x;
       uint16_t max_x = start_x;
@@ -198,7 +285,7 @@ void TargetCandidateFinder::collect_components_(const GrayFrameView &frame, uint
       uint16_t min_diff_x = start_x, min_diff_y = start_y;
       uint16_t max_diff_x = start_x, max_diff_y = start_y;
 
-      while (queue_position < this->queue_.size()) {
+      while (queue_position < queue_size) {
         const uint32_t index = this->queue_[queue_position++];
         const uint16_t y = static_cast<uint16_t>(index / this->reduced_width_);
         const uint16_t x = static_cast<uint16_t>(index - static_cast<uint32_t>(y) * this->reduced_width_);
@@ -242,9 +329,9 @@ void TargetCandidateFinder::collect_components_(const GrayFrameView &frame, uint
           }
 
           const size_t neighbor_index = static_cast<size_t>(ny) * this->reduced_width_ + nx;
-          if (this->reduced_[neighbor_index] == 1) {
+          if (this->reduced_[neighbor_index] == 1 && queue_size < this->queue_capacity_) {
             this->reduced_[neighbor_index] = 2;
-            this->queue_.push_back(static_cast<uint32_t>(neighbor_index));
+            this->queue_[queue_size++] = static_cast<uint32_t>(neighbor_index);
           }
         }
       }
