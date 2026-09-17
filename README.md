@@ -118,8 +118,12 @@ timing.sharpness_ms
 timing.filter_ms
 timing.detect_ms
 timing.compute_ms
+timing.processing_ms
+timing.orchestration_ms
 timing.cycle_ms
 ```
+
+`processing_ms` est la somme des cinq traitements chronométrés. `orchestration_ms` correspond au temps mural restant dans le cycle entre ces étapes et les passages de boucle ESPHome ; ce temps est interne à l'ESP32 et ne correspond pas à un traitement réalisé par le PC.
 
 et les informations de netteté :
 
@@ -168,7 +172,7 @@ GET /continuous/stop
 GET /continuous/status
 ```
 
-`/api/wsdl` est la référence du contrat HTTP. Version actuelle : **19**.
+`/api/wsdl` est la référence du contrat HTTP. Version actuelle : **20**.
 
 Les responsabilités détaillées et les règles de développement sont dans [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
@@ -176,8 +180,8 @@ Les responsabilités détaillées et les règles de développement sont dans [`A
 
 1. compiler/flasher le firmware courant ;
 2. vérifier le mode N/B depuis `/api/camera/settings/set?monochrome=1` puis depuis la supervision PC ;
-3. observer `score_x100`, `reference_x100` et `blur_retry_count` avec cible immobile ;
-4. provoquer volontairement quelques flous rapides ;
-5. comparer le taux de cibles trouvées ;
-6. si le filtre est validé, supprimer à terme le coût du double décodage JPEG ;
+3. contrôler `processing_ms` et `orchestration_ms` en mode continu pour localiser précisément le temps de cycle ;
+4. observer `score_x100`, `reference_x100` et `blur_retry_count` avec cible immobile ;
+5. provoquer volontairement quelques flous rapides ;
+6. comparer le taux de cibles trouvées ;
 7. reprendre ensuite la validation des angles et la future approche haute résolution + ROI.
