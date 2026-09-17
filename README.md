@@ -27,7 +27,10 @@ JpegFilteredDiagnostic V2
    ↓
 JpegArtifactCorrector
    ↓
-TargetDetector V5.4
+TargetDetector V5.5
+   ├── décodage du motif 7x7
+   ├── raffinage des coins
+   └── continuité temporelle position/taille pour stabiliser la sélection
    ↓
 GeometryMeasurementEngine V2
    ├── distance robuste par taille apparente
@@ -74,6 +77,21 @@ GET /api/camera/settings/set?monochrome=0
 `monochrome=1` active l'effet grayscale de l'OV5640 à chaud. Le framebuffer reste en JPEG : ce réglage ne change ni le `pixel_format`, ni le pipeline de capture/détection. Le changement réel de `pixel_format` reste un réglage de démarrage nécessitant recompilation/reflash.
 
 Le mode continu utilise la résolution caméra active. `800x600` reste pratique pour les essais rapides ; une évolution haute résolution + ROI est prévue pour augmenter la précision sans traiter toute l'image.
+
+## Détection cible V5.5
+
+Le détecteur conserve le score du décodage du motif comme critère de validité, mais utilise maintenant une cohérence temporelle pour choisir entre plusieurs candidats valides. Quand une cible valide a déjà été trouvée, les candidats proches en position et de taille cohérente reçoivent un bonus de sélection. Les sauts importants de position ou de taille sont pénalisés, sans empêcher une vraie réacquisition si le nouveau candidat est nettement meilleur.
+
+Après trois détections manquées consécutives, le suivi temporel est remis à zéro afin de permettre une réacquisition libre.
+
+Dans `/target/preview.bmp` :
+
+```text
+cadre plein      = cible validée par le décodage du motif
+cadre pointillé  = meilleur candidat localisé mais rejeté par la validation
+```
+
+Le cadre pointillé permet donc de distinguer un échec de localisation d'un candidat bien repéré mais non reconnu comme cible.
 
 ## Mode continu avec contrôle de netteté ciblé V2
 
@@ -179,9 +197,8 @@ Les responsabilités détaillées et les règles de développement sont dans [`A
 ## Étape actuelle
 
 1. compiler/flasher le firmware courant ;
-2. vérifier le mode N/B depuis `/api/camera/settings/set?monochrome=1` puis depuis la supervision PC ;
-3. contrôler `processing_ms` et `orchestration_ms` en mode continu pour localiser précisément le temps de cycle ;
-4. observer `score_x100`, `reference_x100` et `blur_retry_count` avec cible immobile ;
-5. provoquer volontairement quelques flous rapides ;
-6. comparer le taux de cibles trouvées ;
-7. reprendre ensuite la validation des angles et la future approche haute résolution + ROI.
+2. tester la cible immobile et vérifier que le cadre plein reste sur la bonne cible ;
+3. provoquer volontairement une détection ratée et vérifier que le meilleur candidat apparaît en pointillé ;
+4. placer des formes sombres parasites dans le champ et vérifier que la cible réelle reste prioritaire ;
+5. déplacer lentement la cible pour valider la continuité temporelle puis la réacquisition ;
+6. reprendre ensuite la stabilisation de largeur/hauteur et du calcul de distance.
