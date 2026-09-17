@@ -15,7 +15,10 @@ class JpegFilteredDiagnostic {
   explicit JpegFilteredDiagnostic(JpegDiagnostic *source);
   ~JpegFilteredDiagnostic();
 
-  bool process();
+  // Decodes the JPEG to the grayscale working buffer. Artifact correction can
+  // be skipped for monochrome camera tests while keeping the grayscale decode
+  // required by the target detector.
+  bool process(bool apply_artifact_correction = true);
 
   bool ready() const;
   uint32_t process_count() const;
@@ -30,6 +33,7 @@ class JpegFilteredDiagnostic {
   uint32_t decode_ms() const;
   uint32_t correction_ms() const;
   uint32_t total_ms() const;
+  bool artifact_correction_applied() const;
   const JpegArtifactCorrectionStats &correction_stats() const;
 
  private:
@@ -51,6 +55,7 @@ class JpegFilteredDiagnostic {
   uint32_t process_count_;
   uint32_t source_capture_count_;
   bool ready_;
+  bool artifact_correction_applied_;
   int decode_result_;
   uint32_t decode_ms_;
   uint32_t correction_ms_;
