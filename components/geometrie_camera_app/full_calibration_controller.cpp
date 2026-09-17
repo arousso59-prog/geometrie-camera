@@ -296,6 +296,7 @@ bool FullCalibrationController::begin_full_resolution_() {
   // Liberer les buffers de traitement 800x600 avant l'allocation 5 MP pour
   // maximiser la PSRAM disponible pendant cette operation exceptionnelle.
   this->filtered_source_->release_buffers();
+  this->jpeg_source_->release_buffer();
 
   if (!this->resolution_controller_->apply("2560x1920")) {
     return false;
