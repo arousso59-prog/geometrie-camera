@@ -14,6 +14,14 @@ static const char *const TAG = "target_tracking";
 constexpr float RECOVERY_MIN_SIDE_PX = 12.0f;
 constexpr float RECOVERY_MAX_ASPECT_RATIO = 2.0f;
 
+// Au premier passage en PRECISE, on veut vraiment ramener la cible pres du
+// centre de la fenetre et pas seulement verifier qu'elle n'est pas pres du bord.
+// Cela compense aussi un petit decalage constant entre le repere SEARCH
+// (binning + scaling) et la fenetre native OV5640.
+constexpr float PRECISE_CENTER_TOLERANCE_FRACTION = 0.06f;
+constexpr float PRECISE_CENTER_MIN_TOLERANCE_PX = 24.0f;
+constexpr uint8_t PRECISE_CENTER_MAX_ATTEMPTS = 3;
+
 bool has_recovery_candidate(const TargetObservation &observation,
                             const CameraViewportSnapshot &snapshot) {
   if (observation.valid || snapshot.output_width == 0 || snapshot.output_height == 0) {
@@ -56,6 +64,24 @@ bool recovery_candidate_needs_recenter(const TargetObservation &observation,
          observation.center_y_px < margin_y ||
          observation.center_y_px > snapshot.output_height - margin_y;
 }
+
+bool precise_centering_needed(const TargetObservation &observation,
+                              const CameraViewportSnapshot &snapshot) {
+  if (snapshot.output_width == 0 || snapshot.output_height == 0 ||
+      !std::isfinite(observation.center_x_px) || !std::isfinite(observation.center_y_px)) {
+    return false;
+  }
+
+  const float desired_x = snapshot.output_width * 0.5f;
+  const float desired_y = snapshot.output_height * 0.5f;
+  const float tolerance_x = std::max(PRECISE_CENTER_MIN_TOLERANCE_PX,
+                                     snapshot.output_width * PRECISE_CENTER_TOLERANCE_FRACTION);
+  const float tolerance_y = std::max(PRECISE_CENTER_MIN_TOLERANCE_PX,
+                                     snapshot.output_height * PRECISE_CENTER_TOLERANCE_FRACTION);
+
+  return std::fabs(observation.center_x_px - desired_x) > tolerance_x ||
+         std::fabs(observation.center_y_px - desired_y) > tolerance_y;
+}
 }
 
 TargetTrackingController::TargetTrackingController(CameraViewportController *viewport_controller)
@@ -67,6 +93,8 @@ TargetTrackingController::TargetTrackingController(CameraViewportController *vie
       current_lost_count_(0),
       transition_count_(0),
       target_locked_(false),
+      precise_centered_(false),
+      precise_center_attempts_(0),
       last_error_() {}
 
 bool TargetTrackingController::start() {
@@ -155,10 +183,49 @@ TrackingUpdateResult TargetTrackingController::update_after_detection(
         this->last_error_ = "precise_viewport_failed";
         return TrackingUpdateResult::ERROR;
       }
+      this->precise_centered_ = false;
+      this->precise_center_attempts_ = 0;
       this->transition_count_++;
       this->last_error_.clear();
       ESP_LOGI(TAG, "Tracking SEARCH -> PRECISE");
       return TrackingUpdateResult::VIEWPORT_CHANGED;
+    }
+
+    const CameraViewportSnapshot &snapshot = this->viewport_controller_->snapshot();
+
+    // Valider le premier cadrage PRECISE par la position effectivement observee.
+    // Si la cible n'est pas proche du centre (400,300), deplacer la ROI de
+    // l'erreur mesuree puis verifier de nouveau au cycle suivant.
+    if (!this->precise_centered_) {
+      if (precise_centering_needed(local_observation, snapshot) &&
+          this->precise_center_attempts_ < PRECISE_CENTER_MAX_ATTEMPTS) {
+        if (!this->viewport_controller_->apply_precise_roi(reference.center_x_px, reference.center_y_px)) {
+          this->last_error_ = "precise_centering_failed";
+          return TrackingUpdateResult::ERROR;
+        }
+
+        this->precise_center_attempts_++;
+        this->transition_count_++;
+        this->last_error_.clear();
+        ESP_LOGI(TAG,
+                 "Tracking PRECISE centrage fin %u/%u: cible locale=(%.1f,%.1f), centre attendu=(%.1f,%.1f), ref=(%.1f,%.1f)",
+                 static_cast<unsigned>(this->precise_center_attempts_),
+                 static_cast<unsigned>(PRECISE_CENTER_MAX_ATTEMPTS),
+                 local_observation.center_x_px, local_observation.center_y_px,
+                 snapshot.output_width * 0.5f, snapshot.output_height * 0.5f,
+                 reference.center_x_px, reference.center_y_px);
+        return TrackingUpdateResult::VIEWPORT_CHANGED;
+      }
+
+      if (precise_centering_needed(local_observation, snapshot) &&
+          this->precise_center_attempts_ >= PRECISE_CENTER_MAX_ATTEMPTS) {
+        ESP_LOGW(TAG,
+                 "Centrage PRECISE encore decale apres %u tentatives: cible locale=(%.1f,%.1f)",
+                 static_cast<unsigned>(this->precise_center_attempts_),
+                 local_observation.center_x_px, local_observation.center_y_px);
+      }
+      this->precise_centered_ = true;
+      this->precise_center_attempts_ = 0;
     }
 
     if (this->viewport_controller_->target_near_edge(local_observation,
@@ -167,6 +234,8 @@ TrackingUpdateResult TargetTrackingController::update_after_detection(
         this->last_error_ = "precise_recenter_failed";
         return TrackingUpdateResult::ERROR;
       }
+      this->precise_centered_ = false;
+      this->precise_center_attempts_ = 0;
       this->transition_count_++;
       this->last_error_.clear();
       ESP_LOGD(TAG, "Tracking PRECISE recentered");
@@ -181,17 +250,23 @@ TrackingUpdateResult TargetTrackingController::update_after_detection(
   if (this->current_lost_count_ < 255) this->current_lost_count_++;
 
   const CameraViewportSnapshot &snapshot = this->viewport_controller_->snapshot();
+  const bool fallback_needs_centering =
+      !this->precise_centered_ && precise_centering_needed(local_observation, snapshot);
   if (snapshot.mode == CameraViewportMode::PRECISE_ROI &&
       this->current_lost_count_ < this->lost_cycles_ &&
       has_recovery_candidate(local_observation, snapshot) &&
-      recovery_candidate_needs_recenter(local_observation, snapshot,
-                                        this->recenter_threshold_pct_)) {
+      (fallback_needs_centering ||
+       recovery_candidate_needs_recenter(local_observation, snapshot,
+                                         this->recenter_threshold_pct_))) {
     const TargetObservation reference = this->viewport_controller_->to_reference(local_observation);
     if (!this->viewport_controller_->apply_precise_roi(reference.center_x_px, reference.center_y_px)) {
       this->last_error_ = "precise_recovery_recenter_failed";
       return TrackingUpdateResult::ERROR;
     }
 
+    if (fallback_needs_centering && this->precise_center_attempts_ < PRECISE_CENTER_MAX_ATTEMPTS) {
+      this->precise_center_attempts_++;
+    }
     this->transition_count_++;
     this->last_error_.clear();
     ESP_LOGI(TAG,
@@ -211,6 +286,8 @@ TrackingUpdateResult TargetTrackingController::update_after_detection(
       return TrackingUpdateResult::ERROR;
     }
     this->current_lost_count_ = 0;
+    this->precise_centered_ = false;
+    this->precise_center_attempts_ = 0;
     this->transition_count_++;
     this->last_error_.clear();
     ESP_LOGI(TAG, "Tracking PRECISE -> SEARCH apres pertes cible");
@@ -249,6 +326,8 @@ void TargetTrackingController::clear_runtime_() {
   this->current_lost_count_ = 0;
   this->transition_count_ = 0;
   this->target_locked_ = false;
+  this->precise_centered_ = false;
+  this->precise_center_attempts_ = 0;
   this->last_error_.clear();
 }
 
