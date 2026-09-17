@@ -17,6 +17,8 @@ constexpr size_t BMP_DIB_HEADER_SIZE = 40;
 constexpr size_t BMP_PALETTE_SIZE = 256 * 4;
 constexpr size_t BMP_PIXEL_OFFSET = BMP_FILE_HEADER_SIZE + BMP_DIB_HEADER_SIZE + BMP_PALETTE_SIZE;
 constexpr uint16_t MAX_PREVIEW_WIDTH = 640;
+constexpr int DASH_LENGTH = 7;
+constexpr int DASH_GAP = 5;
 
 void write_u16(uint8_t *buffer, size_t offset, uint16_t value) {
   buffer[offset] = static_cast<uint8_t>(value & 0xFFU);
@@ -28,6 +30,11 @@ void write_u32(uint8_t *buffer, size_t offset, uint32_t value) {
   buffer[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xFFU);
   buffer[offset + 2] = static_cast<uint8_t>((value >> 16) & 0xFFU);
   buffer[offset + 3] = static_cast<uint8_t>((value >> 24) & 0xFFU);
+}
+
+bool dash_on(int position) {
+  const int period = DASH_LENGTH + DASH_GAP;
+  return period > 0 && (position % period) < DASH_LENGTH;
 }
 }
 
@@ -89,7 +96,11 @@ bool TargetDetectionPreview::render(const JpegFilteredDiagnostic *source,
     const int y0 = static_cast<int>(std::lround((observation.center_y_px - half_height) * scale_y));
     const int x1 = static_cast<int>(std::lround((observation.center_x_px + half_width) * scale_x));
     const int y1 = static_cast<int>(std::lround((observation.center_y_px + half_height) * scale_y));
-    this->draw_rectangle_(pixels, row_stride, preview_width, preview_height, x0, y0, x1, y1);
+
+    // Cadre plein = cible validee par le decodeur.
+    // Cadre pointille = meilleur candidat localise mais rejete par la validation du code.
+    this->draw_rectangle_(pixels, row_stride, preview_width, preview_height,
+                          x0, y0, x1, y1, !observation.valid);
   }
 
   return true;
@@ -158,7 +169,8 @@ void TargetDetectionPreview::build_bmp_header_(uint16_t width, uint16_t height, 
 
 void TargetDetectionPreview::draw_rectangle_(uint8_t *pixels, size_t row_stride,
                                              uint16_t width, uint16_t height,
-                                             int x0, int y0, int x1, int y1) const {
+                                             int x0, int y0, int x1, int y1,
+                                             bool dashed) const {
   if (pixels == nullptr || width == 0 || height == 0) {
     return;
   }
@@ -172,6 +184,7 @@ void TargetDetectionPreview::draw_rectangle_(uint8_t *pixels, size_t row_stride,
   }
 
   // Double trait noir/blanc pour rester visible sur fond clair comme sur fond sombre.
+  // En mode pointille, le meme masque est applique aux deux couches.
   for (int layer = 0; layer < 2; ++layer) {
     const int left = std::max(0, x0 - layer);
     const int top = std::max(0, y0 - layer);
@@ -180,10 +193,14 @@ void TargetDetectionPreview::draw_rectangle_(uint8_t *pixels, size_t row_stride,
     const uint8_t value = layer == 0 ? 0 : 255;
 
     for (int x = left; x <= right; ++x) {
+      const bool visible = !dashed || dash_on(x - left);
+      if (!visible) continue;
       pixels[static_cast<size_t>(top) * row_stride + x] = value;
       pixels[static_cast<size_t>(bottom) * row_stride + x] = value;
     }
     for (int y = top; y <= bottom; ++y) {
+      const bool visible = !dashed || dash_on(y - top);
+      if (!visible) continue;
       pixels[static_cast<size_t>(y) * row_stride + left] = value;
       pixels[static_cast<size_t>(y) * row_stride + right] = value;
     }
