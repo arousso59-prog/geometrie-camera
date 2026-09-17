@@ -24,7 +24,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   std::string xml;
   xml.reserve(30000);
   xml += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-  xml += "<api name=\"geometrie-camera\" version=\"21\" style=\"REST-over-HTTP\">\n";
+  xml += "<api name=\"geometrie-camera\" version=\"22\" style=\"REST-over-HTTP\">\n";
   xml += "  <description>API camera OV5640 : capture JPEG, reglages capteur, viewport ROI haute resolution, tracking cible, detection, calibration, mesure geometrique et acquisition continue.</description>\n";
   xml += "  <conventions>\n";
   xml += "    <item>Les routes de commande utilisent encore HTTP GET pendant la phase de mise au point.</item>\n";
@@ -36,9 +36,9 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "    <item>SEARCH utilise un plein champ 800x600. PRECISE utilise une ROI native 800x600 dans le repere de reference 2560x1920.</item>\n";
   xml += "    <item>Les coordonnees ROI sont converties en repere de reference 2560x1920 avant le calcul de mesure ; la calibration existante est redimensionnee par GeometryMeasurementEngine selon sa resolution de reference.</item>\n";
   xml += "    <item>Apres lost_cycles pertes consecutives en PRECISE, le capteur revient automatiquement en SEARCH. La ROI PRECISE est recentree quand le centre cible quitte la zone centrale configuree.</item>\n";
-  xml += "    <item>Le filtre travaille toujours sur l image de sortie, actuellement 800x600, jamais sur un buffer grayscale 2560x1920 complet.</item>\n";
-  xml += "    <item>Le mode continu exige une calibration valide et n empile jamais les cycles.</item>\n";
-  xml += "    <item>Dans timing, processing_ms est la somme capture+nettete+filtre+detection+calcul et orchestration_ms le temps mural restant entre les etapes.</item>\n";
+  xml += "    <item>Le traitement JPEG travaille toujours sur l image de sortie 800x600. En mode continu, artifact_correction=0 supprime la correction des artefacts couleur mais conserve le decodage JPEG vers niveaux de gris necessaire au detecteur.</item>\n";
+  xml += "    <item>Le mode continu exige une calibration valide et n empile jamais les cycles. sharpness=0 saute le controle de nettete et les recaptures pour flou.</item>\n";
+  xml += "    <item>Dans timing, processing_ms est la somme capture+nettete+filtre+detection+calcul et orchestration_ms le temps mural restant entre les etapes. filter_decode_ms et filter_correction_ms detaillent filter_ms.</item>\n";
   xml += "  </conventions>\n";
 
   xml += "  <method name=\"api_wsdl\" http=\"GET\" path=\"/api/wsdl\"><response code=\"200\" content_type=\"application/xml\"/></method>\n";
@@ -103,10 +103,15 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  <method name=\"measurement_compute\" http=\"GET\" path=\"/measurement/compute\"><response code=\"200\" content_type=\"application/json\"/><response code=\"409\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
   xml += "  <method name=\"measurement_status\" http=\"GET\" path=\"/measurement/status\"><response code=\"200\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
 
-  xml += "  <method name=\"continuous_start\" http=\"GET\" path=\"/continuous/start\"><parameter name=\"interval_ms\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"200..10000\"/><response code=\"200\" content_type=\"application/json\"/><response code=\"400\" content_type=\"application/json\"/><response code=\"409\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
+  xml += "  <method name=\"continuous_start\" http=\"GET\" path=\"/continuous/start\">\n";
+  xml += "    <parameter name=\"interval_ms\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"200..10000\"/>\n";
+  xml += "    <parameter name=\"sharpness\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0,1\" default=\"1\"/>\n";
+  xml += "    <parameter name=\"artifact_correction\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0,1\" default=\"1\"/>\n";
+  xml += "    <response code=\"200\" content_type=\"application/json\"/><response code=\"400\" content_type=\"application/json\"/><response code=\"409\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/>\n";
+  xml += "  </method>\n";
   xml += "  <method name=\"continuous_stop\" http=\"GET\" path=\"/continuous/stop\"><response code=\"200\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
   xml += "  <method name=\"continuous_status\" http=\"GET\" path=\"/continuous/status\">\n";
-  xml += "    <comment>Expose etat, compteurs, nettete, timing et bloc tracking avec mode, verrouillage, pertes et ROI de reference.</comment>\n";
+  xml += "    <comment>Expose etat, options pipeline, compteurs, nettete, timing avec detail decode/correction, et bloc tracking avec mode, verrouillage, pertes et ROI de reference.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
