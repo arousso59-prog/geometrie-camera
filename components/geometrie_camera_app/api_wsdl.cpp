@@ -24,7 +24,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   std::string xml;
   xml.reserve(30000);
   xml += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-  xml += "<api name=\"geometrie-camera\" version=\"23\" style=\"REST-over-HTTP\">\n";
+  xml += "<api name=\"geometrie-camera\" version=\"24\" style=\"REST-over-HTTP\">\n";
   xml += "  <description>API camera OV5640 : capture JPEG, reglages capteur, viewport ROI haute resolution, tracking cible, detection, calibration, mesure geometrique et acquisition continue.</description>\n";
   xml += "  <conventions>\n";
   xml += "    <item>Les routes de commande utilisent encore HTTP GET pendant la phase de mise au point.</item>\n";
@@ -33,7 +33,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "    <item>GeometryMeasurementEngine V3 fusionne z_from_width_mm et z_from_height_mm de facon continue ; pose_z_mm reste un controle independant issu de l homographie.</item>\n";
   xml += "    <item>Le tracking automatique est configure par /tracking/config. /continuous/start ne pilote pas la ROI depuis le PC : l ESP32 gere SEARCH, ZOOM_WIDE, ZOOM_MEDIUM et PRECISE de facon autonome.</item>\n";
   xml += "    <item>La configuration du tracking est verrouillee pendant une session active ; /tracking/config/set renvoie HTTP 409 dans ce cas.</item>\n";
-  xml += "    <item>Le zoom tracking est progressif : SEARCH couvre 2560x1920, ZOOM_WIDE 1920x1440, ZOOM_MEDIUM 1280x960 et PRECISE 800x600. Chaque niveau produit une image 800x600 et recentre le niveau suivant sur la detection courante.</item>\n";
+  xml += "    <item>Le zoom tracking est progressif : SEARCH couvre 2560x1920, ZOOM_WIDE 1920x1440, ZOOM_MEDIUM 1280x960 et PRECISE 800x600. Chaque niveau produit une image 800x600, recentre son propre viewport autant que les bords capteur le permettent, puis ne passe au niveau suivant que si la cible y reste entierement visible avec marge de securite.</item>\n";
   xml += "    <item>Les coordonnees ROI sont converties en repere de reference 2560x1920 avant le calcul de mesure ; la calibration existante est redimensionnee par GeometryMeasurementEngine selon sa resolution de reference.</item>\n";
   xml += "    <item>Apres lost_cycles pertes consecutives dans un niveau zoome, le capteur revient automatiquement en SEARCH. En PRECISE, un centrage fin rapproche aussi la cible du centre 400x300.</item>\n";
   xml += "    <item>Le traitement JPEG travaille toujours sur l image de sortie 800x600. En mode continu, artifact_correction=0 supprime la correction des artefacts couleur mais conserve le decodage JPEG vers niveaux de gris necessaire au detecteur.</item>\n";
@@ -111,7 +111,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
   xml += "  <method name=\"continuous_stop\" http=\"GET\" path=\"/continuous/stop\"><response code=\"200\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
   xml += "  <method name=\"continuous_status\" http=\"GET\" path=\"/continuous/status\">\n";
-  xml += "    <comment>Expose etat, options pipeline, compteurs, nettete, timing avec detail decode/correction, et bloc tracking avec mode, verrouillage, pertes et ROI de reference.</comment>\n";
+  xml += "    <comment>Expose etat, options pipeline, compteurs, nettete, timing et bloc tracking. tracking.mode/roi_* decrivent le viewport prepare pour la prochaine capture ; tracking.capture_mode/capture_roi_* decrivent le viewport qui a reellement produit le dernier cycle et son apercu.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
