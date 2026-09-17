@@ -97,12 +97,6 @@ bool FullCalibrationController::start(float known_distance_mm,
     this->state_ = FullCalibrationState::ERROR;
     return false;
   }
-  if (this->jpeg_source_->capture_pending()) {
-    this->last_error_ = "capture_busy";
-    this->state_ = FullCalibrationState::ERROR;
-    return false;
-  }
-
   if (this->continuous_controller_ != nullptr && this->continuous_controller_->running()) {
     this->continuous_controller_->stop();
   }
@@ -124,24 +118,21 @@ bool FullCalibrationController::start(float known_distance_mm,
     return false;
   }
 
-  // Liberer le petit buffer de traitement avant l'allocation 5 MP pour
-  // maximiser la PSRAM disponible pendant cette operation exceptionnelle.
-  this->filtered_source_->release_buffers();
-
-  if (!this->resolution_controller_->apply("2560x1920")) {
-    this->fail_("full_resolution_apply_failed");
-    return false;
-  }
-
-  this->detection_service_->reset_tracking();
-
   ESP_LOGI(TAG,
-           "Calibration full demarree: distance=%.2f mm cible=%.2f mm echantillons=%u",
+           "Calibration full demandee: distance=%.2f mm cible=%.2f mm echantillons=%u",
            known_distance_mm, target_size_mm,
            static_cast<unsigned>(sample_count));
 
-  if (!this->request_next_capture_()) {
-    this->fail_("capture_request_failed");
+  // Si une acquisition etait encore en vol au moment ou le continu a ete
+  // arrete, la laisser se terminer proprement avant de changer de framesize.
+  if (this->jpeg_source_->capture_pending()) {
+    this->capture_started_ms_ = millis();
+    this->state_ = FullCalibrationState::WAIT_IDLE;
+    return true;
+  }
+
+  if (!this->begin_full_resolution_()) {
+    this->fail_("full_resolution_start_failed");
     return false;
   }
   return true;
@@ -149,6 +140,21 @@ bool FullCalibrationController::start(float known_distance_mm,
 
 void FullCalibrationController::loop() {
   switch (this->state_) {
+    case FullCalibrationState::WAIT_IDLE: {
+      const uint32_t now = millis();
+      if (this->jpeg_source_->capture_pending()) {
+        if (now - this->capture_started_ms_ > CAPTURE_TIMEOUT_MS) {
+          this->fail_("camera_idle_timeout");
+        }
+        return;
+      }
+
+      if (!this->begin_full_resolution_()) {
+        this->fail_("full_resolution_start_failed");
+      }
+      return;
+    }
+
     case FullCalibrationState::WAIT_CAPTURE: {
       const uint32_t now = millis();
       if (this->jpeg_source_->capture_pending()) {
@@ -250,7 +256,8 @@ void FullCalibrationController::cancel() {
 }
 
 bool FullCalibrationController::running() const {
-  return this->state_ == FullCalibrationState::WAIT_CAPTURE ||
+  return this->state_ == FullCalibrationState::WAIT_IDLE ||
+         this->state_ == FullCalibrationState::WAIT_CAPTURE ||
          this->state_ == FullCalibrationState::FILTER ||
          this->state_ == FullCalibrationState::DETECT;
 }
@@ -260,6 +267,7 @@ FullCalibrationState FullCalibrationController::state() const { return this->sta
 const char *FullCalibrationController::state_text() const {
   switch (this->state_) {
     case FullCalibrationState::IDLE: return "idle";
+    case FullCalibrationState::WAIT_IDLE: return "wait_idle";
     case FullCalibrationState::WAIT_CAPTURE: return "wait_capture";
     case FullCalibrationState::FILTER: return "filter";
     case FullCalibrationState::DETECT: return "detect";
@@ -282,6 +290,21 @@ float FullCalibrationController::stddev_fx_px() const { return this->stddev_fx_p
 float FullCalibrationController::stddev_fy_px() const { return this->stddev_fy_px_; }
 const CameraCalibration &FullCalibrationController::result_calibration() const {
   return this->result_calibration_;
+}
+
+bool FullCalibrationController::begin_full_resolution_() {
+  // Liberer les buffers de traitement 800x600 avant l'allocation 5 MP pour
+  // maximiser la PSRAM disponible pendant cette operation exceptionnelle.
+  this->filtered_source_->release_buffers();
+
+  if (!this->resolution_controller_->apply("2560x1920")) {
+    return false;
+  }
+
+  this->detection_service_->reset_tracking();
+  ESP_LOGI(TAG, "Calibration full: resolution 2560x1920 active");
+
+  return this->request_next_capture_();
 }
 
 bool FullCalibrationController::request_next_capture_() {
