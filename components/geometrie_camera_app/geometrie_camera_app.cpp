@@ -24,6 +24,9 @@ GeometrieCameraApp::GeometrieCameraApp()
       continuous_measurement_controller_(&this->jpeg_diagnostic_, &this->image_sharpness_evaluator_,
                                          &this->jpeg_filtered_diagnostic_, &this->target_detection_service_,
                                          &this->measurement_manager_, &this->tracking_controller_),
+      full_calibration_controller_(&this->resolution_controller_, &this->jpeg_diagnostic_,
+                                   &this->jpeg_filtered_diagnostic_, &this->target_detection_service_,
+                                   &this->measurement_manager_, &this->continuous_measurement_controller_),
       runtime_diagnostics_(),
       api_wsdl_handler_(&this->resolution_controller_),
       settings_api_handler_(&this->settings_controller_, &this->resolution_controller_),
@@ -36,6 +39,7 @@ GeometrieCameraApp::GeometrieCameraApp()
                                &this->jpeg_filtered_diagnostic_),
       continuous_measurement_api_handler_(&this->continuous_measurement_controller_,
                                           &this->tracking_controller_),
+      full_calibration_api_handler_(&this->full_calibration_controller_),
       runtime_diagnostics_api_handler_(&this->runtime_diagnostics_, &this->jpeg_diagnostic_),
       api_registered_(false) {}
 
@@ -57,6 +61,7 @@ void GeometrieCameraApp::setup() {
 void GeometrieCameraApp::loop() {
   this->runtime_diagnostics_.record_loop();
   this->jpeg_diagnostic_.loop();
+  this->full_calibration_controller_.loop();
   this->continuous_measurement_controller_.loop();
 
   if (!this->api_registered_) {
@@ -74,6 +79,7 @@ void GeometrieCameraApp::dump_config() {
   ESP_LOGCONFIG(TAG, "  JPEG capture/filter API: /diagnostic-jpeg/*");
   ESP_LOGCONFIG(TAG, "  Target detection API: /target/detect, /target/status, /target/preview.bmp");
   ESP_LOGCONFIG(TAG, "  Measurement API: /measurement/*");
+  ESP_LOGCONFIG(TAG, "  Full calibration API: /calibration/full/*");
   ESP_LOGCONFIG(TAG, "  Continuous API: /continuous/start, /continuous/stop, /continuous/status");
   ESP_LOGCONFIG(TAG, "  Target physical size: %.2f mm", this->measurement_manager_.measurement_engine().target_size_mm());
   ESP_LOGCONFIG(TAG, "  Geometry calibration: %s",
@@ -99,6 +105,13 @@ void GeometrieCameraApp::set_camera(esp32_camera::ESP32Camera *camera) {
 std::string GeometrieCameraApp::status_text() const {
   if (!this->api_registered_) {
     return "API camera en attente du serveur web";
+  }
+
+  if (this->full_calibration_controller_.running()) {
+    return std::string("Calibration 2560x1920 - ") +
+           this->full_calibration_controller_.state_text() + " - " +
+           std::to_string(this->full_calibration_controller_.valid_samples()) + "/" +
+           std::to_string(this->full_calibration_controller_.requested_samples());
   }
 
   if (this->continuous_measurement_controller_.running()) {
@@ -179,6 +192,7 @@ JpegDiagnostic &GeometrieCameraApp::jpeg_diagnostic() { return this->jpeg_diagno
 JpegFilteredDiagnostic &GeometrieCameraApp::jpeg_filtered_diagnostic() { return this->jpeg_filtered_diagnostic_; }
 TargetDetectionService &GeometrieCameraApp::target_detection_service() { return this->target_detection_service_; }
 ContinuousMeasurementController &GeometrieCameraApp::continuous_measurement_controller() { return this->continuous_measurement_controller_; }
+FullCalibrationController &GeometrieCameraApp::full_calibration_controller() { return this->full_calibration_controller_; }
 
 void GeometrieCameraApp::register_api_if_possible_() {
   if (this->api_registered_ || web_server_base::global_web_server_base == nullptr) {
@@ -193,12 +207,14 @@ void GeometrieCameraApp::register_api_if_possible_() {
   web_server_base::global_web_server_base->add_handler(&this->target_detection_api_handler_);
   web_server_base::global_web_server_base->add_handler(&this->measurement_api_handler_);
   web_server_base::global_web_server_base->add_handler(&this->continuous_measurement_api_handler_);
+  web_server_base::global_web_server_base->add_handler(&this->full_calibration_api_handler_);
   web_server_base::global_web_server_base->add_handler(&this->runtime_diagnostics_api_handler_);
   this->api_registered_ = true;
 
   ESP_LOGI(TAG,
            "API HTTP camera enregistree: /api/wsdl, /api/runtime/status, /api/camera/settings*, "
-           "/api/camera/viewport, /tracking/*, /diagnostic-jpeg/*, /target/*, /measurement/* et /continuous/*");
+           "/api/camera/viewport, /tracking/*, /diagnostic-jpeg/*, /target/*, /measurement/*, "
+           "/calibration/full/* et /continuous/*");
 }
 
 }  // namespace geometrie_camera_app
