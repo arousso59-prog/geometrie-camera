@@ -11,6 +11,8 @@
 #include "camera_viewport_controller.h"
 #include "continuous_measurement_api.h"
 #include "continuous_measurement_controller.h"
+#include "full_calibration_api.h"
+#include "full_calibration_controller.h"
 #include "image_sharpness_evaluator.h"
 #include "jpeg_diagnostic.h"
 #include "jpeg_diagnostic_api.h"
@@ -71,6 +73,7 @@ class GeometrieCameraApp : public Component {
   JpegFilteredDiagnostic &jpeg_filtered_diagnostic();
   TargetDetectionService &target_detection_service();
   ContinuousMeasurementController &continuous_measurement_controller();
+  FullCalibrationController &full_calibration_controller();
 
  private:
   void register_api_if_possible_();
@@ -87,6 +90,7 @@ class GeometrieCameraApp : public Component {
   TargetDetectionService target_detection_service_;
   TargetDetectionPreview target_detection_preview_;
   ContinuousMeasurementController continuous_measurement_controller_;
+  FullCalibrationController full_calibration_controller_;
   RuntimeDiagnostics runtime_diagnostics_;
   ApiWsdlHandler api_wsdl_handler_;
   CameraSettingsApiHandler settings_api_handler_;
@@ -96,6 +100,7 @@ class GeometrieCameraApp : public Component {
   TargetDetectionApiHandler target_detection_api_handler_;
   MeasurementApiHandler measurement_api_handler_;
   ContinuousMeasurementApiHandler continuous_measurement_api_handler_;
+  FullCalibrationApiHandler full_calibration_api_handler_;
   RuntimeDiagnosticsApiHandler runtime_diagnostics_api_handler_;
   bool api_registered_;
 };
