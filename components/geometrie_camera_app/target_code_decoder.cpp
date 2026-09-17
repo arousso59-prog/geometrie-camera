@@ -23,6 +23,16 @@ constexpr uint8_t TARGET_GRID[7][7] = {
 
 constexpr float EXPANSION_FACTORS[] = {0.92f, 1.00f, 1.08f, 1.16f, 1.24f, 1.32f};
 
+// Recherche secondaire du quadrillage : la phase (0,0) est toujours essayee
+// en premier et conserve donc le cout normal lorsqu'elle suffit. Les autres
+// phases ne sont testees qu'en cas d'echec du decodeur standard.
+constexpr int8_t GRID_PHASES[][2] = {
+    {0, 0},
+    {-1, 0}, {1, 0}, {0, -1}, {0, 1},
+    {-1, -1}, {1, -1}, {-1, 1}, {1, 1},
+};
+constexpr float GRID_PHASE_STEP_CELL = 0.18f;
+
 constexpr float MIN_ACCEPTED_SCORE = 0.82f;
 constexpr float MIN_BORDER_BLACK_RATIO = 0.84f;
 constexpr int MIN_CODE_CONTRAST = 8;
@@ -52,6 +62,8 @@ TargetObservation TargetCodeDecoder::decode(const GrayFrameView &frame,
   float best_border_ratio = 0.0f;
   float best_outside_mean = 0.0f;
   float best_expansion = 0.0f;
+  float best_phase_u_cells = 0.0f;
+  float best_phase_v_cells = 0.0f;
   int best_contrast = 0;
   int best_black_mean = 0;
   uint8_t best_rotation = 0;
@@ -60,142 +72,157 @@ TargetObservation TargetCodeDecoder::decode(const GrayFrameView &frame,
     return best;
   }
 
-  for (float expansion : EXPANSION_FACTORS) {
-    TargetCandidate adjusted = candidate;
-    adjusted.top_left = expand_point(candidate.top_left, candidate.center_x, candidate.center_y, expansion);
-    adjusted.top_right = expand_point(candidate.top_right, candidate.center_x, candidate.center_y, expansion);
-    adjusted.bottom_right = expand_point(candidate.bottom_right, candidate.center_x, candidate.center_y, expansion);
-    adjusted.bottom_left = expand_point(candidate.bottom_left, candidate.center_x, candidate.center_y, expansion);
-    adjusted.center_x = candidate.center_x;
-    adjusted.center_y = candidate.center_y;
-    adjusted.width = 0.5f * (distance_between(adjusted.top_left, adjusted.top_right) +
-                             distance_between(adjusted.bottom_left, adjusted.bottom_right));
-    adjusted.height = 0.5f * (distance_between(adjusted.top_left, adjusted.bottom_left) +
-                              distance_between(adjusted.top_right, adjusted.bottom_right));
+  for (size_t phase_index = 0; phase_index < sizeof(GRID_PHASES) / sizeof(GRID_PHASES[0]); ++phase_index) {
+    const float phase_u_cells = static_cast<float>(GRID_PHASES[phase_index][0]) * GRID_PHASE_STEP_CELL;
+    const float phase_v_cells = static_cast<float>(GRID_PHASES[phase_index][1]) * GRID_PHASE_STEP_CELL;
+    const float phase_u = phase_u_cells / 7.0f;
+    const float phase_v = phase_v_cells / 7.0f;
 
-    if (adjusted.width < 10.0f || adjusted.height < 10.0f) {
-      continue;
-    }
+    for (float expansion : EXPANSION_FACTORS) {
+      TargetCandidate adjusted = candidate;
+      adjusted.top_left = expand_point(candidate.top_left, candidate.center_x, candidate.center_y, expansion);
+      adjusted.top_right = expand_point(candidate.top_right, candidate.center_x, candidate.center_y, expansion);
+      adjusted.bottom_right = expand_point(candidate.bottom_right, candidate.center_x, candidate.center_y, expansion);
+      adjusted.bottom_left = expand_point(candidate.bottom_left, candidate.center_x, candidate.center_y, expansion);
+      adjusted.center_x = candidate.center_x;
+      adjusted.center_y = candidate.center_y;
+      adjusted.width = 0.5f * (distance_between(adjusted.top_left, adjusted.top_right) +
+                               distance_between(adjusted.bottom_left, adjusted.bottom_right));
+      adjusted.height = 0.5f * (distance_between(adjusted.top_left, adjusted.bottom_left) +
+                                distance_between(adjusted.top_right, adjusted.bottom_right));
 
-    uint8_t samples[7][7];
-    for (uint8_t row = 0; row < 7; ++row) {
-      for (uint8_t column = 0; column < 7; ++column) {
-        samples[row][column] = this->sample_cell_(frame, adjusted, row, column);
+      if (adjusted.width < 10.0f || adjusted.height < 10.0f) {
+        continue;
       }
-    }
 
-    const float outside_mean = this->outside_mean_(frame, adjusted);
-
-    for (uint8_t rotation = 0; rotation < 4; ++rotation) {
-      uint32_t black_sum = 0;
-      uint32_t white_sum = 0;
-      uint16_t black_count = 0;
-      uint16_t white_count = 0;
-
+      uint8_t samples[7][7];
       for (uint8_t row = 0; row < 7; ++row) {
         for (uint8_t column = 0; column < 7; ++column) {
-          if (this->expected_cell_(row, column, rotation) != 0) {
-            black_sum += samples[row][column];
-            black_count++;
-          } else {
-            white_sum += samples[row][column];
-            white_count++;
-          }
+          samples[row][column] = this->sample_cell_(frame, adjusted, row, column, phase_u, phase_v);
         }
       }
 
-      if (black_count == 0 || white_count == 0) {
-        continue;
-      }
+      const float outside_mean = this->outside_mean_(frame, adjusted);
 
-      const int black_mean = static_cast<int>(black_sum / black_count);
-      const int white_mean = static_cast<int>(white_sum / white_count);
-      const int contrast = white_mean - black_mean;
-      if (contrast < MIN_CODE_CONTRAST) {
-        continue;
-      }
+      for (uint8_t rotation = 0; rotation < 4; ++rotation) {
+        uint32_t black_sum = 0;
+        uint32_t white_sum = 0;
+        uint16_t black_count = 0;
+        uint16_t white_count = 0;
 
-      if (outside_mean - static_cast<float>(black_mean) < MIN_OUTSIDE_BLACK_SEPARATION) {
-        continue;
-      }
-
-      const int threshold = (black_mean + white_mean) / 2;
-      uint16_t correct = 0;
-      uint16_t border_black = 0;
-      uint16_t border_total = 0;
-
-      for (uint8_t row = 0; row < 7; ++row) {
-        for (uint8_t column = 0; column < 7; ++column) {
-          const bool expected_black = this->expected_cell_(row, column, rotation) != 0;
-          const bool measured_black = static_cast<int>(samples[row][column]) < threshold;
-          if (expected_black == measured_black) {
-            correct++;
-          }
-
-          if (row == 0 || row == 6 || column == 0 || column == 6) {
-            border_total++;
-            if (measured_black) {
-              border_black++;
+        for (uint8_t row = 0; row < 7; ++row) {
+          for (uint8_t column = 0; column < 7; ++column) {
+            if (this->expected_cell_(row, column, rotation) != 0) {
+              black_sum += samples[row][column];
+              black_count++;
+            } else {
+              white_sum += samples[row][column];
+              white_count++;
             }
           }
         }
+
+        if (black_count == 0 || white_count == 0) {
+          continue;
+        }
+
+        const int black_mean = static_cast<int>(black_sum / black_count);
+        const int white_mean = static_cast<int>(white_sum / white_count);
+        const int contrast = white_mean - black_mean;
+        if (contrast < MIN_CODE_CONTRAST) {
+          continue;
+        }
+
+        if (outside_mean - static_cast<float>(black_mean) < MIN_OUTSIDE_BLACK_SEPARATION) {
+          continue;
+        }
+
+        const int threshold = (black_mean + white_mean) / 2;
+        uint16_t correct = 0;
+        uint16_t border_black = 0;
+        uint16_t border_total = 0;
+
+        for (uint8_t row = 0; row < 7; ++row) {
+          for (uint8_t column = 0; column < 7; ++column) {
+            const bool expected_black = this->expected_cell_(row, column, rotation) != 0;
+            const bool measured_black = static_cast<int>(samples[row][column]) < threshold;
+            if (expected_black == measured_black) {
+              correct++;
+            }
+
+            if (row == 0 || row == 6 || column == 0 || column == 6) {
+              border_total++;
+              if (measured_black) {
+                border_black++;
+              }
+            }
+          }
+        }
+
+        if (border_total == 0) {
+          continue;
+        }
+
+        const float border_ratio = static_cast<float>(border_black) / static_cast<float>(border_total);
+        if (border_ratio < MIN_BORDER_BLACK_RATIO) {
+          continue;
+        }
+
+        const float pattern_score = static_cast<float>(correct) / 49.0f;
+        const float contrast_score = std::min(1.0f, static_cast<float>(contrast) / 45.0f);
+        const float score = 0.86f * pattern_score + 0.10f * border_ratio + 0.04f * contrast_score;
+
+        if (score > best_score) {
+          best_score = score;
+          best.valid = score >= MIN_ACCEPTED_SCORE;
+          best.center_x_px = adjusted.center_x;
+          best.center_y_px = adjusted.center_y;
+          best.width_px = adjusted.width;
+          best.height_px = adjusted.height;
+          best.rotation_deg = static_cast<float>(rotation) * 90.0f;
+          best.quality = score;
+
+          // Expansion et phase servent uniquement a rendre le decodage robuste.
+          // La geometrie de pose reste celle du candidat d'entree raffine, afin
+          // de ne pas injecter les ajustements de lecture dans la mesure physique.
+          best.top_left_px.x = candidate.top_left.x;
+          best.top_left_px.y = candidate.top_left.y;
+          best.top_right_px.x = candidate.top_right.x;
+          best.top_right_px.y = candidate.top_right.y;
+          best.bottom_right_px.x = candidate.bottom_right.x;
+          best.bottom_right_px.y = candidate.bottom_right.y;
+          best.bottom_left_px.x = candidate.bottom_left.x;
+          best.bottom_left_px.y = candidate.bottom_left.y;
+
+          best_pattern_score = pattern_score;
+          best_border_ratio = border_ratio;
+          best_outside_mean = outside_mean;
+          best_expansion = expansion;
+          best_phase_u_cells = phase_u_cells;
+          best_phase_v_cells = phase_v_cells;
+          best_contrast = contrast;
+          best_black_mean = black_mean;
+          best_rotation = rotation;
+        }
       }
+    }
 
-      if (border_total == 0) {
-        continue;
-      }
-
-      const float border_ratio = static_cast<float>(border_black) / static_cast<float>(border_total);
-      if (border_ratio < MIN_BORDER_BLACK_RATIO) {
-        continue;
-      }
-
-      const float pattern_score = static_cast<float>(correct) / 49.0f;
-      const float contrast_score = std::min(1.0f, static_cast<float>(contrast) / 45.0f);
-      const float score = 0.86f * pattern_score + 0.10f * border_ratio + 0.04f * contrast_score;
-
-      if (score > best_score) {
-        best_score = score;
-        best.valid = score >= MIN_ACCEPTED_SCORE;
-        best.center_x_px = adjusted.center_x;
-        best.center_y_px = adjusted.center_y;
-        best.width_px = adjusted.width;
-        best.height_px = adjusted.height;
-        best.rotation_deg = static_cast<float>(rotation) * 90.0f;
-        best.quality = score;
-
-        // Les facteurs d'expansion servent uniquement a echantillonner le code.
-        // Pour la mesure de pose, conserver la geometrie du candidat d'entree
-        // (raffinee quand TargetCornerRefiner a reussi) afin que la taille
-        // physique ne saute pas de 8 % quand le meilleur facteur change.
-        best.top_left_px.x = candidate.top_left.x;
-        best.top_left_px.y = candidate.top_left.y;
-        best.top_right_px.x = candidate.top_right.x;
-        best.top_right_px.y = candidate.top_right.y;
-        best.bottom_right_px.x = candidate.bottom_right.x;
-        best.bottom_right_px.y = candidate.bottom_right.y;
-        best.bottom_left_px.x = candidate.bottom_left.x;
-        best.bottom_left_px.y = candidate.bottom_left.y;
-
-        best_pattern_score = pattern_score;
-        best_border_ratio = border_ratio;
-        best_outside_mean = outside_mean;
-        best_expansion = expansion;
-        best_contrast = contrast;
-        best_black_mean = black_mean;
-        best_rotation = rotation;
-      }
+    // Le chemin courant garde exactement un seul balayage de phase lorsque la
+    // cible est deja reconnue. Les huit positions supplementaires ne coutent du
+    // temps que pour une cible difficile ou en biais.
+    if (best.valid) {
+      break;
     }
   }
 
   if (best_score > 0.0f) {
     ESP_LOGD(TAG,
-             "V5.4 candidate center=(%.1f,%.1f) size=%.1fx%.1f rot=%u score=%.4f valid=%s "
-             "pattern=%.4f border=%.4f contrast=%d outside=%.1f black=%d expansion=%.2f",
+             "V5.6 candidate center=(%.1f,%.1f) size=%.1fx%.1f rot=%u score=%.4f valid=%s "
+             "pattern=%.4f border=%.4f contrast=%d outside=%.1f black=%d expansion=%.2f phase=(%.2f,%.2f)cell",
              candidate.center_x, candidate.center_y, best.width_px, best.height_px,
              static_cast<unsigned>(best_rotation) * 90U, best_score, best.valid ? "YES" : "NO",
              best_pattern_score, best_border_ratio, best_contrast, best_outside_mean,
-             best_black_mean, best_expansion);
+             best_black_mean, best_expansion, best_phase_u_cells, best_phase_v_cells);
   }
 
   return best;
@@ -257,9 +284,9 @@ uint8_t TargetCodeDecoder::sample_point_(const GrayFrameView &frame, const Targe
 }
 
 uint8_t TargetCodeDecoder::sample_cell_(const GrayFrameView &frame, const TargetCandidate &candidate,
-                                        uint8_t row, uint8_t column) const {
-  const float center_u = (static_cast<float>(column) + 0.5f) / 7.0f;
-  const float center_v = (static_cast<float>(row) + 0.5f) / 7.0f;
+                                        uint8_t row, uint8_t column, float phase_u, float phase_v) const {
+  const float center_u = (static_cast<float>(column) + 0.5f) / 7.0f + phase_u;
+  const float center_v = (static_cast<float>(row) + 0.5f) / 7.0f + phase_v;
   const float delta = 0.20f / 7.0f;
 
   const float offsets[5][2] = {
@@ -270,12 +297,18 @@ uint8_t TargetCodeDecoder::sample_cell_(const GrayFrameView &frame, const Target
       {0.0f, delta},
   };
 
-  uint16_t sum = 0;
-  for (const auto &offset : offsets) {
-    const TargetPoint point = this->project_(candidate, center_u + offset[0], center_v + offset[1]);
-    sum += this->sample_point_(frame, point);
+  uint8_t values[5];
+  for (size_t index = 0; index < 5; ++index) {
+    const TargetPoint point = this->project_(candidate,
+                                             center_u + offsets[index][0],
+                                             center_v + offsets[index][1]);
+    values[index] = this->sample_point_(frame, point);
   }
-  return static_cast<uint8_t>(sum / 5U);
+
+  // La mediane resiste mieux qu'une moyenne a un echantillon tombe sur une
+  // frontiere noir/blanc ou sur un petit artefact JPEG.
+  std::sort(values, values + 5);
+  return values[2];
 }
 
 uint8_t TargetCodeDecoder::expected_cell_(uint8_t row, uint8_t column, uint8_t rotation_quarters) const {
