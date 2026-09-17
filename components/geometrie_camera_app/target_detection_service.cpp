@@ -43,6 +43,12 @@ bool TargetDetectionService::detect() {
   return true;
 }
 
+void TargetDetectionService::reset_tracking() {
+  if (this->detector_ != nullptr) {
+    this->detector_->reset_tracking();
+  }
+}
+
 bool TargetDetectionService::ready() const { return this->ready_; }
 bool TargetDetectionService::target_found() const { return this->ready_ && this->last_observation_.valid; }
 uint32_t TargetDetectionService::detection_count() const { return this->detection_count_; }
