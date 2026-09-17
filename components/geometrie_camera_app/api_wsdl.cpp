@@ -32,6 +32,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "    <item>Le repere camera est X vers la droite, Y vers le bas et Z vers l avant.</item>\n";
   xml += "    <item>GeometryMeasurementEngine V3 fusionne z_from_width_mm et z_from_height_mm de facon continue ; pose_z_mm reste un controle independant issu de l homographie.</item>\n";
   xml += "    <item>Le tracking automatique est configure par /tracking/config. /continuous/start ne pilote pas la ROI depuis le PC : l ESP32 gere SEARCH et PRECISE de facon autonome.</item>\n";
+  xml += "    <item>La configuration du tracking est verrouillee pendant une session active ; /tracking/config/set renvoie HTTP 409 dans ce cas.</item>\n";
   xml += "    <item>SEARCH utilise un plein champ 800x600. PRECISE utilise une ROI native 800x600 dans le repere de reference 2560x1920.</item>\n";
   xml += "    <item>Les coordonnees ROI sont converties en repere de reference 2560x1920 avant le calcul de mesure ; la calibration existante est redimensionnee par GeometryMeasurementEngine selon sa resolution de reference.</item>\n";
   xml += "    <item>Apres lost_cycles pertes consecutives en PRECISE, le capteur revient automatiquement en SEARCH. La ROI PRECISE est recentree quand le centre cible quitte la zone centrale configuree.</item>\n";
@@ -73,7 +74,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "    <parameter name=\"enabled\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0,1\" default=\"0\"/>\n";
   xml += "    <parameter name=\"lost_cycles\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"1..10\" default=\"3\"/>\n";
   xml += "    <parameter name=\"recenter_threshold_pct\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"50..90\" default=\"70\"/>\n";
-  xml += "    <response code=\"200\" content_type=\"application/json\"/><response code=\"400\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/>\n";
+  xml += "    <response code=\"200\" content_type=\"application/json\"/><response code=\"400\" content_type=\"application/json\"/><response code=\"409\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
   xml += "  <method name=\"tracking_status\" http=\"GET\" path=\"/tracking/status\">\n";
   xml += "    <comment>Expose enabled, supported, mode SEARCH/PRECISE, verrouillage cible, pertes, transitions et viewport.</comment>\n";
