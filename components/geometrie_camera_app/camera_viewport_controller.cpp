@@ -74,6 +74,12 @@ bool CameraViewportController::apply_zoom_medium(float center_reference_x, float
                                   ZOOM_MEDIUM_WIDTH, ZOOM_MEDIUM_HEIGHT);
 }
 
+bool CameraViewportController::apply_zoom_fine(float center_reference_x, float center_reference_y) {
+  return this->apply_zoom_window_(CameraViewportMode::ZOOM_FINE,
+                                  center_reference_x, center_reference_y,
+                                  ZOOM_FINE_WIDTH, ZOOM_FINE_HEIGHT);
+}
+
 bool CameraViewportController::apply_precise_roi(float center_reference_x, float center_reference_y) {
   return this->apply_zoom_window_(CameraViewportMode::PRECISE_ROI,
                                   center_reference_x, center_reference_y,
@@ -86,12 +92,64 @@ bool CameraViewportController::recenter_current_zoom(float center_reference_x, f
       return this->apply_zoom_wide(center_reference_x, center_reference_y);
     case CameraViewportMode::ZOOM_MEDIUM:
       return this->apply_zoom_medium(center_reference_x, center_reference_y);
+    case CameraViewportMode::ZOOM_FINE:
+      return this->apply_zoom_fine(center_reference_x, center_reference_y);
     case CameraViewportMode::PRECISE_ROI:
       return this->apply_precise_roi(center_reference_x, center_reference_y);
     case CameraViewportMode::SEARCH_FULL:
     default:
       return this->apply_search();
   }
+}
+
+
+bool CameraViewportController::recenter_current_zoom_from_local(float local_center_x,
+                                                                float local_center_y,
+                                                                bool &viewport_moved) {
+  viewport_moved = false;
+  if (this->snapshot_.mode == CameraViewportMode::SEARCH_FULL ||
+      this->snapshot_.output_width == 0 || this->snapshot_.output_height == 0) {
+    return false;
+  }
+
+  const float desired_local_x = this->snapshot_.output_width * 0.5f;
+  const float desired_local_y = this->snapshot_.output_height * 0.5f;
+  const float error_local_x = local_center_x - desired_local_x;
+  const float error_local_y = local_center_y - desired_local_y;
+
+  // Boucle fermee : on translate la fenetre courante de l'erreur observee
+  // multipliee par l'echelle du viewport courant. Un gain de 0.80 evite les
+  // sur-corrections si le mapping reel du capteur differe legerement du modele.
+  constexpr float FEEDBACK_GAIN = 0.80f;
+  const float requested_center_x =
+      this->snapshot_.window_x + this->snapshot_.window_width * 0.5f +
+      error_local_x * this->snapshot_.scale_x * FEEDBACK_GAIN;
+  const float requested_center_y =
+      this->snapshot_.window_y + this->snapshot_.window_height * 0.5f +
+      error_local_y * this->snapshot_.scale_y * FEEDBACK_GAIN;
+
+  const uint16_t previous_x = this->snapshot_.window_x;
+  const uint16_t previous_y = this->snapshot_.window_y;
+  const CameraViewportMode mode = this->snapshot_.mode;
+
+  if (!this->recenter_current_zoom(requested_center_x, requested_center_y)) {
+    return false;
+  }
+
+  viewport_moved = this->snapshot_.window_x != previous_x ||
+                   this->snapshot_.window_y != previous_y;
+
+  ESP_LOGI(TAG,
+           "Recentrage boucle fermee %s: local=(%.1f,%.1f) erreur=(%.1f,%.1f) "
+           "ROI (%u,%u)->(%u,%u) moved=%s",
+           mode_text(mode),
+           local_center_x, local_center_y,
+           error_local_x, error_local_y,
+           static_cast<unsigned>(previous_x), static_cast<unsigned>(previous_y),
+           static_cast<unsigned>(this->snapshot_.window_x),
+           static_cast<unsigned>(this->snapshot_.window_y),
+           viewport_moved ? "oui" : "non");
+  return true;
 }
 
 bool CameraViewportController::apply_zoom_window_(CameraViewportMode mode,
@@ -230,6 +288,7 @@ const char *CameraViewportController::mode_text(CameraViewportMode mode) {
   switch (mode) {
     case CameraViewportMode::ZOOM_WIDE: return "zoom_wide";
     case CameraViewportMode::ZOOM_MEDIUM: return "zoom_medium";
+    case CameraViewportMode::ZOOM_FINE: return "zoom_fine";
     case CameraViewportMode::PRECISE_ROI: return "precise";
     case CameraViewportMode::SEARCH_FULL:
     default: return "search";
