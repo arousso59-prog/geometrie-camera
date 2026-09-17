@@ -59,6 +59,7 @@ class TargetTrackingController {
   bool target_locked_;
   bool precise_centered_;
   uint8_t precise_center_attempts_;
+  uint8_t stage_recenter_attempts_;
   std::string last_error_;
 };
 
