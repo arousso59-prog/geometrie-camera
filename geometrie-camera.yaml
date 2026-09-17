@@ -93,6 +93,11 @@ esp32_camera:
   pixel_format: ${camera_pixel_format}
   resolution: 2560x1920
   jpeg_quality: 10
+  # ESPHome utilise true par defaut pour ces deux options. On les fixe
+  # explicitement car le calcul des ROI convertit le repere image affiche
+  # vers le repere physique OV5640 en tenant compte de cette orientation.
+  vertical_flip: true
+  horizontal_mirror: true
   frame_buffer_count: 1
   frame_buffer_location: PSRAM
   max_framerate: 5 fps
