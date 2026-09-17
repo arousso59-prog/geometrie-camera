@@ -72,7 +72,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
 
   xml += "  <method name=\"tracking_config\" http=\"GET\" path=\"/tracking/config\"><response code=\"200\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
   xml += "  <method name=\"tracking_config_set\" http=\"GET\" path=\"/tracking/config/set\">\n";
-  xml += "    <parameter name=\"enabled\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0,1\" default=\"0\"/>\n";
+  xml += "    <parameter name=\"enabled\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0,1\" default=\"1\"/>\n";
   xml += "    <parameter name=\"lost_cycles\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"1..10\" default=\"3\"/>\n";
   xml += "    <parameter name=\"recenter_threshold_pct\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"50..90\" default=\"70\"/>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/><response code=\"400\" content_type=\"application/json\"/><response code=\"409\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/>\n";
@@ -109,7 +109,8 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "    <parameter name=\"clear_distortion\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0,1\"/>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/><response code=\"400\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
-  xml += "  <method name=\"measurement_calibrate\" http=\"GET\" path=\"/measurement/calibrate\"><parameter name=\"distance_mm\" location=\"query\" required=\"true\" type=\"number\" allowed=\"50..20000\"/><parameter name=\"target_size_mm\" location=\"query\" required=\"false\" type=\"number\" allowed=\"1..1000\"/><parameter name=\"force\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0,1\" default=\"0\"/><response code=\"200\" content_type=\"application/json\"/><response code=\"400\" content_type=\"application/json\"/><response code=\"409\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";  xml += "  <method name=\"full_calibration_start\" http=\"GET\" path=\"/calibration/full/start\">\n";
+  xml += "  <method name=\"measurement_calibrate\" http=\"GET\" path=\"/measurement/calibrate\"><parameter name=\"distance_mm\" location=\"query\" required=\"true\" type=\"number\" allowed=\"50..20000\"/><parameter name=\"target_size_mm\" location=\"query\" required=\"false\" type=\"number\" allowed=\"1..1000\"/><parameter name=\"force\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0,1\" default=\"0\"/><response code=\"200\" content_type=\"application/json\"/><response code=\"400\" content_type=\"application/json\"/><response code=\"409\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
+  xml += "  <method name=\"full_calibration_start\" http=\"GET\" path=\"/calibration/full/start\">\n";
   xml += "    <comment>Mode autonome ESP : arret du continu, passage 2560x1920, 10 mesures valides par defaut, moyenne fx/fy et retour 800x600.</comment>\n";
   xml += "    <parameter name=\"distance_mm\" location=\"query\" required=\"true\" type=\"number\" allowed=\"50..20000\"/>\n";
   xml += "    <parameter name=\"target_size_mm\" location=\"query\" required=\"true\" type=\"number\" allowed=\"1..1000\"/>\n";
