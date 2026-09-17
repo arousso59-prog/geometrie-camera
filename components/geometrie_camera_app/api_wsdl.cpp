@@ -22,9 +22,9 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
                                         : "unknown";
 
   std::string xml;
-  xml.reserve(26000);
+  xml.reserve(26500);
   xml += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-  xml += "<api name=\"geometrie-camera\" version=\"19\" style=\"REST-over-HTTP\">\n";
+  xml += "<api name=\"geometrie-camera\" version=\"20\" style=\"REST-over-HTTP\">\n";
   xml += "  <description>API camera OV5640 : capture JPEG, reglages capteur, controle nettete cible, correction grayscale, detection cible, calibration optique verrouillee, distance robuste et acquisition continue.</description>\n";
   xml += "  <conventions>\n";
   xml += "    <item>Les routes de commande de mise au point utilisent encore HTTP GET.</item>\n";
@@ -37,6 +37,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "    <item>L homographie ne pilote plus la distance et ne valide yaw/pitch/roll que si pose_z_mm reste a moins de 25 pourcent de z_mm.</item>\n";
   xml += "    <item>La calibration est stockee pour une resolution de reference et redimensionnee proportionnellement pour les autres resolutions de meme cadrage.</item>\n";
   xml += "    <item>Le mode continu est interdit sans calibration valide et n empile jamais les cycles.</item>\n";
+  xml += "    <item>Dans timing du mode continu, processing_ms est la somme capture+nettete+filtre+detection+calcul. orchestration_ms est le temps mural restant dans le cycle entre les etapes et les passages de boucle ESPHome. Il ne correspond pas a un traitement effectue par le PC.</item>\n";
   xml += "  </conventions>\n";
 
   xml += "  <method name=\"api_wsdl\" http=\"GET\" path=\"/api/wsdl\"><response code=\"200\" content_type=\"application/xml\"/></method>\n";
@@ -101,7 +102,10 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "    <response code=\"200\" content_type=\"application/json\"/><response code=\"400\" content_type=\"application/json\"/><response code=\"409\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
   xml += "  <method name=\"continuous_stop\" http=\"GET\" path=\"/continuous/stop\"><response code=\"200\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
-  xml += "  <method name=\"continuous_status\" http=\"GET\" path=\"/continuous/status\"><response code=\"200\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
+  xml += "  <method name=\"continuous_status\" http=\"GET\" path=\"/continuous/status\">\n";
+  xml += "    <comment>Expose etat, compteurs, nettete et timing. timing contient capture_ms, sharpness_ms, filter_ms, detect_ms, compute_ms, processing_ms, orchestration_ms et cycle_ms.</comment>\n";
+  xml += "    <response code=\"200\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/>\n";
+  xml += "  </method>\n";
 
   xml += "</api>\n";
   auto *response = request->beginResponse(200, "application/xml", xml);
