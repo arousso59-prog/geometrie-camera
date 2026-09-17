@@ -144,7 +144,7 @@ void JpegDiagnosticApiHandler::handle_capture_(AsyncWebServerRequest *request) {
                 "{\"accepted\":true,\"status\":\"capture_requested\",\"resolution\":\"%s\","
                 "\"fresh_frame\":true}",
                 active_resolution);
-  request->send(202, "application/json", json);
+  request->send(200, "application/json", json);
 }
 
 void JpegDiagnosticApiHandler::handle_image_(AsyncWebServerRequest *request) {
