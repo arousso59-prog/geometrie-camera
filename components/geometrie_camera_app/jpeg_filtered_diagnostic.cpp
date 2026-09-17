@@ -168,7 +168,7 @@ bool JpegFilteredDiagnostic::process(bool apply_artifact_correction) {
     return false;
   }
 
-  if (!this->ensure_buffers_(width, height)) {
+  if (!this->ensure_buffers_(width, height, apply_artifact_correction)) {
     ESP_LOGE(TAG, "PSRAM insuffisante pour le diagnostic JPEG %ux%u",
              static_cast<unsigned>(width), static_cast<unsigned>(height));
     return false;
@@ -255,6 +255,15 @@ bool JpegFilteredDiagnostic::process(bool apply_artifact_correction) {
   return true;
 }
 
+void JpegFilteredDiagnostic::release_buffers() {
+  this->clear_buffers_();
+  this->width_ = 0;
+  this->height_ = 0;
+  this->ready_ = false;
+  this->artifact_correction_applied_ = false;
+  this->bmp_size_ = 0;
+}
+
 bool JpegFilteredDiagnostic::ready() const { return this->ready_; }
 uint32_t JpegFilteredDiagnostic::process_count() const { return this->process_count_; }
 uint32_t JpegFilteredDiagnostic::source_capture_count() const { return this->source_capture_count_; }
@@ -280,7 +289,7 @@ const JpegArtifactCorrectionStats &JpegFilteredDiagnostic::correction_stats() co
   return this->corrector_.stats();
 }
 
-bool JpegFilteredDiagnostic::ensure_buffers_(uint16_t width, uint16_t height) {
+bool JpegFilteredDiagnostic::ensure_buffers_(uint16_t width, uint16_t height, bool need_green_mask) {
   const size_t row_stride = (static_cast<size_t>(width) + 3U) & ~static_cast<size_t>(3U);
   const size_t required_bmp = BMP_PIXEL_OFFSET + row_stride * height;
   const size_t required_mask = (static_cast<size_t>(width) * height + 7U) / 8U;
@@ -298,7 +307,8 @@ bool JpegFilteredDiagnostic::ensure_buffers_(uint16_t width, uint16_t height) {
     this->bmp_capacity_ = required_bmp;
   }
 
-  if (this->green_mask_ == nullptr || this->green_mask_capacity_ < required_mask) {
+  if (need_green_mask &&
+      (this->green_mask_ == nullptr || this->green_mask_capacity_ < required_mask)) {
     auto *new_mask = static_cast<uint8_t *>(
         heap_caps_malloc(required_mask, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     if (new_mask == nullptr) {
