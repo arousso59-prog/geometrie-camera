@@ -3,12 +3,11 @@
 #include <cstdint>
 #include <string>
 
+#include "camera_viewport_controller.h"
 #include "types.h"
 
 namespace esphome {
 namespace geometrie_camera_app {
-
-class CameraViewportController;
 
 enum class TrackingUpdateResult : uint8_t {
   NONE,
