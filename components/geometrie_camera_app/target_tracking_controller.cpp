@@ -14,12 +14,6 @@ static const char *const TAG = "target_tracking";
 constexpr float RECOVERY_MIN_SIDE_PX = 12.0f;
 constexpr float RECOVERY_MAX_ASPECT_RATIO = 2.0f;
 
-// Au premier passage en PRECISE, on veut vraiment ramener la cible pres du
-// centre de la fenetre et pas seulement verifier qu'elle n'est pas pres du bord.
-// Cela compense aussi un petit decalage constant entre le repere SEARCH
-// (binning + scaling) et la fenetre native OV5640.
-constexpr float PRECISE_CENTER_TOLERANCE_FRACTION = 0.06f;
-constexpr float PRECISE_CENTER_MIN_TOLERANCE_PX = 24.0f;
 constexpr uint8_t PRECISE_CENTER_MAX_ATTEMPTS = 3;
 
 bool has_recovery_candidate(const TargetObservation &observation,
