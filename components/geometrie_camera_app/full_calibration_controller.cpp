@@ -378,6 +378,9 @@ void FullCalibrationController::restore_nominal_camera_() {
   if (this->filtered_source_ != nullptr) {
     this->filtered_source_->release_buffers();
   }
+  if (this->jpeg_source_ != nullptr) {
+    this->jpeg_source_->release_buffer();
+  }
   if (this->resolution_controller_ != nullptr &&
       !this->resolution_controller_->apply("800x600")) {
     ESP_LOGE(TAG, "Impossible de restaurer la resolution nominale 800x600");
