@@ -91,7 +91,9 @@ esp32_camera:
   href_pin: GPIO7
   pixel_clock_pin: GPIO13
   pixel_format: ${camera_pixel_format}
-  resolution: 800x600
+  # Initialisation interne en 5 MP pour dimensionner le framebuffer JPEG.
+  # L'application rebascule immediatement en 800x600 dans setup().
+  resolution: 2560x1920
   jpeg_quality: 10
   # Reglage nominal du projet : JPEG en niveaux de gris. On garde JPEG pour
   # les performances/memoire et on applique l'effet monochrome du capteur.
