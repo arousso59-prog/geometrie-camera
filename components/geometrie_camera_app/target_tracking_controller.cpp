@@ -11,10 +11,16 @@ namespace geometrie_camera_app {
 
 namespace {
 static const char *const TAG = "target_tracking";
+
 constexpr float RECOVERY_MIN_SIDE_PX = 12.0f;
 constexpr float RECOVERY_MAX_ASPECT_RATIO = 2.0f;
 
+constexpr uint8_t STAGE_RECENTER_MAX_ATTEMPTS = 3;
 constexpr uint8_t PRECISE_CENTER_MAX_ATTEMPTS = 3;
+constexpr float CENTER_TOLERANCE_FRACTION_X = 0.06f;
+constexpr float CENTER_TOLERANCE_FRACTION_Y = 0.06f;
+constexpr float CENTER_TOLERANCE_MIN_X_PX = 32.0f;
+constexpr float CENTER_TOLERANCE_MIN_Y_PX = 24.0f;
 
 bool has_recovery_candidate(const TargetObservation &observation,
                             const CameraViewportSnapshot &snapshot) {
@@ -26,7 +32,8 @@ bool has_recovery_candidate(const TargetObservation &observation,
       !std::isfinite(observation.quality)) {
     return false;
   }
-  if (observation.width_px < RECOVERY_MIN_SIDE_PX || observation.height_px < RECOVERY_MIN_SIDE_PX ||
+  if (observation.width_px < RECOVERY_MIN_SIDE_PX ||
+      observation.height_px < RECOVERY_MIN_SIDE_PX ||
       observation.quality <= 0.0f) {
     return false;
   }
@@ -43,6 +50,24 @@ bool has_recovery_candidate(const TargetObservation &observation,
          observation.center_y_px < snapshot.output_height;
 }
 
+bool local_centering_needed(const TargetObservation &observation,
+                            const CameraViewportSnapshot &snapshot) {
+  if (snapshot.output_width == 0 || snapshot.output_height == 0 ||
+      !std::isfinite(observation.center_x_px) || !std::isfinite(observation.center_y_px)) {
+    return false;
+  }
+
+  const float desired_x = snapshot.output_width * 0.5f;
+  const float desired_y = snapshot.output_height * 0.5f;
+  const float tolerance_x = std::max(CENTER_TOLERANCE_MIN_X_PX,
+                                     snapshot.output_width * CENTER_TOLERANCE_FRACTION_X);
+  const float tolerance_y = std::max(CENTER_TOLERANCE_MIN_Y_PX,
+                                     snapshot.output_height * CENTER_TOLERANCE_FRACTION_Y);
+
+  return std::fabs(observation.center_x_px - desired_x) > tolerance_x ||
+         std::fabs(observation.center_y_px - desired_y) > tolerance_y;
+}
+
 bool recovery_candidate_needs_recenter(const TargetObservation &observation,
                                        const CameraViewportSnapshot &snapshot,
                                        uint8_t central_percent) {
@@ -57,27 +82,6 @@ bool recovery_candidate_needs_recenter(const TargetObservation &observation,
          observation.center_x_px > snapshot.output_width - margin_x ||
          observation.center_y_px < margin_y ||
          observation.center_y_px > snapshot.output_height - margin_y;
-}
-
-bool viewport_needs_recenter(const TargetObservation &reference,
-                             const CameraViewportSnapshot &snapshot) {
-  if (snapshot.mode == CameraViewportMode::SEARCH_FULL ||
-      snapshot.window_width == 0 || snapshot.window_height == 0) {
-    return false;
-  }
-
-  const int32_t max_x = static_cast<int32_t>(snapshot.reference_width - snapshot.window_width);
-  const int32_t max_y = static_cast<int32_t>(snapshot.reference_height - snapshot.window_height);
-  int32_t desired_x = static_cast<int32_t>(std::lround(reference.center_x_px)) -
-                      static_cast<int32_t>(snapshot.window_width / 2U);
-  int32_t desired_y = static_cast<int32_t>(std::lround(reference.center_y_px)) -
-                      static_cast<int32_t>(snapshot.window_height / 2U);
-  desired_x = std::max<int32_t>(0, std::min<int32_t>(desired_x, max_x));
-  desired_y = std::max<int32_t>(0, std::min<int32_t>(desired_y, max_y));
-
-  constexpr int32_t ORIGIN_TOLERANCE_PX = 8;
-  return std::abs(desired_x - static_cast<int32_t>(snapshot.window_x)) > ORIGIN_TOLERANCE_PX ||
-         std::abs(desired_y - static_cast<int32_t>(snapshot.window_y)) > ORIGIN_TOLERANCE_PX;
 }
 
 bool target_safe_for_window(const TargetObservation &reference,
@@ -106,9 +110,6 @@ bool target_safe_for_window(const TargetObservation &reference,
   const float max_target_y = std::max(std::max(reference.top_left_px.y, reference.top_right_px.y),
                                       std::max(reference.bottom_left_px.y, reference.bottom_right_px.y));
 
-  // Garder au moins environ une demi-cellule de cible autour du quadrilatere,
-  // avec une borne basse pour les petites cibles. Le but est d'eviter de passer
-  // a un zoom plus serre quand la cible serait collee au bord du capteur.
   const float target_side = std::max(reference.width_px, reference.height_px);
   const float safety = std::max(12.0f, target_side / 14.0f);
 
@@ -117,7 +118,8 @@ bool target_safe_for_window(const TargetObservation &reference,
          min_y >= static_cast<float>(next_y) + safety &&
          max_target_y <= static_cast<float>(next_y + next_height) - safety;
 }
-}
+
+}  // namespace
 
 TargetTrackingController::TargetTrackingController(CameraViewportController *viewport_controller)
     : viewport_controller_(viewport_controller),
@@ -130,6 +132,7 @@ TargetTrackingController::TargetTrackingController(CameraViewportController *vie
       target_locked_(false),
       precise_centered_(false),
       precise_center_attempts_(0),
+      stage_recenter_attempts_(0),
       last_error_() {}
 
 bool TargetTrackingController::start() {
@@ -211,15 +214,17 @@ TrackingUpdateResult TargetTrackingController::update_after_detection(
   if (target_found && local_observation.valid) {
     this->target_locked_ = true;
     this->current_lost_count_ = 0;
-    const TargetObservation reference = this->viewport_controller_->to_reference(local_observation);
 
-    const CameraViewportMode mode = this->viewport_controller_->snapshot().mode;
+    const CameraViewportSnapshot snapshot = this->viewport_controller_->snapshot();
+    const CameraViewportMode mode = snapshot.mode;
+    const TargetObservation reference = this->viewport_controller_->to_reference(local_observation);
 
     if (mode == CameraViewportMode::SEARCH_FULL) {
       if (!this->viewport_controller_->apply_zoom_wide(reference.center_x_px, reference.center_y_px)) {
         this->last_error_ = "zoom_wide_viewport_failed";
         return TrackingUpdateResult::ERROR;
       }
+      this->stage_recenter_attempts_ = 0;
       this->precise_centered_ = false;
       this->precise_center_attempts_ = 0;
       this->transition_count_++;
@@ -228,111 +233,147 @@ TrackingUpdateResult TargetTrackingController::update_after_detection(
       return TrackingUpdateResult::VIEWPORT_CHANGED;
     }
 
-    if (mode == CameraViewportMode::ZOOM_WIDE) {
-      const CameraViewportSnapshot &snapshot = this->viewport_controller_->snapshot();
-      if (viewport_needs_recenter(reference, snapshot)) {
-        if (!this->viewport_controller_->recenter_current_zoom(reference.center_x_px, reference.center_y_px)) {
-          this->last_error_ = "zoom_wide_recenter_failed";
+    // Boucle fermee pour les niveaux intermediaires : avant de reduire encore
+    // le champ, regarder ou la cible est REELLEMENT arrivee dans l'image
+    // 800x600 et corriger le viewport courant a partir de cette erreur locale.
+    if (mode == CameraViewportMode::ZOOM_WIDE ||
+        mode == CameraViewportMode::ZOOM_MEDIUM ||
+        mode == CameraViewportMode::ZOOM_FINE) {
+      const bool needs_centering = local_centering_needed(local_observation, snapshot);
+
+      if (needs_centering && this->stage_recenter_attempts_ < STAGE_RECENTER_MAX_ATTEMPTS) {
+        bool moved = false;
+        if (!this->viewport_controller_->recenter_current_zoom_from_local(
+                local_observation.center_x_px, local_observation.center_y_px, moved)) {
+          this->last_error_ = "zoom_feedback_recenter_failed";
           return TrackingUpdateResult::ERROR;
         }
-        this->transition_count_++;
-        this->last_error_.clear();
-        ESP_LOGI(TAG, "Tracking ZOOM_WIDE recentre avant niveau suivant");
-        return TrackingUpdateResult::VIEWPORT_CHANGED;
+
+        this->stage_recenter_attempts_++;
+        if (moved) {
+          this->transition_count_++;
+          this->last_error_.clear();
+          ESP_LOGI(TAG,
+                   "Tracking %s boucle fermee %u/%u avant zoom suivant",
+                   CameraViewportController::mode_text(mode),
+                   static_cast<unsigned>(this->stage_recenter_attempts_),
+                   static_cast<unsigned>(STAGE_RECENTER_MAX_ATTEMPTS));
+          return TrackingUpdateResult::VIEWPORT_CHANGED;
+        }
+
+        ESP_LOGW(TAG,
+                 "Tracking %s: correction locale demandee mais viewport en butee selon le modele",
+                 CameraViewportController::mode_text(mode));
+        this->stage_recenter_attempts_ = STAGE_RECENTER_MAX_ATTEMPTS;
       }
 
-      if (!target_safe_for_window(reference, snapshot,
-                                  CameraViewportController::ZOOM_MEDIUM_WIDTH,
-                                  CameraViewportController::ZOOM_MEDIUM_HEIGHT)) {
+      if (needs_centering && this->stage_recenter_attempts_ >= STAGE_RECENTER_MAX_ATTEMPTS) {
+        ESP_LOGW(TAG,
+                 "Tracking %s: centrage imparfait apres %u essais, position locale=(%.1f,%.1f)",
+                 CameraViewportController::mode_text(mode),
+                 static_cast<unsigned>(STAGE_RECENTER_MAX_ATTEMPTS),
+                 local_observation.center_x_px, local_observation.center_y_px);
+      }
+
+      uint16_t next_width = CameraViewportController::OUTPUT_WIDTH;
+      uint16_t next_height = CameraViewportController::OUTPUT_HEIGHT;
+      if (mode == CameraViewportMode::ZOOM_WIDE) {
+        next_width = CameraViewportController::ZOOM_MEDIUM_WIDTH;
+        next_height = CameraViewportController::ZOOM_MEDIUM_HEIGHT;
+      } else if (mode == CameraViewportMode::ZOOM_MEDIUM) {
+        next_width = CameraViewportController::ZOOM_FINE_WIDTH;
+        next_height = CameraViewportController::ZOOM_FINE_HEIGHT;
+      }
+
+      if (!target_safe_for_window(reference, snapshot, next_width, next_height)) {
         this->last_error_.clear();
-        ESP_LOGW(TAG, "Tracking ZOOM_WIDE conserve: cible trop proche du bord pour ZOOM_MEDIUM");
+        ESP_LOGW(TAG,
+                 "Tracking %s conserve: cible non sure pour fenetre suivante %ux%u",
+                 CameraViewportController::mode_text(mode),
+                 static_cast<unsigned>(next_width), static_cast<unsigned>(next_height));
         return TrackingUpdateResult::NONE;
       }
 
-      if (!this->viewport_controller_->apply_zoom_medium(reference.center_x_px, reference.center_y_px)) {
-        this->last_error_ = "zoom_medium_viewport_failed";
+      bool applied = false;
+      const char *next_name = "PRECISE";
+      if (mode == CameraViewportMode::ZOOM_WIDE) {
+        applied = this->viewport_controller_->apply_zoom_medium(reference.center_x_px,
+                                                                reference.center_y_px);
+        next_name = "ZOOM_MEDIUM";
+      } else if (mode == CameraViewportMode::ZOOM_MEDIUM) {
+        applied = this->viewport_controller_->apply_zoom_fine(reference.center_x_px,
+                                                              reference.center_y_px);
+        next_name = "ZOOM_FINE";
+      } else {
+        applied = this->viewport_controller_->apply_precise_roi(reference.center_x_px,
+                                                                reference.center_y_px);
+      }
+
+      if (!applied) {
+        this->last_error_ = "next_zoom_viewport_failed";
         return TrackingUpdateResult::ERROR;
+      }
+
+      this->stage_recenter_attempts_ = 0;
+      if (mode == CameraViewportMode::ZOOM_FINE) {
+        this->precise_centered_ = false;
+        this->precise_center_attempts_ = 0;
       }
       this->transition_count_++;
       this->last_error_.clear();
-      ESP_LOGI(TAG, "Tracking ZOOM_WIDE -> ZOOM_MEDIUM");
+      ESP_LOGI(TAG, "Tracking %s -> %s",
+               CameraViewportController::mode_text(mode), next_name);
       return TrackingUpdateResult::VIEWPORT_CHANGED;
     }
 
-    if (mode == CameraViewportMode::ZOOM_MEDIUM) {
-      const CameraViewportSnapshot &snapshot = this->viewport_controller_->snapshot();
-      if (viewport_needs_recenter(reference, snapshot)) {
-        if (!this->viewport_controller_->recenter_current_zoom(reference.center_x_px, reference.center_y_px)) {
-          this->last_error_ = "zoom_medium_recenter_failed";
-          return TrackingUpdateResult::ERROR;
-        }
-        this->transition_count_++;
-        this->last_error_.clear();
-        ESP_LOGI(TAG, "Tracking ZOOM_MEDIUM recentre avant PRECISE");
-        return TrackingUpdateResult::VIEWPORT_CHANGED;
-      }
-
-      if (!target_safe_for_window(reference, snapshot,
-                                  CameraViewportController::OUTPUT_WIDTH,
-                                  CameraViewportController::OUTPUT_HEIGHT)) {
-        this->last_error_.clear();
-        ESP_LOGW(TAG, "Tracking ZOOM_MEDIUM conserve: cible trop proche du bord pour PRECISE");
-        return TrackingUpdateResult::NONE;
-      }
-
-      if (!this->viewport_controller_->apply_precise_roi(reference.center_x_px, reference.center_y_px)) {
-        this->last_error_ = "precise_viewport_failed";
-        return TrackingUpdateResult::ERROR;
-      }
-      this->precise_centered_ = false;
-      this->precise_center_attempts_ = 0;
-      this->transition_count_++;
-      this->last_error_.clear();
-      ESP_LOGI(TAG, "Tracking ZOOM_MEDIUM -> PRECISE");
-      return TrackingUpdateResult::VIEWPORT_CHANGED;
-    }
-
-    const CameraViewportSnapshot &snapshot = this->viewport_controller_->snapshot();
-
-    // En PRECISE, recentrer uniquement si l'origine de la fenetre peut
-    // reellement bouger. Pres d'un bord du capteur, (400,300) est parfois
-    // physiquement impossible : dans ce cas le meilleur cadrage contraint est
-    // accepte au lieu de provoquer des recentrages repetes.
-    if (!this->precise_centered_) {
-      if (viewport_needs_recenter(reference, snapshot) &&
+    // Niveau final : meme principe de boucle fermee, mais sans obligation
+    // d'atteindre exactement (400,300) si le viewport ne peut plus bouger.
+    if (mode == CameraViewportMode::PRECISE_ROI) {
+      const bool needs_centering = local_centering_needed(local_observation, snapshot);
+      if (!this->precise_centered_ && needs_centering &&
           this->precise_center_attempts_ < PRECISE_CENTER_MAX_ATTEMPTS) {
-        if (!this->viewport_controller_->apply_precise_roi(reference.center_x_px, reference.center_y_px)) {
-          this->last_error_ = "precise_centering_failed";
+        bool moved = false;
+        if (!this->viewport_controller_->recenter_current_zoom_from_local(
+                local_observation.center_x_px, local_observation.center_y_px, moved)) {
+          this->last_error_ = "precise_feedback_recenter_failed";
           return TrackingUpdateResult::ERROR;
         }
+
         this->precise_center_attempts_++;
-        this->transition_count_++;
-        this->last_error_.clear();
-        ESP_LOGI(TAG,
-                 "Tracking PRECISE centrage fin %u/%u: local=(%.1f,%.1f) ref=(%.1f,%.1f)",
-                 static_cast<unsigned>(this->precise_center_attempts_),
-                 static_cast<unsigned>(PRECISE_CENTER_MAX_ATTEMPTS),
-                 local_observation.center_x_px, local_observation.center_y_px,
-                 reference.center_x_px, reference.center_y_px);
-        return TrackingUpdateResult::VIEWPORT_CHANGED;
+        if (moved) {
+          this->transition_count_++;
+          this->last_error_.clear();
+          ESP_LOGI(TAG,
+                   "Tracking PRECISE boucle fermee %u/%u: local=(%.1f,%.1f)",
+                   static_cast<unsigned>(this->precise_center_attempts_),
+                   static_cast<unsigned>(PRECISE_CENTER_MAX_ATTEMPTS),
+                   local_observation.center_x_px, local_observation.center_y_px);
+          return TrackingUpdateResult::VIEWPORT_CHANGED;
+        }
       }
+
       this->precise_centered_ = true;
       this->precise_center_attempts_ = 0;
-    }
 
-    if (this->viewport_controller_->target_near_edge(local_observation,
-                                                      this->recenter_threshold_pct_) &&
-        viewport_needs_recenter(reference, snapshot)) {
-      if (!this->viewport_controller_->apply_precise_roi(reference.center_x_px, reference.center_y_px)) {
-        this->last_error_ = "precise_recenter_failed";
-        return TrackingUpdateResult::ERROR;
+      if (this->viewport_controller_->target_near_edge(local_observation,
+                                                        this->recenter_threshold_pct_)) {
+        bool moved = false;
+        if (!this->viewport_controller_->recenter_current_zoom_from_local(
+                local_observation.center_x_px, local_observation.center_y_px, moved)) {
+          this->last_error_ = "precise_recenter_failed";
+          return TrackingUpdateResult::ERROR;
+        }
+        if (moved) {
+          this->precise_centered_ = false;
+          this->transition_count_++;
+          this->last_error_.clear();
+          ESP_LOGI(TAG, "Tracking PRECISE recentre car cible proche du bord");
+          return TrackingUpdateResult::VIEWPORT_CHANGED;
+        }
       }
-      this->precise_centered_ = false;
-      this->precise_center_attempts_ = 0;
-      this->transition_count_++;
+
       this->last_error_.clear();
-      ESP_LOGD(TAG, "Tracking PRECISE recentered");
-      return TrackingUpdateResult::VIEWPORT_CHANGED;
+      return TrackingUpdateResult::NONE;
     }
 
     this->last_error_.clear();
@@ -340,46 +381,40 @@ TrackingUpdateResult TargetTrackingController::update_after_detection(
   }
 
   this->target_locked_ = false;
-  if (this->current_lost_count_ < 255) this->current_lost_count_++;
-
-  const CameraViewportSnapshot &snapshot = this->viewport_controller_->snapshot();
-  const bool zoom_active = snapshot.mode != CameraViewportMode::SEARCH_FULL;
-  TargetObservation fallback_reference = local_observation;
-  if (zoom_active && has_recovery_candidate(local_observation, snapshot)) {
-    fallback_reference = this->viewport_controller_->to_reference(local_observation);
+  if (this->current_lost_count_ < 255) {
+    this->current_lost_count_++;
   }
-  const bool fallback_needs_centering =
-      snapshot.mode == CameraViewportMode::PRECISE_ROI &&
-      !this->precise_centered_ &&
-      has_recovery_candidate(local_observation, snapshot) &&
-      viewport_needs_recenter(fallback_reference, snapshot);
+
+  const CameraViewportSnapshot snapshot = this->viewport_controller_->snapshot();
+  const bool zoom_active = snapshot.mode != CameraViewportMode::SEARCH_FULL;
 
   if (zoom_active &&
       this->current_lost_count_ < this->lost_cycles_ &&
       has_recovery_candidate(local_observation, snapshot) &&
-      (fallback_needs_centering ||
+      (local_centering_needed(local_observation, snapshot) ||
        recovery_candidate_needs_recenter(local_observation, snapshot,
                                          this->recenter_threshold_pct_))) {
-    const TargetObservation reference = this->viewport_controller_->to_reference(local_observation);
-    if (!this->viewport_controller_->recenter_current_zoom(reference.center_x_px, reference.center_y_px)) {
+    bool moved = false;
+    if (!this->viewport_controller_->recenter_current_zoom_from_local(
+            local_observation.center_x_px, local_observation.center_y_px, moved)) {
       this->last_error_ = "zoom_recovery_recenter_failed";
       return TrackingUpdateResult::ERROR;
     }
 
-    if (fallback_needs_centering && this->precise_center_attempts_ < PRECISE_CENTER_MAX_ATTEMPTS) {
-      this->precise_center_attempts_++;
+    if (moved) {
+      this->transition_count_++;
+      this->last_error_.clear();
+      ESP_LOGI(TAG,
+               "Tracking %s recentrage secours boucle fermee: local=(%.1f,%.1f) "
+               "taille=%.1fx%.1f qualite=%.3f perte=%u/%u",
+               CameraViewportController::mode_text(snapshot.mode),
+               local_observation.center_x_px, local_observation.center_y_px,
+               local_observation.width_px, local_observation.height_px,
+               local_observation.quality,
+               static_cast<unsigned>(this->current_lost_count_),
+               static_cast<unsigned>(this->lost_cycles_));
+      return TrackingUpdateResult::VIEWPORT_CHANGED;
     }
-    this->transition_count_++;
-    this->last_error_.clear();
-    ESP_LOGI(TAG,
-             "Tracking %s recentrage secours: local=(%.1f,%.1f) taille=%.1fx%.1f qualite=%.3f -> ref=(%.1f,%.1f), perte=%u/%u",
-             CameraViewportController::mode_text(snapshot.mode),
-             local_observation.center_x_px, local_observation.center_y_px,
-             local_observation.width_px, local_observation.height_px,
-             local_observation.quality, reference.center_x_px, reference.center_y_px,
-             static_cast<unsigned>(this->current_lost_count_),
-             static_cast<unsigned>(this->lost_cycles_));
-    return TrackingUpdateResult::VIEWPORT_CHANGED;
   }
 
   if (zoom_active && this->current_lost_count_ >= this->lost_cycles_) {
@@ -388,6 +423,7 @@ TrackingUpdateResult TargetTrackingController::update_after_detection(
       return TrackingUpdateResult::ERROR;
     }
     this->current_lost_count_ = 0;
+    this->stage_recenter_attempts_ = 0;
     this->precise_centered_ = false;
     this->precise_center_attempts_ = 0;
     this->transition_count_++;
@@ -409,6 +445,7 @@ TargetObservation TargetTrackingController::to_reference(
 uint16_t TargetTrackingController::reference_width() const {
   return CameraViewportController::REFERENCE_WIDTH;
 }
+
 uint16_t TargetTrackingController::reference_height() const {
   return CameraViewportController::REFERENCE_HEIGHT;
 }
@@ -421,6 +458,7 @@ const char *TargetTrackingController::mode_text() const {
 CameraViewportController *TargetTrackingController::viewport_controller() {
   return this->viewport_controller_;
 }
+
 const CameraViewportController *TargetTrackingController::viewport_controller() const {
   return this->viewport_controller_;
 }
@@ -429,6 +467,7 @@ void TargetTrackingController::clear_runtime_() {
   this->current_lost_count_ = 0;
   this->transition_count_ = 0;
   this->target_locked_ = false;
+  this->stage_recenter_attempts_ = 0;
   this->precise_centered_ = false;
   this->precise_center_attempts_ = 0;
   this->last_error_.clear();
