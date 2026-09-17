@@ -288,7 +288,8 @@ void ContinuousMeasurementController::loop() {
       if (!this->detection_service_->target_found()) {
         if (this->tracking_controller_ != nullptr && this->tracking_controller_->enabled()) {
           const TrackingUpdateResult tracking_result =
-              this->tracking_controller_->update_after_detection(false, TargetObservation());
+              this->tracking_controller_->update_after_detection(
+                  false, this->detection_service_->last_observation());
           if (tracking_result == TrackingUpdateResult::ERROR) {
             this->fail_cycle_("tracking_update_failed");
             return;
