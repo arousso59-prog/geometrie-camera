@@ -26,7 +26,7 @@ class TargetDetectionPreview {
   void clear_buffer_();
   void build_bmp_header_(uint16_t width, uint16_t height, size_t row_stride);
   void draw_rectangle_(uint8_t *pixels, size_t row_stride, uint16_t width, uint16_t height,
-                       int x0, int y0, int x1, int y1) const;
+                       int x0, int y0, int x1, int y1, bool dashed) const;
 
   uint8_t *bmp_buffer_;
   size_t bmp_size_;
