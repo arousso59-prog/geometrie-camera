@@ -7,7 +7,8 @@
 3. **Avant toute nouvelle fonction, revoir l'architecture** et choisir explicitement la classe responsable.
 4. **Penser chaque évolution avec les tests** : logique pure séparée du matériel, dépendances injectées.
 5. **Toute évolution de l'API HTTP met à jour `GET /api/wsdl` dans le même changement.**
-6. **Les gros buffers image/vision sont budgétés et placés en PSRAM**, réutilisés entre appels et jamais alloués en gros temporaires sur la pile HTTP.
+6. **Les gros buffers image/vision sont placés en PSRAM et réutilisés.**
+7. **Le PC configure et observe ; l'ESP32 orchestre les cycles temps réel.** Le PC ne déplace jamais la ROI à chaque image.
 
 ## Architecture actuelle
 
@@ -16,13 +17,16 @@ GeometrieCameraApp
 ├── CameraResolutionController
 ├── CameraSettingsController
 │   └── CameraSettingsApiHandler
+├── CameraViewportController
+├── TargetTrackingController
+│   └── TargetTrackingApiHandler
 ├── JpegDiagnostic
 │   └── JpegDiagnosticApiHandler
 ├── ImageSharpnessEvaluator
 ├── JpegFilteredDiagnostic
 │   ├── JpegArtifactCorrector
 │   └── JpegFilteredDiagnosticApiHandler
-├── TargetDetector
+├── TargetDetector V5.5
 │   ├── TargetCandidateFinder
 │   ├── TargetCornerRefiner
 │   └── TargetCodeDecoder
@@ -30,7 +34,7 @@ GeometrieCameraApp
 │   └── TargetDetectionApiHandler
 ├── TargetDetectionPreview
 ├── MeasurementManager
-│   └── GeometryMeasurementEngine
+│   └── GeometryMeasurementEngine V3
 ├── MeasurementApiHandler
 ├── ContinuousMeasurementController
 │   └── ContinuousMeasurementApiHandler
@@ -39,148 +43,147 @@ GeometrieCameraApp
 └── ApiWsdlHandler
 ```
 
-Le `TargetDetector` appartient directement à l'application. `MeasurementManager` ne contient pas de second détecteur : la mesure réutilise le `TargetObservation` validé par `TargetDetectionService`.
+## Tracking haute résolution
 
-`ContinuousMeasurementController` ne contient aucune logique de vision ou de géométrie. Il orchestre les briques existantes et porte seulement la politique temporelle : choix de la ROI de netteté à partir de la dernière cible valide, recapture et cadence.
+### `CameraViewportController`
+
+Responsabilité unique : piloter le cadrage du capteur et convertir les coordonnées locales vers un repère stable.
+
+Repère de référence actuel :
+
+```text
+2560 × 1920
+```
+
+Deux viewports sont supportés :
+
+```text
+SEARCH
+  fenêtre référence : 2560×1920
+  sortie             : 800×600
+  scale              : 3,2 × 3,2
+
+PRECISE
+  fenêtre référence : 800×600 centrée sur la cible
+  sortie             : 800×600
+  scale              : 1 × 1
+```
+
+En PRECISE, le crop est programmé directement dans l'OV5640 via `sensor_t::set_res_raw()`. Le filtre ne reçoit donc jamais un grayscale 2560×1920 complet.
+
+La conversion générale est :
+
+```text
+x_ref = roi_x + (x_local + 0,5) × scale_x - 0,5
+y_ref = roi_y + (y_local + 0,5) × scale_y - 0,5
+```
+
+Les quatre coins, le centre et les dimensions de `TargetObservation` sont convertis avant le calcul géométrique.
+
+### `TargetTrackingController`
+
+Responsabilité unique : décider **quand** changer de viewport.
+
+Configuration actuelle :
+
+```text
+enabled                 false par défaut pendant validation
+lost_cycles             3
+recenter_threshold_pct  70
+```
+
+Automate :
+
+```text
+SEARCH
+  ↓ cible valide
+PRECISE
+  ├── cible proche du bord → recentrage PRECISE
+  ├── cible valide         → rester PRECISE
+  └── cible perdue N fois  → SEARCH
+```
+
+Le contrôleur ne réalise ni capture, ni filtre, ni détection, ni mesure.
+
+### Changement de viewport
+
+Un changement de viewport ne doit jamais modifier le repère pendant le calcul du cycle en cours :
+
+```text
+capture
+→ filtre
+→ détection dans viewport courant
+→ conversion vers repère 2560×1920
+→ mesure
+→ éventuel changement de viewport
+→ cycle suivant
+```
+
+Après changement de viewport :
+
+- l'historique temporel du `TargetDetector` est remis à zéro ;
+- la ROI de netteté est invalidée ;
+- la référence de netteté est remise à zéro ;
+- `JpegDiagnostic` purge la frame éventuellement pré-acquise avant de demander la frame fraîche suivante.
 
 ## Chaîne image et mesure
 
 ```text
 OV5640 JPEG
    ↓
+CameraViewportController
+   ↓ sortie 800×600
 JpegDiagnostic
    ↓
-ImageSharpnessEvaluator (mode continu uniquement)
-   ├── ROI autour de la dernière cible valide
-   ├── TJpgDec en 1/4
-   ├── score sur les 20 % de Laplaciens les plus forts
-   └── recapture possible avant traitement lourd
+ImageSharpnessEvaluator
    ↓
 JpegFilteredDiagnostic V2
-   ├── TJpgDec pleine résolution
-   ├── RGB -> luminance 8 bits
-   └── masque vert brut
+   ├── JPEG -> luminance 8 bits
+   ├── masque vert
+   └── JpegArtifactCorrector
    ↓
-JpegArtifactCorrector
-   ↓
-GrayFrameView corrigé
-   ↓
-TargetDetector V5.4
-   ↓
-TargetObservation
-   ↓
-MeasurementManager
-   ↓
-GeometryMeasurementEngine V2
-   ├── distance robuste par taille apparente
-   ├── X/Y/Z + angles de visée
-   └── pose homographique validée séparément
+TargetDetector V5.5
+   ↓ TargetObservation locale
+CameraViewportController::to_reference()
+   ↓ TargetObservation 2560×1920
+GeometryMeasurementEngine V3
 ```
 
-En mode continu :
+## `TargetDetector V5.5`
+
+Le détecteur orchestre localisation, raffinement des coins et validation du motif 7×7.
+
+Pour sélectionner entre plusieurs candidats valides, il ajoute une cohérence temporelle de position et de taille. Cette continuité est remise à zéro lors d'un changement SEARCH/PRECISE, car les coordonnées locales et la taille apparente changent brutalement.
+
+Preview :
 
 ```text
-REQUEST_CAPTURE
-      ↓
-WAIT_CAPTURE
-      ↓
-SHARPNESS
-  ├── pas de ROI cible connue → pas de rejet, passage au filtre
-  ├── ROI floue + essais restants → recapture immédiate
-  └── ROI acceptable / essais épuisés
-      ↓
-FILTER
-      ↓
-DETECT
-      ↓ cible trouvée
-mise à jour ROI + référence netteté
-      ↓
-COMPUTE
-      ↓
-WAIT_INTERVAL
-      ↺
+cadre plein      cible validée
+cadre pointillé  meilleur candidat localisé mais rejeté
 ```
 
-Aucun cycle n'est empilé. Si le traitement dépasse l'intervalle demandé, le cycle suivant repart dès que le précédent est terminé.
+## `GeometryMeasurementEngine V3`
 
-## Responsabilités principales
-
-### `JpegDiagnostic`
-
-Acquisition JPEG native. Une demande purge la frame pré-acquise par ESPHome puis demande une frame fraîche. Le JPEG est copié en PSRAM car le framebuffer caméra est éphémère.
-
-### `ImageSharpnessEvaluator`
-
-Responsabilité unique : calculer un **score relatif de netteté dans une région demandée** du dernier JPEG.
-
-Méthode actuelle :
-
-- décode le JPEG avec TJpgDec à l'échelle `1/4` ;
-- 800×600 devient 200×150 ;
-- conserve un petit buffer grayscale persistant ;
-- projette la ROI source dans cette image réduite ;
-- calcule le Laplacien absolu dans la ROI ;
-- classe ces réponses dans un histogramme compact ;
-- conserve uniquement les **20 % de réponses les plus fortes** et moyenne leur amplitude ;
-- ne connaît ni la cible ni le détecteur et ne décide pas seul du rejet d'une image.
-
-Cette sélection des contours forts évite qu'un grand nombre de pixels de mur uniforme dilue le score de la cible. L'histogramme fait 256 cases et représente le Laplacien 0..1020 par pas de 4, ce qui évite un gros buffer temporaire.
-
-Le passage de 1/8 à 1/4 reste volontaire : à environ 2 m en 800×600, une cible de ~15 px ne représentait qu'environ 2 px en 1/8, contre ~4 px en 1/4.
-
-**Frontière de test :** même ROI nette/floue -> score relatif ; mur uniforme autour de la cible ; ROI proche des bords ; variation de résolution ; erreur de décodage -> évaluation invalide sans bloquer le pipeline principal.
-
-### `JpegFilteredDiagnostic`
-
-Transforme le JPEG en grayscale corrigible, construit le masque vert et appelle le correcteur. Le workspace TJpgDec de 4 ko est persistant.
-
-Référence 1600×1200 validée :
-
-```text
-decode_ms      ≈ 1476 ms
-correction_ms  ≈ 553 ms
-total_ms       ≈ 2036 ms
-```
-
-À 800×600, les essais continus observés sont autour de 400 ms de filtre total, dont environ 350 ms de décodage et 50 ms de correction.
-
-Le mini-décodage de netteté 1/4 coûte encore environ 315–320 ms sur les premiers essais. Il reste donc un candidat clair pour une future fusion avec le décodage principal afin d'éviter de décoder deux fois le JPEG.
-
-### `TargetDetector`
-
-Orchestre localisation, raffinement des coins et validation du code 7×7. Les facteurs de dilatation du décodeur servent à lire le code et ne modifient pas la géométrie physique mémorisée dans `TargetObservation`.
-
-### `MeasurementManager` / `GeometryMeasurementEngine`
-
-`MeasurementManager` conserve la dernière mesure valide et son compteur. Il ne détecte pas la cible.
-
-La distance V2 repose sur :
+La distance conserve les estimations indépendantes :
 
 ```text
 z_from_width_mm  = fx × target_size_mm / largeur_px
 z_from_height_mm = fy × target_size_mm / hauteur_px
-z_mm             = min(z_from_width_mm, z_from_height_mm)
 ```
 
-Puis :
+`z_mm` les fusionne de façon continue : moyenne harmonique si elles sont proches, transition progressive vers la plus petite estimation entre 3 % et 15 % de désaccord.
 
-```text
-nx = (center_x - cx) / fx
-ny = (center_y - cy) / fy
-x_mm = nx × z_mm
-y_mm = ny × z_mm
-distance_mm = sqrt(x_mm² + y_mm² + z_mm²)
-```
+Le centre utilisé pour X/Y et les bearings est l'intersection des diagonales des quatre coins raffinés.
 
-L'homographie sert uniquement à l'orientation du plan. `pose_valid` n'est vrai que si sa profondeur reste cohérente avec la distance robuste.
+L'homographie pilote l'orientation du plan et fournit `pose_z_mm` comme contrôle indépendant de cohérence.
 
-### Calibration
+## Calibration
 
-La calibration à distance connue fournit `fx/fy/cx/cy` et mémorise la résolution de référence. Une calibration valide est verrouillée ; `force=1` est nécessaire pour la remplacer. Modifier `target_size_mm` invalide la calibration.
+`CameraCalibration` mémorise `fx/fy/cx/cy` ainsi que sa résolution de référence. `effective_calibration()` redimensionne ces paramètres vers la résolution logique utilisée par le calcul.
 
-Le mode continu est interdit sans calibration valide et s'arrête si elle disparaît.
+En mode tracking, la mesure est toujours appelée avec le repère logique 2560×1920. Une calibration plein champ réalisée à 800×600 reste donc redimensionnable ; après validation du tracking, la procédure de référence pourra être standardisée en 2560×1920.
 
-### `ContinuousMeasurementController`
+## `ContinuousMeasurementController`
 
 Dépendances :
 
@@ -190,101 +193,61 @@ ImageSharpnessEvaluator
 JpegFilteredDiagnostic
 TargetDetectionService
 MeasurementManager
+TargetTrackingController
 ```
 
-Politique de netteté ROI V2 :
-
-- la ROI est centrée sur la **dernière cible réellement détectée** ;
-- sa taille est environ `2,5 × max(width_px, height_px)` avec un minimum de `48×48 px` dans l'image source ;
-- la calibration/détection effectuée avant le démarrage peut fournir la ROI initiale ;
-- sans ROI connue, le contrôleur ne rejette jamais une image sur un score global du décor ;
-- le score correspond aux 20 % de contours les plus forts de la ROI ;
-- la référence n'est mise à jour qu'après une nouvelle détection valide ;
-- avant intégration, une nouvelle mesure de référence est limitée à ±15 % de la référence précédente ;
-- la référence est ensuite filtrée lentement avec `7/8 ancienne + 1/8 nouvelle bornée` ;
-- une image dont le score ROI tombe sous **45 %** de la référence est considérée fortement dégradée ;
-- au maximum **2 recaptures immédiates** sont effectuées par cycle ;
-- si la troisième image reste faible, le pipeline continue malgré tout pour éviter un blocage ;
-- en cas d'échec du mini-décodage de netteté, le filtre/détecteur principal continue.
-
-Cette politique est volontairement permissive : le contrôle de netteté doit éliminer seulement les captures manifestement inutilisables, pas remplacer le détecteur de cible.
-
-Le contrôleur chronomètre le dernier cycle par poste :
+Il orchestre :
 
 ```text
-capture_ms       somme des captures du cycle, recaptures incluses
-sharpness_ms     somme des contrôles de netteté ROI
-filter_ms
-detect_ms
-compute_ms
-cycle_ms
+REQUEST_CAPTURE
+→ WAIT_CAPTURE
+→ SHARPNESS
+→ FILTER
+→ DETECT
+→ COMPUTE
+→ mise à jour tracking/viewport
+→ WAIT_INTERVAL
 ```
 
-Il expose également :
+Aucun cycle n'est empilé.
+
+Le snapshot de timing publié correspond toujours au dernier cycle terminé.
+
+## Mémoire image
+
+Le principe retenu est de **ne pas décoder une image grayscale 2560×1920 complète**.
+
+Ordres de grandeur :
 
 ```text
-sharpness.score_x100
-sharpness.reference_x100
-sharpness.ok
-sharpness.capture_retries
-sharpness.blur_retry_count
-sharpness.roi_active
-sharpness.roi_x / roi_y
-sharpness.roi_width / roi_height
+grayscale 800×600    ≈ 0,48 Mo
+grayscale 2560×1920  ≈ 4,92 Mo
 ```
 
-**Frontières de test :** calibration absente -> démarrage refusé ; première image sans ROI -> pas de rejet ; cible valide -> ROI mémorisée ; flou net dans ROI -> recapture ; image exploitable à score moyen -> pas de faux rejet ; pic de score -> référence ne s'emballe pas ; décor uniforme hors ROI sans influence ; maximum deux recaptures ; déplacement cible -> nouvelle ROI après détection ; cible absente -> cycle suivant ; perte calibration -> arrêt.
+Avec 8 Mo de PSRAM, le plein format laisserait trop peu de marge pour JPEG, masque, framebuffer et workspaces. Le mode PRECISE conserve une sortie 800×600 et gagne en précision par crop natif du capteur.
 
-### `CameraResolutionController` / `CameraSettingsApiHandler`
-
-`CameraResolutionController` reste propriétaire de la résolution. `CameraSettingsApiHandler` l'agrège simplement avec les réglages caméra :
+## API tracking
 
 ```text
-GET /api/camera/settings
-GET /api/camera/settings/set?resolution=800x600
+GET /api/camera/viewport
+GET /tracking/config
+GET /tracking/config/set?enabled=<0|1>&lost_cycles=<1..10>&recenter_threshold_pct=<50..90>
+GET /tracking/status
 ```
 
-### Interface Web ESPHome
+`/continuous/status` expose également un bloc `tracking` pour éviter un polling supplémentaire depuis la supervision PC.
 
-Les valeurs principales (`distance`, `Z`, `X/Y`, angles de visée, qualité) affichent **la dernière mesure valide** et ne repassent plus à `N/A` lorsqu'un cycle ne détecte pas la cible. L'état `03 Cible actuelle` indique séparément le résultat du cycle courant.
+`GET /api/wsdl` est la référence du contrat HTTP. Version actuelle : **21**.
 
-Les timings capture/netteté/filtre/détection/calcul et les compteurs de recapture sont affichés afin de guider les optimisations futures.
+## Validation immédiate
 
-### `ApiWsdlHandler`
-
-`GET /api/wsdl` est la référence du contrat HTTP. Version actuelle : **15** depuis la stabilisation du score de netteté ROI, du seuil de recapture et de la référence de session.
-
-## API actuelle
-
-```text
-GET /api/wsdl
-GET /api/runtime/status
-GET /api/camera/settings
-GET /api/camera/settings/set?<parametres>&resolution=<optionnel>
-GET /diagnostic-jpeg/capture?resolution=<optionnel>
-GET /diagnostic-jpeg/status
-GET /diagnostic-jpeg/image.jpg
-GET /diagnostic-jpeg/filter
-GET /diagnostic-jpeg/filter-status
-GET /diagnostic-jpeg/filtered.bmp
-GET /target/detect
-GET /target/status
-GET /target/preview.bmp
-GET /measurement/config
-GET /measurement/config/set?target_size_mm=<mm>
-GET /measurement/calibrate?distance_mm=<mm>&target_size_mm=<optionnel>&force=<0|1>
-GET /measurement/compute
-GET /measurement/status
-GET /continuous/start?interval_ms=<optionnel>
-GET /continuous/stop
-GET /continuous/status
-```
-
-## Feuille de route immédiate
-
-1. compiler/flasher la netteté ROI V2 ;
-2. laisser une cible immobile plusieurs dizaines de cycles et vérifier la stabilité `score_x100` / `reference_x100` ;
-3. provoquer volontairement du flou et vérifier que les recaptures concernent surtout ces événements ;
-4. comparer le nombre de `blur_retry_count` et le taux de cibles trouvées avec le test précédent ;
-5. mesurer le coût du double décodage JPEG et préparer ensuite sa suppression si le filtre de netteté est validé ;
-6. reprendre la validation des angles et la future approche haute résolution + ROI.
+1. compiler et flasher avec tracking désactivé ;
+2. vérifier le pipeline historique ;
+3. vérifier `/tracking/status` avec `supported=true` ;
+4. activer le tracking ;
+5. valider SEARCH → PRECISE ;
+6. confirmer que le JPEG reste réellement 800×600 en PRECISE ;
+7. vérifier le grossissement apparent de la cible et la stabilité des coins ;
+8. mesurer `capture_ms`, `filter_ms`, `detect_ms`, `cycle_ms` ;
+9. tester recentrage puis perte de cible ;
+10. seulement après validation, optimiser les timings bruts OV5640 et supprimer éventuellement les traitements devenus inutiles en N/B.
