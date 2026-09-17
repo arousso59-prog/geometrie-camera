@@ -24,10 +24,19 @@ struct CameraViewportSnapshot {
   CameraViewportMode mode;
   uint16_t reference_width;
   uint16_t reference_height;
+  // Fenetre dans le repere canonique tel qu'il est affiche/detecte.
   uint16_t window_x;
   uint16_t window_y;
   uint16_t window_width;
   uint16_t window_height;
+
+  // Fenetre réellement programmee dans les registres bruts OV5640.
+  // Elle peut etre symetrique de window_x/window_y quand ESPHome active
+  // horizontal_mirror et/ou vertical_flip.
+  uint16_t sensor_window_x;
+  uint16_t sensor_window_y;
+  bool horizontal_mirror;
+  bool vertical_flip;
   uint16_t output_width;
   uint16_t output_height;
   float scale_x;
