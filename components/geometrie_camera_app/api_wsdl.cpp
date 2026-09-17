@@ -24,10 +24,11 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   std::string xml;
   xml.reserve(24000);
   xml += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-  xml += "<api name=\"geometrie-camera\" version=\"15\" style=\"REST-over-HTTP\">\n";
+  xml += "<api name=\"geometrie-camera\" version=\"16\" style=\"REST-over-HTTP\">\n";
   xml += "  <description>API camera OV5640 : capture JPEG, controle nettete cible, correction grayscale, detection cible, calibration optique verrouillee, distance robuste et acquisition continue.</description>\n";
   xml += "  <conventions>\n";
   xml += "    <item>Les routes de commande de mise au point utilisent encore HTTP GET.</item>\n";
+  xml += "    <item>Le format pixel actif est expose par /api/camera/settings. JPEG et GRAYSCALE sont des formats de demarrage : leur changement necessite recompilation/reflash car les buffers camera/DMA sont dimensionnes a l initialisation. Aucun changement runtime de pixel_format n est supporte.</item>\n";
   xml += "    <item>La detection cible travaille uniquement sur la derniere image grayscale corrigee.</item>\n";
   xml += "    <item>La mesure exige une calibration de focale a distance connue ; une calibration valide est verrouillee et force=1 est requis pour la remplacer.</item>\n";
   xml += "    <item>Le repere camera est X vers la droite, Y vers le bas et Z vers l avant. z_mm provient de la taille apparente ; distance_mm est la distance euclidienne au centre.</item>\n";
@@ -55,13 +56,13 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
 
   xml += "  <method name=\"camera_settings_get\" http=\"GET\" path=\"/api/camera/settings\">\n";
-  xml += "    <comment>Lit la resolution de travail et les reglages d acquisition du capteur actif.</comment>\n";
+  xml += "    <comment>Lit la resolution de travail, le pixel_format actif et les reglages d acquisition du capteur. pixel_format est informatif et configure au demarrage.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"503\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
   xml += "  <method name=\"camera_settings_set\" http=\"GET\" path=\"/api/camera/settings/set\">\n";
-  xml += "    <comment>Modifie la resolution de travail et les reglages utiles a la mise au point/calibration.</comment>\n";
+  xml += "    <comment>Modifie la resolution de travail et les reglages utiles a la mise au point/calibration. pixel_format n est pas modifiable a chaud.</comment>\n";
   xml += "    <parameter name=\"resolution\" location=\"query\" required=\"false\" type=\"string\" allowed=\"";
   xml += allowed_resolutions;
   xml += "\"/>\n";
