@@ -374,9 +374,13 @@ void TargetCandidateFinder::collect_components_(const GrayFrameView &frame, uint
           max_diff_y = y;
         }
 
-        static constexpr int8_t DX[4] = {-1, 1, 0, 0};
-        static constexpr int8_t DY[4] = {0, 0, -1, 1};
-        for (uint8_t direction = 0; direction < 4; ++direction) {
+        // V5.6 : utiliser une connexite 8 voisins. Avec une cible inclinee,
+        // une bordure diagonale peut n'avoir qu'un contact par coin dans la
+        // carte reduite. La connexite 4 voisins la fragmentait alors en
+        // plusieurs composantes et faisait perdre la cible avant le decodeur.
+        static constexpr int8_t DX[8] = {-1, 1, 0, 0, -1, 1, 1, -1};
+        static constexpr int8_t DY[8] = {0, 0, -1, 1, -1, -1, 1, 1};
+        for (uint8_t direction = 0; direction < 8; ++direction) {
           const int nx = static_cast<int>(x) + DX[direction];
           const int ny = static_cast<int>(y) + DY[direction];
           if (nx < 0 || ny < 0 || nx >= this->reduced_width_ || ny >= this->reduced_height_) {
