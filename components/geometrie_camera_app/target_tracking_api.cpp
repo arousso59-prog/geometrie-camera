@@ -229,6 +229,15 @@ void TargetTrackingApiHandler::append_viewport_json_(std::string &json) const {
           ",\"y\":" + std::to_string(viewport.window_y) +
           ",\"width\":" + std::to_string(viewport.window_width) +
           ",\"height\":" + std::to_string(viewport.window_height) + "}";
+  json += ",\"sensor_window\":{\"x\":" + std::to_string(viewport.sensor_window_x) +
+          ",\"y\":" + std::to_string(viewport.sensor_window_y) +
+          ",\"width\":" + std::to_string(viewport.window_width) +
+          ",\"height\":" + std::to_string(viewport.window_height) + "}";
+  json += ",\"orientation\":{\"horizontal_mirror\":";
+  json += viewport.horizontal_mirror ? "true" : "false";
+  json += ",\"vertical_flip\":";
+  json += viewport.vertical_flip ? "true" : "false";
+  json += "}";
   json += ",\"output\":{\"width\":" + std::to_string(viewport.output_width) +
           ",\"height\":" + std::to_string(viewport.output_height) + "}";
   json += ",\"scale\":{\"x\":" + std::to_string(viewport.scale_x) +
