@@ -71,7 +71,7 @@ void CameraSettingsApiHandler::send_snapshot_(AsyncWebServerRequest *request, bo
   }
 
   std::string json;
-  json.reserve(1000);
+  json.reserve(1100);
   json += "{\"status\":\"";
   json += status;
   json += "\",\"applied\":";
@@ -83,6 +83,7 @@ void CameraSettingsApiHandler::send_snapshot_(AsyncWebServerRequest *request, bo
     json += ",\"height\":" + std::to_string(this->resolution_controller_->active_height()) + ",";
   }
   json += "\"pixel_format\":\"" + snapshot.pixel_format + "\"";
+  json += ",\"monochrome\":" + std::string(snapshot.monochrome ? "true" : "false");
   json += ",\"brightness\":" + std::to_string(snapshot.brightness);
   json += ",\"contrast\":" + std::to_string(snapshot.contrast);
   json += ",\"exposure_ctrl\":" + std::string(snapshot.exposure_ctrl ? "true" : "false");
@@ -92,7 +93,7 @@ void CameraSettingsApiHandler::send_snapshot_(AsyncWebServerRequest *request, bo
   json += ",\"agc_gain\":" + std::to_string(snapshot.agc_gain);
   json += "},\"ranges\":{\"resolution\":\"";
   json += CameraResolutionController::allowed_resolutions_text();
-  json += "\",\"pixel_format\":\"jpeg|grayscale (boot only)\",\"brightness\":\"-2..2\",\"contrast\":\"-2..2\",\"exposure_ctrl\":\"0|1\",\"ae_level\":\"-2..2\",\"aec_value\":\"0..1200\",\"gain_ctrl\":\"0|1\",\"agc_gain\":\"0..30\"}}";
+  json += "\",\"pixel_format\":\"jpeg|grayscale (boot only)\",\"monochrome\":\"0|1 (runtime grayscale effect)\",\"brightness\":\"-2..2\",\"contrast\":\"-2..2\",\"exposure_ctrl\":\"0|1\",\"ae_level\":\"-2..2\",\"aec_value\":\"0..1200\",\"gain_ctrl\":\"0|1\",\"agc_gain\":\"0..30\"}}";
   auto *response = request->beginResponse(200, "application/json", json);
   response->addHeader("Cache-Control", "no-store");
   request->send(response);
@@ -119,11 +120,12 @@ void CameraSettingsApiHandler::handle_set_(AsyncWebServerRequest *request) {
   }
 
   int brightness = 0, contrast = 0, ae_level = 0, aec_value = 0, agc_gain = 0;
-  bool exposure_ctrl = false, gain_ctrl = false;
-  bool has_brightness = false, has_contrast = false, has_exposure_ctrl = false;
+  bool monochrome = false, exposure_ctrl = false, gain_ctrl = false;
+  bool has_monochrome = false, has_brightness = false, has_contrast = false, has_exposure_ctrl = false;
   bool has_ae_level = false, has_aec_value = false, has_gain_ctrl = false, has_agc_gain = false;
   std::string error;
-  if (!this->parse_int_param_(request, "brightness", brightness, has_brightness, error) ||
+  if (!this->parse_bool_param_(request, "monochrome", monochrome, has_monochrome, error) ||
+      !this->parse_int_param_(request, "brightness", brightness, has_brightness, error) ||
       !this->parse_int_param_(request, "contrast", contrast, has_contrast, error) ||
       !this->parse_bool_param_(request, "exposure_ctrl", exposure_ctrl, has_exposure_ctrl, error) ||
       !this->parse_int_param_(request, "ae_level", ae_level, has_ae_level, error) ||
@@ -135,8 +137,8 @@ void CameraSettingsApiHandler::handle_set_(AsyncWebServerRequest *request) {
     return;
   }
 
-  if (!has_resolution && !has_brightness && !has_contrast && !has_exposure_ctrl && !has_ae_level &&
-      !has_aec_value && !has_gain_ctrl && !has_agc_gain) {
+  if (!has_resolution && !has_monochrome && !has_brightness && !has_contrast && !has_exposure_ctrl &&
+      !has_ae_level && !has_aec_value && !has_gain_ctrl && !has_agc_gain) {
     request->send(400, "application/json", "{\"status\":\"error\",\"error\":\"no_setting_provided\"}");
     return;
   }
@@ -152,7 +154,8 @@ void CameraSettingsApiHandler::handle_set_(AsyncWebServerRequest *request) {
     }
   }
 
-  if ((has_brightness && !this->controller_->set_brightness(brightness, error)) ||
+  if ((has_monochrome && !this->controller_->set_monochrome(monochrome, error)) ||
+      (has_brightness && !this->controller_->set_brightness(brightness, error)) ||
       (has_contrast && !this->controller_->set_contrast(contrast, error)) ||
       (has_exposure_ctrl && !this->controller_->set_exposure_ctrl(exposure_ctrl, error)) ||
       (has_ae_level && !this->controller_->set_ae_level(ae_level, error)) ||
