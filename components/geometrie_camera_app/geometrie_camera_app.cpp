@@ -43,6 +43,14 @@ void GeometrieCameraApp::setup() {
   ESP_LOGI(TAG, "Initialisation application geometrie camera");
   this->measurement_manager_.setup();
   this->resolution_controller_.sync_from_sensor();
+
+  // Le driver est initialise en 2560x1920 uniquement pour reserver un
+  // framebuffer assez grand pour la calibration 5 MP. Le mode nominal de
+  // fonctionnement reste 800x600.
+  if (!this->resolution_controller_.apply("800x600")) {
+    ESP_LOGE(TAG, "Impossible d'appliquer la resolution nominale 800x600");
+  }
+
   this->register_api_if_possible_();
 }
 
