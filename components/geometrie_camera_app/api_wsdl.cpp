@@ -31,11 +31,11 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "    <item>monochrome est un effet grayscale runtime du capteur OV5640 et ne change pas le pixel_format JPEG.</item>\n";
   xml += "    <item>Le repere camera est X vers la droite, Y vers le bas et Z vers l avant.</item>\n";
   xml += "    <item>GeometryMeasurementEngine V3 fusionne z_from_width_mm et z_from_height_mm de facon continue ; pose_z_mm reste un controle independant issu de l homographie.</item>\n";
-  xml += "    <item>Le tracking automatique est configure par /tracking/config. /continuous/start ne pilote pas la ROI depuis le PC : l ESP32 gere SEARCH et PRECISE de facon autonome.</item>\n";
+  xml += "    <item>Le tracking automatique est configure par /tracking/config. /continuous/start ne pilote pas la ROI depuis le PC : l ESP32 gere SEARCH, ZOOM_WIDE, ZOOM_MEDIUM et PRECISE de facon autonome.</item>\n";
   xml += "    <item>La configuration du tracking est verrouillee pendant une session active ; /tracking/config/set renvoie HTTP 409 dans ce cas.</item>\n";
-  xml += "    <item>SEARCH utilise un plein champ 800x600. PRECISE utilise une ROI native 800x600 dans le repere de reference 2560x1920.</item>\n";
+  xml += "    <item>Le zoom tracking est progressif : SEARCH couvre 2560x1920, ZOOM_WIDE 1920x1440, ZOOM_MEDIUM 1280x960 et PRECISE 800x600. Chaque niveau produit une image 800x600 et recentre le niveau suivant sur la detection courante.</item>\n";
   xml += "    <item>Les coordonnees ROI sont converties en repere de reference 2560x1920 avant le calcul de mesure ; la calibration existante est redimensionnee par GeometryMeasurementEngine selon sa resolution de reference.</item>\n";
-  xml += "    <item>Apres lost_cycles pertes consecutives en PRECISE, le capteur revient automatiquement en SEARCH. La ROI PRECISE est recentree quand le centre cible quitte la zone centrale configuree.</item>\n";
+  xml += "    <item>Apres lost_cycles pertes consecutives dans un niveau zoome, le capteur revient automatiquement en SEARCH. En PRECISE, un centrage fin rapproche aussi la cible du centre 400x300.</item>\n";
   xml += "    <item>Le traitement JPEG travaille toujours sur l image de sortie 800x600. En mode continu, artifact_correction=0 supprime la correction des artefacts couleur mais conserve le decodage JPEG vers niveaux de gris necessaire au detecteur.</item>\n";
   xml += "    <item>Le mode continu exige une calibration valide et n empile jamais les cycles. sharpness=0 saute le controle de nettete et les recaptures pour flou.</item>\n";
   xml += "    <item>Dans timing, processing_ms est la somme capture+nettete+filtre+detection+calcul et orchestration_ms le temps mural restant entre les etapes. filter_decode_ms et filter_correction_ms detaillent filter_ms.</item>\n";
@@ -77,7 +77,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "    <response code=\"200\" content_type=\"application/json\"/><response code=\"400\" content_type=\"application/json\"/><response code=\"409\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
   xml += "  <method name=\"tracking_status\" http=\"GET\" path=\"/tracking/status\">\n";
-  xml += "    <comment>Expose enabled, supported, mode SEARCH/PRECISE, verrouillage cible, pertes, transitions et viewport.</comment>\n";
+  xml += "    <comment>Expose enabled, supported, mode SEARCH/ZOOM_WIDE/ZOOM_MEDIUM/PRECISE, verrouillage cible, pertes, transitions et viewport.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
