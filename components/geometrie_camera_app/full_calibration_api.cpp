@@ -77,6 +77,12 @@ void FullCalibrationApiHandler::handleRequest(AsyncWebServerRequest *request) {
           "{\"status\":\"error\",\"error\":\"force_must_be_0_or_1\"}");
       return;
     }
+    if (sample_count < 3 || sample_count > FullCalibrationController::MAX_SAMPLE_COUNT) {
+      request->send(
+          400, "application/json",
+          "{\"status\":\"error\",\"error\":\"sample_count_out_of_range\"}");
+      return;
+    }
 
     if (!this->controller_->start(
             distance_mm,
