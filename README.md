@@ -164,7 +164,7 @@ GET /continuous/stop
 GET /continuous/status
 ```
 
-`/api/wsdl` est la référence du contrat HTTP. Version actuelle : **17**.
+`/api/wsdl` est la référence du contrat HTTP. Version actuelle : **18**.
 
 Les responsabilités détaillées et les règles de développement sont dans [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
