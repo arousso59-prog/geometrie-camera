@@ -32,8 +32,9 @@ TargetDetector V5.5
    ├── raffinage des coins
    └── continuité temporelle position/taille pour stabiliser la sélection
    ↓
-GeometryMeasurementEngine V2
-   ├── distance robuste par taille apparente
+GeometryMeasurementEngine V3
+   ├── distance fusionnée à partir des deux axes du carré
+   ├── centre projectif par intersection des diagonales
    ├── X/Y/Z + bearing
    └── pose homographique validée séparément
 ```
@@ -55,15 +56,16 @@ Une calibration valide est verrouillée. Pour la remplacer volontairement :
 GET /measurement/calibrate?distance_mm=1000&target_size_mm=50&force=1
 ```
 
-La profondeur principale repose sur :
+La profondeur V3 conserve les deux estimations indépendantes :
 
 ```text
 z_from_width_mm  = fx × target_size_mm / largeur_px
 z_from_height_mm = fy × target_size_mm / hauteur_px
-z_mm             = min(z_from_width_mm, z_from_height_mm)
 ```
 
-Puis le centre de cible donne `x_mm`, `y_mm`, `distance_mm`, `bearing_yaw_deg` et `bearing_pitch_deg`.
+Quand elles sont proches, `z_mm` utilise leur moyenne harmonique, ce qui revient à moyenner les tailles apparentes normalisées et évite le basculement brutal de l'ancien `min()`. Si leur écart augmente, le calcul revient progressivement vers la plus petite estimation, qui est en général la moins affectée par le raccourcissement dû à l'inclinaison de la cible. La transition commence à 3 % d'écart et devient complète à 15 %.
+
+Le centre utilisé pour `x_mm`, `y_mm`, `bearing_yaw_deg` et `bearing_pitch_deg` n'est plus le centre grossier du candidat : il est calculé à partir de l'intersection des diagonales formées par les quatre coins raffinés. `pose_z_mm` reste exposé comme contrôle indépendant de cohérence de la pose homographique.
 
 ## Réglages caméra
 
@@ -197,8 +199,8 @@ Les responsabilités détaillées et les règles de développement sont dans [`A
 ## Étape actuelle
 
 1. compiler/flasher le firmware courant ;
-2. tester la cible immobile et vérifier que le cadre plein reste sur la bonne cible ;
-3. provoquer volontairement une détection ratée et vérifier que le meilleur candidat apparaît en pointillé ;
-4. placer des formes sombres parasites dans le champ et vérifier que la cible réelle reste prioritaire ;
-5. déplacer lentement la cible pour valider la continuité temporelle puis la réacquisition ;
-6. reprendre ensuite la stabilisation de largeur/hauteur et du calcul de distance.
+2. refaire une calibration à distance connue avec la cible la plus frontale possible ;
+3. laisser la cible parfaitement immobile et comparer la dispersion de `z_mm`, `z_from_width_mm`, `z_from_height_mm` et `pose_z_mm` ;
+4. incliner légèrement la cible puis vérifier que `z_mm` reste continu quand largeur et hauteur échangent leur rôle dominant ;
+5. vérifier en parallèle la stabilité de X/Y et des bearing grâce au centre calculé par les quatre coins ;
+6. seulement après cette validation, décider si un filtrage temporel léger est encore nécessaire.
