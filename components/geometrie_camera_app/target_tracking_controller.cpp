@@ -1,5 +1,8 @@
 #include "target_tracking_controller.h"
 
+#include <algorithm>
+#include <cmath>
+
 #include "camera_viewport_controller.h"
 #include "esphome/core/log.h"
 
@@ -8,6 +11,51 @@ namespace geometrie_camera_app {
 
 namespace {
 static const char *const TAG = "target_tracking";
+constexpr float RECOVERY_MIN_SIDE_PX = 12.0f;
+constexpr float RECOVERY_MAX_ASPECT_RATIO = 2.0f;
+
+bool has_recovery_candidate(const TargetObservation &observation,
+                            const CameraViewportSnapshot &snapshot) {
+  if (observation.valid || snapshot.output_width == 0 || snapshot.output_height == 0) {
+    return false;
+  }
+  if (!std::isfinite(observation.center_x_px) || !std::isfinite(observation.center_y_px) ||
+      !std::isfinite(observation.width_px) || !std::isfinite(observation.height_px) ||
+      !std::isfinite(observation.quality)) {
+    return false;
+  }
+  if (observation.width_px < RECOVERY_MIN_SIDE_PX || observation.height_px < RECOVERY_MIN_SIDE_PX ||
+      observation.quality <= 0.0f) {
+    return false;
+  }
+
+  const float aspect = std::max(observation.width_px / observation.height_px,
+                                observation.height_px / observation.width_px);
+  if (aspect > RECOVERY_MAX_ASPECT_RATIO) {
+    return false;
+  }
+
+  return observation.center_x_px >= 0.0f &&
+         observation.center_y_px >= 0.0f &&
+         observation.center_x_px < snapshot.output_width &&
+         observation.center_y_px < snapshot.output_height;
+}
+
+bool recovery_candidate_needs_recenter(const TargetObservation &observation,
+                                       const CameraViewportSnapshot &snapshot,
+                                       uint8_t central_percent) {
+  if (snapshot.output_width == 0 || snapshot.output_height == 0) return false;
+
+  central_percent = std::max<uint8_t>(50, std::min<uint8_t>(90, central_percent));
+  const float margin_fraction = (100.0f - central_percent) / 200.0f;
+  const float margin_x = snapshot.output_width * margin_fraction;
+  const float margin_y = snapshot.output_height * margin_fraction;
+
+  return observation.center_x_px < margin_x ||
+         observation.center_x_px > snapshot.output_width - margin_x ||
+         observation.center_y_px < margin_y ||
+         observation.center_y_px > snapshot.output_height - margin_y;
+}
 }
 
 TargetTrackingController::TargetTrackingController(CameraViewportController *viewport_controller)
@@ -132,7 +180,31 @@ TrackingUpdateResult TargetTrackingController::update_after_detection(
   this->target_locked_ = false;
   if (this->current_lost_count_ < 255) this->current_lost_count_++;
 
-  if (this->viewport_controller_->snapshot().mode == CameraViewportMode::PRECISE_ROI &&
+  const CameraViewportSnapshot &snapshot = this->viewport_controller_->snapshot();
+  if (snapshot.mode == CameraViewportMode::PRECISE_ROI &&
+      this->current_lost_count_ < this->lost_cycles_ &&
+      has_recovery_candidate(local_observation, snapshot) &&
+      recovery_candidate_needs_recenter(local_observation, snapshot,
+                                        this->recenter_threshold_pct_)) {
+    const TargetObservation reference = this->viewport_controller_->to_reference(local_observation);
+    if (!this->viewport_controller_->apply_precise_roi(reference.center_x_px, reference.center_y_px)) {
+      this->last_error_ = "precise_recovery_recenter_failed";
+      return TrackingUpdateResult::ERROR;
+    }
+
+    this->transition_count_++;
+    this->last_error_.clear();
+    ESP_LOGI(TAG,
+             "Tracking PRECISE recentrage secours: local=(%.1f,%.1f) taille=%.1fx%.1f qualite=%.3f -> ref=(%.1f,%.1f), perte=%u/%u",
+             local_observation.center_x_px, local_observation.center_y_px,
+             local_observation.width_px, local_observation.height_px,
+             local_observation.quality, reference.center_x_px, reference.center_y_px,
+             static_cast<unsigned>(this->current_lost_count_),
+             static_cast<unsigned>(this->lost_cycles_));
+    return TrackingUpdateResult::VIEWPORT_CHANGED;
+  }
+
+  if (snapshot.mode == CameraViewportMode::PRECISE_ROI &&
       this->current_lost_count_ >= this->lost_cycles_) {
     if (!this->viewport_controller_->apply_search()) {
       this->last_error_ = "search_recovery_failed";
