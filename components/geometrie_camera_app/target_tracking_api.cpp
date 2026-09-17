@@ -200,6 +200,7 @@ void TargetTrackingApiHandler::send_config_(AsyncWebServerRequest *request, int 
     json += ",\"recenter_threshold_pct\":" +
             std::to_string(this->tracking_controller_->recenter_threshold_pct());
     json += ",\"search_resolution\":\"800x600\"";
+    json += ",\"zoom_sequence\":\"2560x1920,1920x1440,1280x960,800x600\"";
     json += ",\"precise_output\":\"800x600\"";
     json += ",\"reference_resolution\":\"2560x1920\"";
     json += "}";
