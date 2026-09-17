@@ -8,6 +8,7 @@
 #include "camera_resolution_controller.h"
 #include "camera_settings_api.h"
 #include "camera_settings_controller.h"
+#include "camera_viewport_controller.h"
 #include "continuous_measurement_api.h"
 #include "continuous_measurement_controller.h"
 #include "image_sharpness_evaluator.h"
@@ -23,6 +24,8 @@
 #include "target_detection_preview.h"
 #include "target_detection_service.h"
 #include "target_detector.h"
+#include "target_tracking_api.h"
+#include "target_tracking_controller.h"
 #include "types.h"
 
 namespace esphome {
@@ -62,6 +65,8 @@ class GeometrieCameraApp : public Component {
   GeometryMeasurementEngine &measurement_engine();
   CameraResolutionController &resolution_controller();
   CameraSettingsController &settings_controller();
+  CameraViewportController &viewport_controller();
+  TargetTrackingController &tracking_controller();
   JpegDiagnostic &jpeg_diagnostic();
   JpegFilteredDiagnostic &jpeg_filtered_diagnostic();
   TargetDetectionService &target_detection_service();
@@ -74,6 +79,8 @@ class GeometrieCameraApp : public Component {
   TargetDetector target_detector_;
   CameraResolutionController resolution_controller_;
   CameraSettingsController settings_controller_;
+  CameraViewportController viewport_controller_;
+  TargetTrackingController tracking_controller_;
   JpegDiagnostic jpeg_diagnostic_;
   ImageSharpnessEvaluator image_sharpness_evaluator_;
   JpegFilteredDiagnostic jpeg_filtered_diagnostic_;
@@ -83,6 +90,7 @@ class GeometrieCameraApp : public Component {
   RuntimeDiagnostics runtime_diagnostics_;
   ApiWsdlHandler api_wsdl_handler_;
   CameraSettingsApiHandler settings_api_handler_;
+  TargetTrackingApiHandler tracking_api_handler_;
   JpegDiagnosticApiHandler jpeg_diagnostic_api_handler_;
   JpegFilteredDiagnosticApiHandler jpeg_filtered_diagnostic_api_handler_;
   TargetDetectionApiHandler target_detection_api_handler_;
