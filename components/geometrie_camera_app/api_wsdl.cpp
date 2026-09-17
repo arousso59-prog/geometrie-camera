@@ -24,7 +24,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   std::string xml;
   xml.reserve(24000);
   xml += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-  xml += "<api name=\"geometrie-camera\" version=\"16\" style=\"REST-over-HTTP\">\n";
+  xml += "<api name=\"geometrie-camera\" version=\"17\" style=\"REST-over-HTTP\">\n";
   xml += "  <description>API camera OV5640 : capture JPEG, controle nettete cible, correction grayscale, detection cible, calibration optique verrouillee, distance robuste et acquisition continue.</description>\n";
   xml += "  <conventions>\n";
   xml += "    <item>Les routes de commande de mise au point utilisent encore HTTP GET.</item>\n";
@@ -83,7 +83,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "    <parameter name=\"resolution\" location=\"query\" required=\"false\" type=\"string\" allowed=\"";
   xml += allowed_resolutions;
   xml += "\">Resolution a appliquer avant la capture.</parameter>\n";
-  xml += "    <response code=\"202\" content_type=\"application/json\"/>\n";
+  xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"400\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"503\" content_type=\"application/json\"/>\n";
