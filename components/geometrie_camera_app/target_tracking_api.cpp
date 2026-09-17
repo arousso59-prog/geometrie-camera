@@ -50,6 +50,10 @@ void TargetTrackingApiHandler::handle_config_set_(AsyncWebServerRequest *request
     this->send_config_(request, 500, "error", "tracking_unavailable");
     return;
   }
+  if (this->tracking_controller_->active()) {
+    this->send_config_(request, 409, "error", "tracking_active");
+    return;
+  }
 
   uint32_t enabled = 0;
   uint32_t lost_cycles = 0;
@@ -110,10 +114,12 @@ void TargetTrackingApiHandler::handle_status_(AsyncWebServerRequest *request) co
   }
 
   std::string json;
-  json.reserve(900);
+  json.reserve(950);
   json += "{\"status\":\"ok\"";
   json += ",\"enabled\":";
   json += this->tracking_controller_->enabled() ? "true" : "false";
+  json += ",\"active\":";
+  json += this->tracking_controller_->active() ? "true" : "false";
   json += ",\"supported\":";
   json += this->tracking_controller_->supported() ? "true" : "false";
   json += ",\"mode\":\"";
@@ -138,7 +144,12 @@ void TargetTrackingApiHandler::handle_viewport_(AsyncWebServerRequest *request) 
     request->send(500, "application/json", "{\"status\":\"error\",\"error\":\"viewport_unavailable\"}");
     return;
   }
-  std::string json = "{\"status\":\"ok\",\"viewport\":";
+  std::string json = "{\"status\":\"ok\"";
+  if (this->tracking_controller_ != nullptr) {
+    json += ",\"tracking_active\":";
+    json += this->tracking_controller_->active() ? "true" : "false";
+  }
+  json += ",\"viewport\":";
   this->append_viewport_json_(json);
   json += "}";
   auto *response = request->beginResponse(200, "application/json", json);
@@ -170,7 +181,7 @@ bool TargetTrackingApiHandler::parse_uint_(AsyncWebServerRequest *request, const
 void TargetTrackingApiHandler::send_config_(AsyncWebServerRequest *request, int response_code,
                                             const char *status, const char *error) const {
   std::string json;
-  json.reserve(700);
+  json.reserve(750);
   json += "{\"status\":\"";
   json += status;
   json += "\"";
@@ -183,6 +194,8 @@ void TargetTrackingApiHandler::send_config_(AsyncWebServerRequest *request, int 
     json += ",\"config\":{";
     json += "\"enabled\":";
     json += this->tracking_controller_->enabled() ? "true" : "false";
+    json += ",\"active\":";
+    json += this->tracking_controller_->active() ? "true" : "false";
     json += ",\"lost_cycles\":" + std::to_string(this->tracking_controller_->lost_cycles());
     json += ",\"recenter_threshold_pct\":" +
             std::to_string(this->tracking_controller_->recenter_threshold_pct());
