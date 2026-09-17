@@ -52,6 +52,7 @@ CameraSettingsSnapshot CameraSettingsController::read() const {
 
   snapshot.available = true;
   snapshot.pixel_format = pixel_format_to_text(sensor->pixformat);
+  snapshot.monochrome = sensor->status.special_effect == 2;
   snapshot.brightness = sensor->status.brightness;
   snapshot.contrast = sensor->status.contrast;
   snapshot.exposure_ctrl = sensor->status.aec != 0;
@@ -72,6 +73,20 @@ bool CameraSettingsController::validate_range_(const char *name, int value, int 
   std::snprintf(buffer, sizeof(buffer), "%s_out_of_range_%d_%d", name, minimum, maximum);
   error = buffer;
   return false;
+}
+
+bool CameraSettingsController::set_monochrome(bool enabled, std::string &error) const {
+  sensor_t *sensor = get_sensor(error);
+  if (sensor == nullptr || sensor->set_special_effect == nullptr) return false;
+
+  // esp32-camera: 0 = no effect, 2 = grayscale. This keeps the framebuffer
+  // in JPEG and only changes the OV5640 image rendering at runtime.
+  if (sensor->set_special_effect(sensor, enabled ? 2 : 0) != 0) {
+    error = "monochrome_apply_failed";
+    return false;
+  }
+  ESP_LOGI(TAG, "Mode monochrome: %s", enabled ? "ON" : "OFF");
+  return true;
 }
 
 bool CameraSettingsController::set_brightness(int value, std::string &error) const {
