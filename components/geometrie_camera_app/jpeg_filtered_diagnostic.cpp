@@ -34,6 +34,7 @@ struct JpegDecodeContext {
   uint16_t width;
   uint16_t height;
   uint32_t green_seed_count;
+  bool detect_green_seeds;
 };
 
 inline bool is_green_seed_rgb(uint8_t red, uint8_t green, uint8_t blue) {
@@ -85,7 +86,10 @@ UINT jpeg_output_callback(JDEC *decoder, void *bitmap, JRECT *rect) {
   }
 
   auto *context = static_cast<JpegDecodeContext *>(decoder->device);
-  if (context->pixels == nullptr || context->green_mask == nullptr) {
+  if (context->pixels == nullptr) {
+    return 0;
+  }
+  if (context->detect_green_seeds && context->green_mask == nullptr) {
     return 0;
   }
 
@@ -110,7 +114,7 @@ UINT jpeg_output_callback(JDEC *decoder, void *bitmap, JRECT *rect) {
       const uint32_t luminance = 77U * red + 150U * green + 29U * blue + 128U;
       destination[local_x] = static_cast<uint8_t>(luminance >> 8);
 
-      if (is_green_seed_rgb(red, green, blue)) {
+      if (context->detect_green_seeds && is_green_seed_rgb(red, green, blue)) {
         mask_set_linear(context->green_mask, pixel_index);
         context->green_seed_count++;
       }
@@ -135,6 +139,7 @@ JpegFilteredDiagnostic::JpegFilteredDiagnostic(JpegDiagnostic *source)
       process_count_(0),
       source_capture_count_(0),
       ready_(false),
+      artifact_correction_applied_(false),
       decode_result_(-1),
       decode_ms_(0),
       correction_ms_(0),
@@ -142,8 +147,9 @@ JpegFilteredDiagnostic::JpegFilteredDiagnostic(JpegDiagnostic *source)
 
 JpegFilteredDiagnostic::~JpegFilteredDiagnostic() { this->clear_buffers_(); }
 
-bool JpegFilteredDiagnostic::process() {
+bool JpegFilteredDiagnostic::process(bool apply_artifact_correction) {
   this->ready_ = false;
+  this->artifact_correction_applied_ = false;
   this->decode_result_ = -1;
   this->decode_ms_ = 0;
   this->correction_ms_ = 0;
@@ -151,7 +157,7 @@ bool JpegFilteredDiagnostic::process() {
 
   if (this->source_ == nullptr || !this->source_->ready() || this->source_->jpeg_data() == nullptr ||
       this->source_->jpeg_size() == 0 || !this->source_->has_soi() || !this->source_->has_eoi()) {
-    ESP_LOGW(TAG, "Aucun JPEG valide disponible pour le filtrage");
+    ESP_LOGW(TAG, "Aucun JPEG valide disponible pour le traitement");
     return false;
   }
 
@@ -163,7 +169,7 @@ bool JpegFilteredDiagnostic::process() {
   }
 
   if (!this->ensure_buffers_(width, height)) {
-    ESP_LOGE(TAG, "PSRAM insuffisante pour le diagnostic JPEG filtre %ux%u",
+    ESP_LOGE(TAG, "PSRAM insuffisante pour le diagnostic JPEG %ux%u",
              static_cast<unsigned>(width), static_cast<unsigned>(height));
     return false;
   }
@@ -176,7 +182,9 @@ bool JpegFilteredDiagnostic::process() {
   const uint32_t total_started = millis();
   const size_t row_stride = (static_cast<size_t>(width) + 3U) & ~static_cast<size_t>(3U);
   const size_t mask_size = (static_cast<size_t>(width) * height + 7U) / 8U;
-  std::memset(this->green_mask_, 0, mask_size);
+  if (apply_artifact_correction) {
+    std::memset(this->green_mask_, 0, mask_size);
+  }
   this->build_bmp_header_(width, height, row_stride);
 
   JpegDecodeContext context{};
@@ -189,6 +197,7 @@ bool JpegFilteredDiagnostic::process() {
   context.width = width;
   context.height = height;
   context.green_seed_count = 0;
+  context.detect_green_seeds = apply_artifact_correction;
 
   JDEC decoder{};
   const uint32_t decode_started = millis();
@@ -211,13 +220,16 @@ bool JpegFilteredDiagnostic::process() {
     return false;
   }
 
-  const uint32_t correction_started = millis();
-  if (!this->corrector_.correct(this->bmp_buffer_ + BMP_PIXEL_OFFSET, row_stride,
-                                this->green_mask_, width, height, context.green_seed_count)) {
-    ESP_LOGE(TAG, "Correction des artefacts JPEG en echec");
-    return false;
+  if (apply_artifact_correction) {
+    const uint32_t correction_started = millis();
+    if (!this->corrector_.correct(this->bmp_buffer_ + BMP_PIXEL_OFFSET, row_stride,
+                                  this->green_mask_, width, height, context.green_seed_count)) {
+      ESP_LOGE(TAG, "Correction des artefacts JPEG en echec");
+      return false;
+    }
+    this->correction_ms_ = millis() - correction_started;
+    this->artifact_correction_applied_ = true;
   }
-  this->correction_ms_ = millis() - correction_started;
 
   this->width_ = width;
   this->height_ = height;
@@ -226,13 +238,20 @@ bool JpegFilteredDiagnostic::process() {
   this->total_ms_ = millis() - total_started;
   this->ready_ = true;
 
-  const auto &stats = this->corrector_.stats();
-  ESP_LOGI(TAG,
-           "JPEG filtre opt V2 pret: %ux%u, decode=%u ms correction=%u ms total=%u ms, lignes=%u, pixels corriges=%u",
-           static_cast<unsigned>(this->width_), static_cast<unsigned>(this->height_),
-           static_cast<unsigned>(this->decode_ms_), static_cast<unsigned>(this->correction_ms_),
-           static_cast<unsigned>(this->total_ms_), static_cast<unsigned>(stats.affected_rows),
-           static_cast<unsigned>(stats.corrected_total_pixels));
+  if (apply_artifact_correction) {
+    const auto &stats = this->corrector_.stats();
+    ESP_LOGI(TAG,
+             "JPEG gris pret: %ux%u, decode=%u ms correction=%u ms total=%u ms, lignes=%u, pixels corriges=%u",
+             static_cast<unsigned>(this->width_), static_cast<unsigned>(this->height_),
+             static_cast<unsigned>(this->decode_ms_), static_cast<unsigned>(this->correction_ms_),
+             static_cast<unsigned>(this->total_ms_), static_cast<unsigned>(stats.affected_rows),
+             static_cast<unsigned>(stats.corrected_total_pixels));
+  } else {
+    ESP_LOGI(TAG,
+             "JPEG gris pret SANS correction artefacts: %ux%u, decode=%u ms total=%u ms",
+             static_cast<unsigned>(this->width_), static_cast<unsigned>(this->height_),
+             static_cast<unsigned>(this->decode_ms_), static_cast<unsigned>(this->total_ms_));
+  }
   return true;
 }
 
@@ -256,6 +275,7 @@ int JpegFilteredDiagnostic::decode_result() const { return this->decode_result_;
 uint32_t JpegFilteredDiagnostic::decode_ms() const { return this->decode_ms_; }
 uint32_t JpegFilteredDiagnostic::correction_ms() const { return this->correction_ms_; }
 uint32_t JpegFilteredDiagnostic::total_ms() const { return this->total_ms_; }
+bool JpegFilteredDiagnostic::artifact_correction_applied() const { return this->artifact_correction_applied_; }
 const JpegArtifactCorrectionStats &JpegFilteredDiagnostic::correction_stats() const {
   return this->corrector_.stats();
 }
