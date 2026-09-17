@@ -18,7 +18,7 @@ class TargetCodeDecoder {
   TargetPoint project_(const TargetCandidate &candidate, float u, float v) const;
   uint8_t sample_point_(const GrayFrameView &frame, const TargetPoint &point) const;
   uint8_t sample_cell_(const GrayFrameView &frame, const TargetCandidate &candidate,
-                       uint8_t row, uint8_t column) const;
+                       uint8_t row, uint8_t column, float phase_u, float phase_v) const;
   uint8_t expected_cell_(uint8_t row, uint8_t column, uint8_t rotation_quarters) const;
   float outside_mean_(const GrayFrameView &frame, const TargetCandidate &candidate) const;
 };
