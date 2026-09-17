@@ -178,7 +178,33 @@ TrackingUpdateResult TargetTrackingController::update_after_detection(
     this->current_lost_count_ = 0;
     const TargetObservation reference = this->viewport_controller_->to_reference(local_observation);
 
-    if (this->viewport_controller_->snapshot().mode == CameraViewportMode::SEARCH_FULL) {
+    const CameraViewportMode mode = this->viewport_controller_->snapshot().mode;
+
+    if (mode == CameraViewportMode::SEARCH_FULL) {
+      if (!this->viewport_controller_->apply_zoom_wide(reference.center_x_px, reference.center_y_px)) {
+        this->last_error_ = "zoom_wide_viewport_failed";
+        return TrackingUpdateResult::ERROR;
+      }
+      this->precise_centered_ = false;
+      this->precise_center_attempts_ = 0;
+      this->transition_count_++;
+      this->last_error_.clear();
+      ESP_LOGI(TAG, "Tracking SEARCH -> ZOOM_WIDE");
+      return TrackingUpdateResult::VIEWPORT_CHANGED;
+    }
+
+    if (mode == CameraViewportMode::ZOOM_WIDE) {
+      if (!this->viewport_controller_->apply_zoom_medium(reference.center_x_px, reference.center_y_px)) {
+        this->last_error_ = "zoom_medium_viewport_failed";
+        return TrackingUpdateResult::ERROR;
+      }
+      this->transition_count_++;
+      this->last_error_.clear();
+      ESP_LOGI(TAG, "Tracking ZOOM_WIDE -> ZOOM_MEDIUM");
+      return TrackingUpdateResult::VIEWPORT_CHANGED;
+    }
+
+    if (mode == CameraViewportMode::ZOOM_MEDIUM) {
       if (!this->viewport_controller_->apply_precise_roi(reference.center_x_px, reference.center_y_px)) {
         this->last_error_ = "precise_viewport_failed";
         return TrackingUpdateResult::ERROR;
@@ -187,7 +213,7 @@ TrackingUpdateResult TargetTrackingController::update_after_detection(
       this->precise_center_attempts_ = 0;
       this->transition_count_++;
       this->last_error_.clear();
-      ESP_LOGI(TAG, "Tracking SEARCH -> PRECISE");
+      ESP_LOGI(TAG, "Tracking ZOOM_MEDIUM -> PRECISE");
       return TrackingUpdateResult::VIEWPORT_CHANGED;
     }
 
@@ -250,17 +276,20 @@ TrackingUpdateResult TargetTrackingController::update_after_detection(
   if (this->current_lost_count_ < 255) this->current_lost_count_++;
 
   const CameraViewportSnapshot &snapshot = this->viewport_controller_->snapshot();
+  const bool zoom_active = snapshot.mode != CameraViewportMode::SEARCH_FULL;
   const bool fallback_needs_centering =
+      snapshot.mode == CameraViewportMode::PRECISE_ROI &&
       !this->precise_centered_ && precise_centering_needed(local_observation, snapshot);
-  if (snapshot.mode == CameraViewportMode::PRECISE_ROI &&
+
+  if (zoom_active &&
       this->current_lost_count_ < this->lost_cycles_ &&
       has_recovery_candidate(local_observation, snapshot) &&
       (fallback_needs_centering ||
        recovery_candidate_needs_recenter(local_observation, snapshot,
                                          this->recenter_threshold_pct_))) {
     const TargetObservation reference = this->viewport_controller_->to_reference(local_observation);
-    if (!this->viewport_controller_->apply_precise_roi(reference.center_x_px, reference.center_y_px)) {
-      this->last_error_ = "precise_recovery_recenter_failed";
+    if (!this->viewport_controller_->recenter_current_zoom(reference.center_x_px, reference.center_y_px)) {
+      this->last_error_ = "zoom_recovery_recenter_failed";
       return TrackingUpdateResult::ERROR;
     }
 
@@ -270,7 +299,8 @@ TrackingUpdateResult TargetTrackingController::update_after_detection(
     this->transition_count_++;
     this->last_error_.clear();
     ESP_LOGI(TAG,
-             "Tracking PRECISE recentrage secours: local=(%.1f,%.1f) taille=%.1fx%.1f qualite=%.3f -> ref=(%.1f,%.1f), perte=%u/%u",
+             "Tracking %s recentrage secours: local=(%.1f,%.1f) taille=%.1fx%.1f qualite=%.3f -> ref=(%.1f,%.1f), perte=%u/%u",
+             CameraViewportController::mode_text(snapshot.mode),
              local_observation.center_x_px, local_observation.center_y_px,
              local_observation.width_px, local_observation.height_px,
              local_observation.quality, reference.center_x_px, reference.center_y_px,
@@ -279,8 +309,7 @@ TrackingUpdateResult TargetTrackingController::update_after_detection(
     return TrackingUpdateResult::VIEWPORT_CHANGED;
   }
 
-  if (snapshot.mode == CameraViewportMode::PRECISE_ROI &&
-      this->current_lost_count_ >= this->lost_cycles_) {
+  if (zoom_active && this->current_lost_count_ >= this->lost_cycles_) {
     if (!this->viewport_controller_->apply_search()) {
       this->last_error_ = "search_recovery_failed";
       return TrackingUpdateResult::ERROR;
@@ -290,7 +319,8 @@ TrackingUpdateResult TargetTrackingController::update_after_detection(
     this->precise_center_attempts_ = 0;
     this->transition_count_++;
     this->last_error_.clear();
-    ESP_LOGI(TAG, "Tracking PRECISE -> SEARCH apres pertes cible");
+    ESP_LOGI(TAG, "Tracking %s -> SEARCH apres pertes cible",
+             CameraViewportController::mode_text(snapshot.mode));
     return TrackingUpdateResult::VIEWPORT_CHANGED;
   }
 
