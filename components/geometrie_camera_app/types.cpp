@@ -10,6 +10,11 @@ CameraCalibration::CameraCalibration()
       fy_px(0.0f),
       cx_px(0.0f),
       cy_px(0.0f),
+      k1(0.0f),
+      k2(0.0f),
+      p1(0.0f),
+      p2(0.0f),
+      k3(0.0f),
       reference_width_px(0),
       reference_height_px(0) {}
 
