@@ -38,6 +38,12 @@ TargetDetector::TargetDetector()
       last_valid_observation_(),
       consecutive_misses_(0) {}
 
+void TargetDetector::reset_tracking() {
+  this->last_valid_observation_ = TargetObservation();
+  this->consecutive_misses_ = 0;
+  ESP_LOGD(TAG, "V5.5 tracking reset on viewport change");
+}
+
 TargetObservation TargetDetector::detect(const GrayFrameView &frame) {
   TargetObservation best;
   float best_selection_score = -1000.0f;
@@ -83,8 +89,6 @@ TargetObservation TargetDetector::detect(const GrayFrameView &frame) {
     }
   }
 
-  // Si aucun candidat n'a produit de geometrie decodable, garder le meilleur
-  // candidat de localisation uniquement pour la preview. Il reste invalide.
   if (best.width_px <= 0.0f && this->candidates_.count > 0) {
     const TargetCandidate *fallback = &this->candidates_.candidates[0];
     for (size_t index = 1; index < this->candidates_.count; ++index) {
