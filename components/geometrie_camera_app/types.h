@@ -20,6 +20,15 @@ struct CameraCalibration {
   float fy_px;
   float cx_px;
   float cy_px;
+
+  // Modele Brown-Conrady dans les coordonnees normalisees camera.
+  // Valeurs nulles = aucune correction de distorsion.
+  float k1;
+  float k2;
+  float p1;
+  float p2;
+  float k3;
+
   uint16_t reference_width_px;
   uint16_t reference_height_px;
 };
