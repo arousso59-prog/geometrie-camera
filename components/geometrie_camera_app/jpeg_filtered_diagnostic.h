@@ -19,6 +19,7 @@ class JpegFilteredDiagnostic {
   // be skipped for monochrome camera tests while keeping the grayscale decode
   // required by the target detector.
   bool process(bool apply_artifact_correction = true);
+  void release_buffers();
 
   bool ready() const;
   uint32_t process_count() const;
@@ -37,7 +38,7 @@ class JpegFilteredDiagnostic {
   const JpegArtifactCorrectionStats &correction_stats() const;
 
  private:
-  bool ensure_buffers_(uint16_t width, uint16_t height);
+  bool ensure_buffers_(uint16_t width, uint16_t height, bool need_green_mask);
   bool ensure_jpeg_work_buffer_();
   void clear_buffers_();
   void build_bmp_header_(uint16_t width, uint16_t height, size_t row_stride);
