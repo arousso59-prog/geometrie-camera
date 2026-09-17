@@ -57,6 +57,8 @@ class TargetTrackingController {
   uint8_t current_lost_count_;
   uint32_t transition_count_;
   bool target_locked_;
+  bool precise_centered_;
+  uint8_t precise_center_attempts_;
   std::string last_error_;
 };
 
