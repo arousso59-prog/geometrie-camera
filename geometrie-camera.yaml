@@ -5,6 +5,11 @@
 substitutions:
   device_name: geometrie-camera
   friendly_name: Geometrie Camera
+  # Format du framebuffer configure au demarrage du driver camera.
+  # Valeurs testees/prevues : JPEG ou GRAYSCALE.
+  # Le changement necessite une recompilation/reflash ; ne pas le modifier
+  # dynamiquement car esp32-camera dimensionne ses buffers DMA au demarrage.
+  camera_pixel_format: JPEG
 
 esphome:
   name: ${device_name}
@@ -67,7 +72,7 @@ i2c:
 
 esp32_camera:
   id: camera_geometrie
-  name: "Camera geometrie JPEG OV5640"
+  name: "Camera geometrie OV5640"
   internal: true
   external_clock:
     pin: GPIO15
@@ -85,7 +90,7 @@ esp32_camera:
   vsync_pin: GPIO6
   href_pin: GPIO7
   pixel_clock_pin: GPIO13
-  pixel_format: JPEG
+  pixel_format: ${camera_pixel_format}
   resolution: 2560x1920
   jpeg_quality: 10
   frame_buffer_count: 1
@@ -97,6 +102,8 @@ esp32_camera:
 # Resolution de travail :
 # GET /api/camera/settings
 # GET /api/camera/settings/set?resolution=800x600
+# Le champ pixel_format de /api/camera/settings indique le format actif.
+# Pour tester GRAYSCALE, passer camera_pixel_format a GRAYSCALE puis reflasher.
 
 button:
   - platform: template
