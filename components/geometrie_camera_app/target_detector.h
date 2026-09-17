@@ -13,6 +13,7 @@ class TargetDetector {
   TargetDetector();
 
   TargetObservation detect(const GrayFrameView &frame);
+  void reset_tracking();
 
  private:
   float selection_score_(const TargetObservation &observation) const;
