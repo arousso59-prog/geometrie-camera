@@ -43,6 +43,8 @@ ContinuousMeasurementController::ContinuousMeasurementController(
       tracking_controller_(tracking_controller),
       running_(false),
       interval_ms_(1000),
+      sharpness_enabled_(true),
+      artifact_correction_enabled_(true),
       state_(ContinuousMeasurementState::STOPPED),
       cycle_count_(0),
       target_found_count_(0),
@@ -57,11 +59,15 @@ ContinuousMeasurementController::ContinuousMeasurementController(
       current_capture_ms_(0),
       current_sharpness_ms_(0),
       current_filter_ms_(0),
+      current_filter_decode_ms_(0),
+      current_filter_correction_ms_(0),
       current_detect_ms_(0),
       current_compute_ms_(0),
       last_capture_ms_(0),
       last_sharpness_ms_(0),
       last_filter_ms_(0),
+      last_filter_decode_ms_(0),
+      last_filter_correction_ms_(0),
       last_detect_ms_(0),
       last_compute_ms_(0),
       last_sharpness_score_x100_(0),
@@ -123,17 +129,21 @@ bool ContinuousMeasurementController::start(uint32_t interval_ms) {
   this->current_capture_ms_ = 0;
   this->current_sharpness_ms_ = 0;
   this->current_filter_ms_ = 0;
+  this->current_filter_decode_ms_ = 0;
+  this->current_filter_correction_ms_ = 0;
   this->current_detect_ms_ = 0;
   this->current_compute_ms_ = 0;
   this->last_capture_ms_ = 0;
   this->last_sharpness_ms_ = 0;
   this->last_filter_ms_ = 0;
+  this->last_filter_decode_ms_ = 0;
+  this->last_filter_correction_ms_ = 0;
   this->last_detect_ms_ = 0;
   this->last_compute_ms_ = 0;
 
   this->last_sharpness_score_x100_ = 0;
   this->sharpness_reference_score_x100_ = 0;
-  this->last_sharpness_ok_ = false;
+  this->last_sharpness_ok_ = !this->sharpness_enabled_;
   this->last_capture_retry_count_ = 0;
   this->blur_retry_count_ = 0;
   this->sharpness_roi_valid_ = false;
@@ -145,14 +155,17 @@ bool ContinuousMeasurementController::start(uint32_t interval_ms) {
 
   if (this->tracking_controller_ != nullptr && this->tracking_controller_->enabled()) {
     this->reset_local_tracking_after_viewport_change_();
-  } else if (this->detection_service_->ready() && this->detection_service_->target_found()) {
+  } else if (this->sharpness_enabled_ && this->detection_service_->ready() &&
+             this->detection_service_->target_found()) {
     this->update_sharpness_roi_from_target_();
   }
 
-  ESP_LOGI(TAG, "Mesure continue demarree, intervalle=%u ms, tracking=%s, ROI nettete=%s",
+  ESP_LOGI(TAG,
+           "Mesure continue demarree, intervalle=%u ms, tracking=%s, nettete=%s, correction_artifacts=%s",
            static_cast<unsigned>(this->interval_ms_),
            this->tracking_controller_ != nullptr && this->tracking_controller_->enabled() ? "AUTO" : "OFF",
-           this->sharpness_roi_valid_ ? "OUI" : "NON");
+           this->sharpness_enabled_ ? "ON" : "OFF",
+           this->artifact_correction_enabled_ ? "ON" : "OFF");
   return true;
 }
 
@@ -204,6 +217,12 @@ void ContinuousMeasurementController::loop() {
       return;
 
     case ContinuousMeasurementState::SHARPNESS: {
+      if (!this->sharpness_enabled_) {
+        this->last_sharpness_ok_ = true;
+        this->state_ = ContinuousMeasurementState::FILTER;
+        return;
+      }
+
       if (!this->sharpness_roi_valid_) {
         this->last_sharpness_ok_ = true;
         this->state_ = ContinuousMeasurementState::FILTER;
@@ -250,11 +269,13 @@ void ContinuousMeasurementController::loop() {
     }
 
     case ContinuousMeasurementState::FILTER:
-      if (!this->filtered_source_->process()) {
+      if (!this->filtered_source_->process(this->artifact_correction_enabled_)) {
         this->fail_cycle_("filter_failed");
         return;
       }
       this->current_filter_ms_ = this->filtered_source_->total_ms();
+      this->current_filter_decode_ms_ = this->filtered_source_->decode_ms();
+      this->current_filter_correction_ms_ = this->filtered_source_->correction_ms();
       this->state_ = ContinuousMeasurementState::DETECT;
       return;
 
@@ -280,10 +301,12 @@ void ContinuousMeasurementController::loop() {
         return;
       }
 
-      if (this->last_sharpness_score_x100_ > 0 && this->last_sharpness_ok_) {
+      if (this->sharpness_enabled_ && this->last_sharpness_score_x100_ > 0 && this->last_sharpness_ok_) {
         this->update_sharpness_reference_(this->last_sharpness_score_x100_);
       }
-      this->update_sharpness_roi_from_target_();
+      if (this->sharpness_enabled_) {
+        this->update_sharpness_roi_from_target_();
+      }
       this->state_ = ContinuousMeasurementState::COMPUTE;
       return;
     }
@@ -343,8 +366,24 @@ bool ContinuousMeasurementController::set_interval_ms(uint32_t interval_ms) {
   return true;
 }
 
+bool ContinuousMeasurementController::set_pipeline_options(bool sharpness_enabled,
+                                                           bool artifact_correction_enabled) {
+  if (this->running_) {
+    this->last_error_ = "continuous_active";
+    return false;
+  }
+  this->sharpness_enabled_ = sharpness_enabled;
+  this->artifact_correction_enabled_ = artifact_correction_enabled;
+  this->last_error_.clear();
+  return true;
+}
+
 bool ContinuousMeasurementController::running() const { return this->running_; }
 uint32_t ContinuousMeasurementController::interval_ms() const { return this->interval_ms_; }
+bool ContinuousMeasurementController::sharpness_enabled() const { return this->sharpness_enabled_; }
+bool ContinuousMeasurementController::artifact_correction_enabled() const {
+  return this->artifact_correction_enabled_;
+}
 ContinuousMeasurementState ContinuousMeasurementController::state() const { return this->state_; }
 
 const char *ContinuousMeasurementController::state_text() const {
@@ -372,6 +411,10 @@ const std::string &ContinuousMeasurementController::last_error() const { return 
 uint32_t ContinuousMeasurementController::last_capture_ms() const { return this->last_capture_ms_; }
 uint32_t ContinuousMeasurementController::last_sharpness_ms() const { return this->last_sharpness_ms_; }
 uint32_t ContinuousMeasurementController::last_filter_ms() const { return this->last_filter_ms_; }
+uint32_t ContinuousMeasurementController::last_filter_decode_ms() const { return this->last_filter_decode_ms_; }
+uint32_t ContinuousMeasurementController::last_filter_correction_ms() const {
+  return this->last_filter_correction_ms_;
+}
 uint32_t ContinuousMeasurementController::last_detect_ms() const { return this->last_detect_ms_; }
 uint32_t ContinuousMeasurementController::last_compute_ms() const { return this->last_compute_ms_; }
 uint32_t ContinuousMeasurementController::last_sharpness_score_x100() const { return this->last_sharpness_score_x100_; }
@@ -390,10 +433,12 @@ void ContinuousMeasurementController::begin_cycle_() {
   this->current_capture_ms_ = 0;
   this->current_sharpness_ms_ = 0;
   this->current_filter_ms_ = 0;
+  this->current_filter_decode_ms_ = 0;
+  this->current_filter_correction_ms_ = 0;
   this->current_detect_ms_ = 0;
   this->current_compute_ms_ = 0;
   this->last_sharpness_score_x100_ = 0;
-  this->last_sharpness_ok_ = false;
+  this->last_sharpness_ok_ = !this->sharpness_enabled_;
   this->last_capture_retry_count_ = 0;
 }
 
@@ -401,6 +446,8 @@ void ContinuousMeasurementController::publish_cycle_timing_(uint32_t cycle_ms) {
   this->last_capture_ms_ = this->current_capture_ms_;
   this->last_sharpness_ms_ = this->current_sharpness_ms_;
   this->last_filter_ms_ = this->current_filter_ms_;
+  this->last_filter_decode_ms_ = this->current_filter_decode_ms_;
+  this->last_filter_correction_ms_ = this->current_filter_correction_ms_;
   this->last_detect_ms_ = this->current_detect_ms_;
   this->last_compute_ms_ = this->current_compute_ms_;
   this->last_cycle_ms_ = cycle_ms;
@@ -478,7 +525,7 @@ void ContinuousMeasurementController::update_sharpness_reference_(uint32_t score
 }
 
 void ContinuousMeasurementController::update_sharpness_roi_from_target_() {
-  if (this->detection_service_ == nullptr || this->filtered_source_ == nullptr ||
+  if (!this->sharpness_enabled_ || this->detection_service_ == nullptr || this->filtered_source_ == nullptr ||
       !this->detection_service_->ready() || !this->detection_service_->target_found()) {
     return;
   }
