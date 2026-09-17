@@ -122,7 +122,7 @@ void ContinuousMeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *requ
                                                        const char *status,
                                                        const char *error) const {
   std::string json;
-  json.reserve(1400);
+  json.reserve(1550);
   json += "{\"status\":\"";
   json += status;
   json += "\"";
@@ -148,13 +148,28 @@ void ContinuousMeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *requ
     json += ",\"measurement_valid\":";
     json += this->controller_->last_cycle_measurement_valid() ? "true" : "false";
 
+    const uint32_t capture_ms = this->controller_->last_capture_ms();
+    const uint32_t sharpness_ms = this->controller_->last_sharpness_ms();
+    const uint32_t filter_ms = this->controller_->last_filter_ms();
+    const uint32_t detect_ms = this->controller_->last_detect_ms();
+    const uint32_t compute_ms = this->controller_->last_compute_ms();
+    const uint32_t cycle_ms = this->controller_->last_cycle_ms();
+    const uint64_t processing_sum = static_cast<uint64_t>(capture_ms) + sharpness_ms + filter_ms +
+                                    detect_ms + compute_ms;
+    const uint32_t processing_ms = processing_sum > 0xFFFFFFFFULL
+                                       ? 0xFFFFFFFFU
+                                       : static_cast<uint32_t>(processing_sum);
+    const uint32_t orchestration_ms = cycle_ms > processing_ms ? cycle_ms - processing_ms : 0U;
+
     json += ",\"timing\":{";
-    json += "\"capture_ms\":" + std::to_string(this->controller_->last_capture_ms());
-    json += ",\"sharpness_ms\":" + std::to_string(this->controller_->last_sharpness_ms());
-    json += ",\"filter_ms\":" + std::to_string(this->controller_->last_filter_ms());
-    json += ",\"detect_ms\":" + std::to_string(this->controller_->last_detect_ms());
-    json += ",\"compute_ms\":" + std::to_string(this->controller_->last_compute_ms());
-    json += ",\"cycle_ms\":" + std::to_string(this->controller_->last_cycle_ms());
+    json += "\"capture_ms\":" + std::to_string(capture_ms);
+    json += ",\"sharpness_ms\":" + std::to_string(sharpness_ms);
+    json += ",\"filter_ms\":" + std::to_string(filter_ms);
+    json += ",\"detect_ms\":" + std::to_string(detect_ms);
+    json += ",\"compute_ms\":" + std::to_string(compute_ms);
+    json += ",\"processing_ms\":" + std::to_string(processing_ms);
+    json += ",\"orchestration_ms\":" + std::to_string(orchestration_ms);
+    json += ",\"cycle_ms\":" + std::to_string(cycle_ms);
     json += "}";
 
     json += ",\"sharpness\":{";
