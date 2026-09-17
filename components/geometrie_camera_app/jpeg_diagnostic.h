@@ -19,6 +19,7 @@ class JpegDiagnostic : public camera::CameraListener {
 
   void set_camera(esp32_camera::ESP32Camera *camera);
   bool request_capture();
+  void release_buffer();
   void loop();
   void on_camera_image(const std::shared_ptr<camera::CameraImage> &image) override;
 
