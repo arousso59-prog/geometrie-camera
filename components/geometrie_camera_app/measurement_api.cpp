@@ -147,30 +147,79 @@ void MeasurementApiHandler::handle_config_set_(AsyncWebServerRequest *request) {
   }
 
   float target_size_mm = 0.0f;
+  float k1 = 0.0f, k2 = 0.0f, p1 = 0.0f, p2 = 0.0f, k3 = 0.0f;
+  float clear_distortion_value = 0.0f;
   bool has_target_size = false;
+  bool has_k1 = false, has_k2 = false, has_p1 = false, has_p2 = false, has_k3 = false;
+  bool has_clear_distortion = false;
   std::string error;
-  if (!this->parse_float_param_(request, "target_size_mm", target_size_mm, has_target_size, error)) {
+  if (!this->parse_float_param_(request, "target_size_mm", target_size_mm, has_target_size, error) ||
+      !this->parse_float_param_(request, "k1", k1, has_k1, error) ||
+      !this->parse_float_param_(request, "k2", k2, has_k2, error) ||
+      !this->parse_float_param_(request, "p1", p1, has_p1, error) ||
+      !this->parse_float_param_(request, "p2", p2, has_p2, error) ||
+      !this->parse_float_param_(request, "k3", k3, has_k3, error) ||
+      !this->parse_float_param_(request, "clear_distortion", clear_distortion_value,
+                                has_clear_distortion, error)) {
     const std::string body = std::string("{\"status\":\"error\",\"error\":\"") + error + "\"}";
     request->send(400, "application/json", body.c_str());
     return;
   }
 
-  if (!has_target_size) {
+  const bool has_any_distortion = has_k1 || has_k2 || has_p1 || has_p2 || has_k3;
+  if (!has_target_size && !has_any_distortion && !has_clear_distortion) {
     request->send(400, "application/json",
                   "{\"status\":\"error\",\"error\":\"no_setting_provided\"}");
     return;
   }
 
-  if (target_size_mm < 1.0f || target_size_mm > 1000.0f ||
-      !this->manager_->measurement_engine().set_target_size_mm(target_size_mm)) {
+  if (has_any_distortion && !(has_k1 && has_k2 && has_p1 && has_p2 && has_k3)) {
     request->send(400, "application/json",
-                  "{\"status\":\"error\",\"error\":\"target_size_mm_out_of_range\"}");
+                  "{\"status\":\"error\",\"error\":\"all_distortion_coefficients_required\"}");
     return;
   }
 
-  // Changer explicitement la taille physique invalide la calibration et leve
-  // donc son verrou. C'est volontaire : fx/fy ont ete derives de cette taille.
-  this->manager_->measurement_engine().clear_calibration();
+  if (has_clear_distortion &&
+      clear_distortion_value != 0.0f && clear_distortion_value != 1.0f) {
+    request->send(400, "application/json",
+                  "{\"status\":\"error\",\"error\":\"clear_distortion_must_be_0_or_1\"}");
+    return;
+  }
+
+  GeometryMeasurementEngine &engine = this->manager_->measurement_engine();
+
+  if (has_target_size) {
+    if (target_size_mm < 1.0f || target_size_mm > 1000.0f ||
+        !engine.set_target_size_mm(target_size_mm)) {
+      request->send(400, "application/json",
+                    "{\"status\":\"error\",\"error\":\"target_size_mm_out_of_range\"}");
+      return;
+    }
+
+    // Changer la taille physique invalide fx/fy. Les coefficients de
+    // distorsion sont independants de la taille et pourront etre reappliques
+    // par la calibration full suivante.
+    const CameraCalibration previous = engine.calibration();
+    engine.clear_calibration();
+    if (has_any_distortion) {
+      engine.set_distortion_coefficients(k1, k2, p1, p2, k3);
+    } else if (!has_clear_distortion || clear_distortion_value == 0.0f) {
+      engine.set_distortion_coefficients(previous.k1, previous.k2,
+                                         previous.p1, previous.p2, previous.k3);
+    }
+  }
+
+  if (has_clear_distortion && clear_distortion_value == 1.0f) {
+    engine.clear_distortion();
+  }
+
+  if (has_any_distortion &&
+      !engine.set_distortion_coefficients(k1, k2, p1, p2, k3)) {
+    request->send(400, "application/json",
+                  "{\"status\":\"error\",\"error\":\"distortion_coefficients_invalid\"}");
+    return;
+  }
+
   this->manager_->reset();
   this->send_snapshot_(request, 200, "ok");
 }
@@ -307,6 +356,17 @@ void MeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *request, int r
     json += ",\"fy_px\":" + std::to_string(stored.fy_px);
     json += ",\"cx_px\":" + std::to_string(stored.cx_px);
     json += ",\"cy_px\":" + std::to_string(stored.cy_px);
+    json += ",\"k1\":" + std::to_string(stored.k1);
+    json += ",\"k2\":" + std::to_string(stored.k2);
+    json += ",\"p1\":" + std::to_string(stored.p1);
+    json += ",\"p2\":" + std::to_string(stored.p2);
+    json += ",\"k3\":" + std::to_string(stored.k3);
+    const bool distortion_enabled =
+        std::fabs(stored.k1) > 1.0e-12f || std::fabs(stored.k2) > 1.0e-12f ||
+        std::fabs(stored.p1) > 1.0e-12f || std::fabs(stored.p2) > 1.0e-12f ||
+        std::fabs(stored.k3) > 1.0e-12f;
+    json += ",\"distortion_enabled\":";
+    json += distortion_enabled ? "true" : "false";
     json += ",\"reference_width_px\":" + std::to_string(stored.reference_width_px);
     json += ",\"reference_height_px\":" + std::to_string(stored.reference_height_px);
     json += ",\"effective_fx_px\":" + std::to_string(effective.fx_px);
