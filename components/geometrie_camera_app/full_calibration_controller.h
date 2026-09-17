@@ -17,6 +17,7 @@ class TargetDetectionService;
 
 enum class FullCalibrationState : uint8_t {
   IDLE,
+  WAIT_IDLE,
   WAIT_CAPTURE,
   FILTER,
   DETECT,
@@ -60,6 +61,7 @@ class FullCalibrationController {
   const CameraCalibration &result_calibration() const;
 
  private:
+  bool begin_full_resolution_();
   bool request_next_capture_();
   bool derive_current_sample_(CameraCalibration &sample);
   void finish_success_();
