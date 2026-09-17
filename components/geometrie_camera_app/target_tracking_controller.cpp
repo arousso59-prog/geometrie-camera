@@ -13,6 +13,7 @@ static const char *const TAG = "target_tracking";
 TargetTrackingController::TargetTrackingController(CameraViewportController *viewport_controller)
     : viewport_controller_(viewport_controller),
       enabled_(false),
+      active_(false),
       lost_cycles_(3),
       recenter_threshold_pct_(70),
       current_lost_count_(0),
@@ -22,6 +23,7 @@ TargetTrackingController::TargetTrackingController(CameraViewportController *vie
 
 bool TargetTrackingController::start() {
   this->clear_runtime_();
+  this->active_ = false;
   if (!this->enabled_) {
     return true;
   }
@@ -33,42 +35,52 @@ bool TargetTrackingController::start() {
     this->last_error_ = "search_viewport_failed";
     return false;
   }
+  this->active_ = true;
   return true;
 }
 
 void TargetTrackingController::stop() {
-  if (this->enabled_ && this->viewport_controller_ != nullptr) {
+  if (this->active_ && this->viewport_controller_ != nullptr) {
     this->viewport_controller_->apply_search();
   }
+  this->active_ = false;
   this->clear_runtime_();
 }
 
 bool TargetTrackingController::set_enabled(bool enabled) {
+  if (this->active_) {
+    this->last_error_ = "tracking_active";
+    return false;
+  }
   this->enabled_ = enabled;
   this->clear_runtime_();
-  if (!enabled && this->viewport_controller_ != nullptr &&
-      this->viewport_controller_->snapshot().mode == CameraViewportMode::PRECISE_ROI) {
-    if (!this->viewport_controller_->apply_search()) {
-      this->last_error_ = "search_viewport_failed";
-      return false;
-    }
-  }
   return true;
 }
 
 bool TargetTrackingController::set_lost_cycles(uint8_t cycles) {
+  if (this->active_) {
+    this->last_error_ = "tracking_active";
+    return false;
+  }
   if (cycles < 1 || cycles > 10) return false;
   this->lost_cycles_ = cycles;
+  this->last_error_.clear();
   return true;
 }
 
 bool TargetTrackingController::set_recenter_threshold_pct(uint8_t percent) {
+  if (this->active_) {
+    this->last_error_ = "tracking_active";
+    return false;
+  }
   if (percent < 50 || percent > 90) return false;
   this->recenter_threshold_pct_ = percent;
+  this->last_error_.clear();
   return true;
 }
 
 bool TargetTrackingController::enabled() const { return this->enabled_; }
+bool TargetTrackingController::active() const { return this->active_; }
 bool TargetTrackingController::supported() const {
   return this->viewport_controller_ != nullptr && this->viewport_controller_->supports_precise_roi();
 }
@@ -81,7 +93,7 @@ const std::string &TargetTrackingController::last_error() const { return this->l
 
 TrackingUpdateResult TargetTrackingController::update_after_detection(
     bool target_found, const TargetObservation &local_observation) {
-  if (!this->enabled_ || this->viewport_controller_ == nullptr) {
+  if (!this->active_ || this->viewport_controller_ == nullptr) {
     return TrackingUpdateResult::NONE;
   }
 
