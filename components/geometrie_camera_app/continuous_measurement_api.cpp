@@ -72,9 +72,38 @@ bool ContinuousMeasurementApiHandler::parse_interval_(AsyncWebServerRequest *req
   return true;
 }
 
+bool ContinuousMeasurementApiHandler::parse_bool_option_(AsyncWebServerRequest *request,
+                                                          const char *name,
+                                                          bool current_value,
+                                                          bool &value,
+                                                          std::string &error) const {
+  value = current_value;
+  if (!request->hasParam(name)) {
+    return true;
+  }
+
+  const std::string text = request->getParam(name)->value();
+  if (text == "1" || text == "true" || text == "on") {
+    value = true;
+    return true;
+  }
+  if (text == "0" || text == "false" || text == "off") {
+    value = false;
+    return true;
+  }
+
+  error = std::string(name) + "_invalid";
+  return false;
+}
+
 void ContinuousMeasurementApiHandler::handle_start_(AsyncWebServerRequest *request) {
   if (this->controller_ == nullptr) {
     this->send_snapshot_(request, 500, "error", "continuous_measurement_unavailable");
+    return;
+  }
+
+  if (this->controller_->running()) {
+    this->send_snapshot_(request, 409, "error", "continuous_active");
     return;
   }
 
@@ -88,6 +117,21 @@ void ContinuousMeasurementApiHandler::handle_start_(AsyncWebServerRequest *reque
 
   if (interval_ms < 200 || interval_ms > 10000) {
     this->send_snapshot_(request, 400, "error", "interval_ms_out_of_range");
+    return;
+  }
+
+  bool sharpness_enabled = this->controller_->sharpness_enabled();
+  bool artifact_correction_enabled = this->controller_->artifact_correction_enabled();
+  if (!this->parse_bool_option_(request, "sharpness", sharpness_enabled,
+                                sharpness_enabled, error) ||
+      !this->parse_bool_option_(request, "artifact_correction", artifact_correction_enabled,
+                                artifact_correction_enabled, error)) {
+    this->send_snapshot_(request, 400, "error", error.c_str());
+    return;
+  }
+
+  if (!this->controller_->set_pipeline_options(sharpness_enabled, artifact_correction_enabled)) {
+    this->send_snapshot_(request, 409, "error", "continuous_active");
     return;
   }
 
@@ -126,7 +170,7 @@ void ContinuousMeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *requ
                                                        const char *status,
                                                        const char *error) const {
   std::string json;
-  json.reserve(2100);
+  json.reserve(2500);
   json += "{\"status\":\"";
   json += status;
   json += "\"";
@@ -144,6 +188,14 @@ void ContinuousMeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *requ
     json += this->controller_->state_text();
     json += "\"";
     json += ",\"interval_ms\":" + std::to_string(this->controller_->interval_ms());
+
+    json += ",\"pipeline\":{";
+    json += "\"sharpness_enabled\":";
+    json += this->controller_->sharpness_enabled() ? "true" : "false";
+    json += ",\"artifact_correction_enabled\":";
+    json += this->controller_->artifact_correction_enabled() ? "true" : "false";
+    json += "}";
+
     json += ",\"cycle_count\":" + std::to_string(this->controller_->cycle_count());
     json += ",\"target_found_count\":" + std::to_string(this->controller_->target_found_count());
     json += ",\"valid_measurement_count\":" + std::to_string(this->controller_->valid_measurement_count());
@@ -155,6 +207,8 @@ void ContinuousMeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *requ
     const uint32_t capture_ms = this->controller_->last_capture_ms();
     const uint32_t sharpness_ms = this->controller_->last_sharpness_ms();
     const uint32_t filter_ms = this->controller_->last_filter_ms();
+    const uint32_t filter_decode_ms = this->controller_->last_filter_decode_ms();
+    const uint32_t filter_correction_ms = this->controller_->last_filter_correction_ms();
     const uint32_t detect_ms = this->controller_->last_detect_ms();
     const uint32_t compute_ms = this->controller_->last_compute_ms();
     const uint32_t cycle_ms = this->controller_->last_cycle_ms();
@@ -169,6 +223,8 @@ void ContinuousMeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *requ
     json += "\"capture_ms\":" + std::to_string(capture_ms);
     json += ",\"sharpness_ms\":" + std::to_string(sharpness_ms);
     json += ",\"filter_ms\":" + std::to_string(filter_ms);
+    json += ",\"filter_decode_ms\":" + std::to_string(filter_decode_ms);
+    json += ",\"filter_correction_ms\":" + std::to_string(filter_correction_ms);
     json += ",\"detect_ms\":" + std::to_string(detect_ms);
     json += ",\"compute_ms\":" + std::to_string(compute_ms);
     json += ",\"processing_ms\":" + std::to_string(processing_ms);
@@ -177,7 +233,9 @@ void ContinuousMeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *requ
     json += "}";
 
     json += ",\"sharpness\":{";
-    json += "\"score_x100\":" + std::to_string(this->controller_->last_sharpness_score_x100());
+    json += "\"enabled\":";
+    json += this->controller_->sharpness_enabled() ? "true" : "false";
+    json += ",\"score_x100\":" + std::to_string(this->controller_->last_sharpness_score_x100());
     json += ",\"reference_x100\":" + std::to_string(this->controller_->sharpness_reference_score_x100());
     json += ",\"ok\":";
     json += this->controller_->last_sharpness_ok() ? "true" : "false";
