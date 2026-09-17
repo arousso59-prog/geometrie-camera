@@ -22,6 +22,8 @@ class ContinuousMeasurementApiHandler : public AsyncWebHandler {
  private:
   bool parse_interval_(AsyncWebServerRequest *request, uint32_t &interval_ms,
                        bool &present, std::string &error) const;
+  bool parse_bool_option_(AsyncWebServerRequest *request, const char *name,
+                          bool current_value, bool &value, std::string &error) const;
   void handle_start_(AsyncWebServerRequest *request);
   void handle_stop_(AsyncWebServerRequest *request);
   void handle_status_(AsyncWebServerRequest *request) const;
