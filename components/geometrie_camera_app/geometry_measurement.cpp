@@ -10,6 +10,8 @@ namespace {
 constexpr float RAD_TO_DEG_F = 57.29577951308232f;
 constexpr float MIN_VECTOR_NORM = 1.0e-6f;
 constexpr float MAX_POSE_SCALE_ERROR_PCT = 25.0f;
+constexpr float DISTANCE_BLEND_START_RATIO = 0.03f;
+constexpr float DISTANCE_BLEND_FULL_RATIO = 0.15f;
 
 struct Vec3 {
   float x;
@@ -54,6 +56,61 @@ float point_distance(const ImagePoint &a, const ImagePoint &b) {
   const float dx = b.x - a.x;
   const float dy = b.y - a.y;
   return std::sqrt(dx * dx + dy * dy);
+}
+
+ImagePoint quadrilateral_center(const ImagePoint (&points)[4]) {
+  // L'intersection des diagonales est l'image projective du centre du carre.
+  // Elle exploite directement les quatre coins raffines et evite de reutiliser
+  // le centre grossier du candidat de localisation.
+  const float rx = points[2].x - points[0].x;
+  const float ry = points[2].y - points[0].y;
+  const float sx = points[3].x - points[1].x;
+  const float sy = points[3].y - points[1].y;
+  const float denominator = rx * sy - ry * sx;
+
+  ImagePoint center;
+  if (std::fabs(denominator) > 1.0e-6f) {
+    const float qpx = points[1].x - points[0].x;
+    const float qpy = points[1].y - points[0].y;
+    const float t = (qpx * sy - qpy * sx) / denominator;
+    center.x = points[0].x + t * rx;
+    center.y = points[0].y + t * ry;
+    if (std::isfinite(center.x) && std::isfinite(center.y)) {
+      return center;
+    }
+  }
+
+  center.x = 0.25f * (points[0].x + points[1].x + points[2].x + points[3].x);
+  center.y = 0.25f * (points[0].y + points[1].y + points[2].y + points[3].y);
+  return center;
+}
+
+float fuse_size_distance(float z_from_width, float z_from_height) {
+  const float lower = std::min(z_from_width, z_from_height);
+  const float upper = std::max(z_from_width, z_from_height);
+  const float sum = z_from_width + z_from_height;
+  if (!std::isfinite(sum) || sum <= 0.0f || lower <= 0.0f) {
+    return lower;
+  }
+
+  // Moyenne harmonique = moyenne des deux tailles apparentes normalisees.
+  // Elle est continue et beaucoup moins sensible au basculement largeur/hauteur
+  // que le min() historique lorsque les deux estimations sont proches.
+  const float harmonic = 2.0f * z_from_width * z_from_height / sum;
+  const float disagreement = (upper - lower) / lower;
+
+  if (disagreement <= DISTANCE_BLEND_START_RATIO) {
+    return harmonic;
+  }
+  if (disagreement >= DISTANCE_BLEND_FULL_RATIO) {
+    return lower;
+  }
+
+  // Quand les deux axes divergent progressivement (inclinaison de la cible),
+  // revenir sans discontinuite vers la dimension la moins raccourcie.
+  const float blend = (disagreement - DISTANCE_BLEND_START_RATIO) /
+                      (DISTANCE_BLEND_FULL_RATIO - DISTANCE_BLEND_START_RATIO);
+  return harmonic + (lower - harmonic) * blend;
 }
 
 float normalize_half_turn(float angle_deg) {
@@ -260,10 +317,10 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
     return result;
   }
 
-  // Distance V2 robuste : la taille apparente du carre pilote la profondeur.
-  // Une inclinaison raccourcit une dimension et ferait surestimer la distance
-  // correspondante. La plus petite des deux estimations est donc retenue comme
-  // profondeur principale ; les deux valeurs restent exposees pour diagnostic.
+  // Distance V3 : exploiter les quatre cotes raffines sans basculement brutal
+  // entre largeur et hauteur. Quand les deux axes sont coherents, leurs tailles
+  // apparentes sont fusionnees. En cas d'inclinaison marquee, la fusion revient
+  // progressivement vers l'estimation la moins affectee par le raccourcissement.
   result.z_from_width_mm = calibration.fx_px * this->target_size_mm_ / width_px;
   result.z_from_height_mm = calibration.fy_px * this->target_size_mm_ / height_px;
   if (!std::isfinite(result.z_from_width_mm) || !std::isfinite(result.z_from_height_mm) ||
@@ -271,10 +328,14 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
     return result;
   }
 
-  result.z_mm = std::min(result.z_from_width_mm, result.z_from_height_mm);
+  result.z_mm = fuse_size_distance(result.z_from_width_mm, result.z_from_height_mm);
+  if (!std::isfinite(result.z_mm) || result.z_mm <= 0.0f) {
+    return result;
+  }
 
-  const float normalized_x = (observation.center_x_px - calibration.cx_px) / calibration.fx_px;
-  const float normalized_y = (observation.center_y_px - calibration.cy_px) / calibration.fy_px;
+  const ImagePoint center = quadrilateral_center(points);
+  const float normalized_x = (center.x - calibration.cx_px) / calibration.fx_px;
+  const float normalized_y = (center.y - calibration.cy_px) / calibration.fy_px;
   result.x_mm = normalized_x * result.z_mm;
   result.y_mm = normalized_y * result.z_mm;
   result.distance_mm = std::sqrt(result.x_mm * result.x_mm +
@@ -288,9 +349,9 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
   result.bearing_pitch_deg = std::atan2(normalized_y, 1.0f) * RAD_TO_DEG_F;
   result.valid = true;
 
-  // La decomposition projective n'est plus autorisee a piloter la distance.
-  // Elle ne sert qu'a l'orientation du plan et doit d'abord produire une
-  // profondeur coherente avec la taille apparente.
+  // La decomposition projective n'est pas autorisee a piloter directement la
+  // distance principale. Elle sert a l'orientation du plan et fournit pose_z
+  // comme controle independant de coherence avec la distance V3.
   float unit_h[9];
   if (!build_unit_square_homography(points, unit_h)) {
     return result;
