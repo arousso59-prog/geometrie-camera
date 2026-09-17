@@ -51,6 +51,11 @@ ContinuousMeasurementController::ContinuousMeasurementController(
       last_cycle_target_found_(false),
       last_cycle_measurement_valid_(false),
       last_error_(),
+      current_capture_ms_(0),
+      current_sharpness_ms_(0),
+      current_filter_ms_(0),
+      current_detect_ms_(0),
+      current_compute_ms_(0),
       last_capture_ms_(0),
       last_sharpness_ms_(0),
       last_filter_ms_(0),
@@ -102,11 +107,18 @@ bool ContinuousMeasurementController::start(uint32_t interval_ms) {
   this->capture_count_before_request_ = 0;
   this->last_cycle_target_found_ = false;
   this->last_cycle_measurement_valid_ = false;
+
+  this->current_capture_ms_ = 0;
+  this->current_sharpness_ms_ = 0;
+  this->current_filter_ms_ = 0;
+  this->current_detect_ms_ = 0;
+  this->current_compute_ms_ = 0;
   this->last_capture_ms_ = 0;
   this->last_sharpness_ms_ = 0;
   this->last_filter_ms_ = 0;
   this->last_detect_ms_ = 0;
   this->last_compute_ms_ = 0;
+
   this->last_sharpness_score_x100_ = 0;
   this->sharpness_reference_score_x100_ = 0;
   this->last_sharpness_ok_ = false;
@@ -139,9 +151,7 @@ void ContinuousMeasurementController::stop() {
 }
 
 void ContinuousMeasurementController::loop() {
-  if (!this->running_) {
-    return;
-  }
+  if (!this->running_) return;
 
   if (this->measurement_manager_ == nullptr ||
       !this->measurement_manager_->measurement_engine().has_calibration()) {
@@ -165,7 +175,7 @@ void ContinuousMeasurementController::loop() {
       if (!this->jpeg_source_->capture_pending() &&
           this->jpeg_source_->capture_count() > this->capture_count_before_request_ &&
           this->jpeg_source_->ready()) {
-        this->last_capture_ms_ += this->jpeg_source_->total_cycle_ms();
+        this->current_capture_ms_ += this->jpeg_source_->total_cycle_ms();
         this->state_ = ContinuousMeasurementState::SHARPNESS;
         return;
       }
@@ -176,8 +186,6 @@ void ContinuousMeasurementController::loop() {
       return;
 
     case ContinuousMeasurementState::SHARPNESS: {
-      // Sans cible precedente connue, un mur uniforme ne constitue pas une
-      // reference de nettete utile : laisser passer l'image vers le detecteur.
       if (!this->sharpness_roi_valid_) {
         this->last_sharpness_ok_ = true;
         this->state_ = ContinuousMeasurementState::FILTER;
@@ -187,15 +195,13 @@ void ContinuousMeasurementController::loop() {
       if (!this->sharpness_evaluator_->evaluate_region(
               this->sharpness_roi_x_, this->sharpness_roi_y_,
               this->sharpness_roi_width_, this->sharpness_roi_height_)) {
-        // Le controle de nettete est un garde-fou, pas une raison de perdre une
-        // mesure : en cas d'echec du mini-decodage, le pipeline principal continue.
         this->last_sharpness_ok_ = true;
         ESP_LOGW(TAG, "Controle nettete ROI indisponible; pipeline poursuivi");
         this->state_ = ContinuousMeasurementState::FILTER;
         return;
       }
 
-      this->last_sharpness_ms_ += this->sharpness_evaluator_->evaluation_ms();
+      this->current_sharpness_ms_ += this->sharpness_evaluator_->evaluation_ms();
       this->last_sharpness_score_x100_ = this->sharpness_evaluator_->score_x100();
       const bool too_blurry = this->sharpness_is_too_low_(this->last_sharpness_score_x100_);
 
@@ -230,7 +236,7 @@ void ContinuousMeasurementController::loop() {
         this->fail_cycle_("filter_failed");
         return;
       }
-      this->last_filter_ms_ = this->filtered_source_->total_ms();
+      this->current_filter_ms_ = this->filtered_source_->total_ms();
       this->state_ = ContinuousMeasurementState::DETECT;
       return;
 
@@ -239,14 +245,12 @@ void ContinuousMeasurementController::loop() {
         this->fail_cycle_("detection_failed");
         return;
       }
-      this->last_detect_ms_ = this->detection_service_->detection_ms();
+      this->current_detect_ms_ = this->detection_service_->detection_ms();
       if (!this->detection_service_->target_found()) {
         this->finish_cycle_(false, false);
         return;
       }
 
-      // La cible vient d'etre validee sur cette image. Son score de nettete peut
-      // maintenant enrichir la reference et sa geometrie devient la ROI suivante.
       if (this->last_sharpness_score_x100_ > 0 && this->last_sharpness_ok_) {
         this->update_sharpness_reference_(this->last_sharpness_score_x100_);
       }
@@ -259,7 +263,7 @@ void ContinuousMeasurementController::loop() {
       const bool measured = this->measurement_manager_->process(
           this->detection_service_->last_observation(), this->filtered_source_->width(),
           this->filtered_source_->height(), millis());
-      this->last_compute_ms_ = millis() - compute_started_ms;
+      this->current_compute_ms_ = millis() - compute_started_ms;
       if (!measured) {
         this->fail_cycle_("measurement_failed");
         return;
@@ -282,9 +286,7 @@ void ContinuousMeasurementController::loop() {
 }
 
 bool ContinuousMeasurementController::set_interval_ms(uint32_t interval_ms) {
-  if (interval_ms < MIN_INTERVAL_MS || interval_ms > MAX_INTERVAL_MS) {
-    return false;
-  }
+  if (interval_ms < MIN_INTERVAL_MS || interval_ms > MAX_INTERVAL_MS) return false;
   this->interval_ms_ = interval_ms;
   return true;
 }
@@ -333,36 +335,45 @@ uint16_t ContinuousMeasurementController::sharpness_roi_height() const { return 
 
 void ContinuousMeasurementController::begin_cycle_() {
   this->cycle_started_ms_ = millis();
-  this->last_capture_ms_ = 0;
-  this->last_sharpness_ms_ = 0;
-  this->last_filter_ms_ = 0;
-  this->last_detect_ms_ = 0;
-  this->last_compute_ms_ = 0;
+  this->current_capture_ms_ = 0;
+  this->current_sharpness_ms_ = 0;
+  this->current_filter_ms_ = 0;
+  this->current_detect_ms_ = 0;
+  this->current_compute_ms_ = 0;
   this->last_sharpness_score_x100_ = 0;
   this->last_sharpness_ok_ = false;
   this->last_capture_retry_count_ = 0;
 }
 
+void ContinuousMeasurementController::publish_cycle_timing_(uint32_t cycle_ms) {
+  this->last_capture_ms_ = this->current_capture_ms_;
+  this->last_sharpness_ms_ = this->current_sharpness_ms_;
+  this->last_filter_ms_ = this->current_filter_ms_;
+  this->last_detect_ms_ = this->current_detect_ms_;
+  this->last_compute_ms_ = this->current_compute_ms_;
+  this->last_cycle_ms_ = cycle_ms;
+}
+
 void ContinuousMeasurementController::finish_cycle_(bool target_found, bool measurement_valid) {
   const uint32_t now = millis();
+  this->publish_cycle_timing_(now - this->cycle_started_ms_);
   this->cycle_count_++;
   if (target_found) this->target_found_count_++;
   if (measurement_valid) this->valid_measurement_count_++;
   this->last_cycle_target_found_ = target_found;
   this->last_cycle_measurement_valid_ = measurement_valid;
   this->last_cycle_completed_ms_ = now;
-  this->last_cycle_ms_ = now - this->cycle_started_ms_;
   this->last_error_.clear();
   this->state_ = ContinuousMeasurementState::WAIT_INTERVAL;
 }
 
 void ContinuousMeasurementController::fail_cycle_(const char *error) {
   const uint32_t now = millis();
+  this->publish_cycle_timing_(now - this->cycle_started_ms_);
   this->cycle_count_++;
   this->last_cycle_target_found_ = false;
   this->last_cycle_measurement_valid_ = false;
   this->last_cycle_completed_ms_ = now;
-  this->last_cycle_ms_ = now - this->cycle_started_ms_;
   this->last_error_ = error != nullptr ? error : "cycle_failed";
   this->state_ = ContinuousMeasurementState::WAIT_INTERVAL;
   ESP_LOGW(TAG, "Cycle continu %u en echec: %s", static_cast<unsigned>(this->cycle_count_),
@@ -382,14 +393,8 @@ bool ContinuousMeasurementController::request_capture_() {
 }
 
 bool ContinuousMeasurementController::sharpness_is_too_low_(uint32_t score) const {
-  // Tant qu'une image avec cible valide n'a pas etabli la reference ROI, ne
-  // rejeter aucune capture sur la seule nettete.
-  if (this->sharpness_reference_score_x100_ == 0) {
-    return false;
-  }
-  if (score == 0) {
-    return true;
-  }
+  if (this->sharpness_reference_score_x100_ == 0) return false;
+  if (score == 0) return true;
 
   const uint64_t score_percent = static_cast<uint64_t>(score) * 100U;
   const uint64_t minimum = static_cast<uint64_t>(this->sharpness_reference_score_x100_) *
@@ -398,9 +403,7 @@ bool ContinuousMeasurementController::sharpness_is_too_low_(uint32_t score) cons
 }
 
 void ContinuousMeasurementController::update_sharpness_reference_(uint32_t score) {
-  if (score == 0) {
-    return;
-  }
+  if (score == 0) return;
   if (this->sharpness_reference_score_x100_ == 0) {
     this->sharpness_reference_score_x100_ = score;
     return;
@@ -430,15 +433,11 @@ void ContinuousMeasurementController::update_sharpness_roi_from_target_() {
 
   const uint16_t frame_width = this->filtered_source_->width();
   const uint16_t frame_height = this->filtered_source_->height();
-  if (frame_width == 0 || frame_height == 0) {
-    return;
-  }
+  if (frame_width == 0 || frame_height == 0) return;
 
   const auto &target = this->detection_service_->last_observation();
   const float target_size = std::max(target.width_px, target.height_px);
-  if (!target.valid || target_size <= 0.0f) {
-    return;
-  }
+  if (!target.valid || target_size <= 0.0f) return;
 
   uint32_t desired_size = static_cast<uint32_t>(std::ceil(target_size * SHARPNESS_ROI_TARGET_SCALE));
   desired_size = std::max<uint32_t>(desired_size, SHARPNESS_ROI_MIN_SIZE_PX);
