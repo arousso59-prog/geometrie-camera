@@ -15,10 +15,17 @@ class TargetDetector {
   TargetObservation detect(const GrayFrameView &frame);
 
  private:
+  float selection_score_(const TargetObservation &observation) const;
+  float continuity_score_(const TargetObservation &observation) const;
+  void update_tracking_(const TargetObservation &observation);
+
   TargetCandidateFinder candidate_finder_;
   TargetCornerRefiner corner_refiner_;
   TargetCodeDecoder code_decoder_;
   TargetCandidateSet candidates_;
+
+  TargetObservation last_valid_observation_;
+  uint8_t consecutive_misses_;
 };
 
 }  // namespace geometrie_camera_app
