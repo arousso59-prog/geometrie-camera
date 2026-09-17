@@ -15,13 +15,13 @@ Capteur optique pour appareil de géométrie automobile maison, basé sur ESP32-
 ```text
 OV5640 JPEG
    ↓
+CameraViewportController
+   ├── SEARCH : plein champ 800×600
+   └── PRECISE : ROI native 800×600 dans le repère 2560×1920
+   ↓
 JpegDiagnostic
    ↓
-ImageSharpnessEvaluator (mode continu)
-   ├── ROI autour de la dernière cible détectée
-   ├── décodage JPEG 1/4
-   ├── score sur les 20 % de contours les plus forts
-   └── recapture seulement si flou important
+ImageSharpnessEvaluator
    ↓
 JpegFilteredDiagnostic V2
    ↓
@@ -30,10 +30,12 @@ JpegArtifactCorrector
 TargetDetector V5.5
    ├── décodage du motif 7x7
    ├── raffinage des coins
-   └── continuité temporelle position/taille pour stabiliser la sélection
+   └── continuité temporelle position/taille
+   ↓
+conversion coordonnées viewport → repère 2560×1920
    ↓
 GeometryMeasurementEngine V3
-   ├── distance fusionnée à partir des deux axes du carré
+   ├── distance fusionnée à partir des deux axes
    ├── centre projectif par intersection des diagonales
    ├── X/Y/Z + bearing
    └── pose homographique validée séparément
@@ -56,16 +58,18 @@ Une calibration valide est verrouillée. Pour la remplacer volontairement :
 GET /measurement/calibrate?distance_mm=1000&target_size_mm=50&force=1
 ```
 
-La profondeur V3 conserve les deux estimations indépendantes :
+La profondeur V3 conserve :
 
 ```text
 z_from_width_mm  = fx × target_size_mm / largeur_px
 z_from_height_mm = fy × target_size_mm / hauteur_px
 ```
 
-Quand elles sont proches, `z_mm` utilise leur moyenne harmonique, ce qui revient à moyenner les tailles apparentes normalisées et évite le basculement brutal de l'ancien `min()`. Si leur écart augmente, le calcul revient progressivement vers la plus petite estimation, qui est en général la moins affectée par le raccourcissement dû à l'inclinaison de la cible. La transition commence à 3 % d'écart et devient complète à 15 %.
+Quand elles sont proches, `z_mm` utilise leur moyenne harmonique. Lorsque leur écart augmente, le calcul revient progressivement vers la plus petite estimation. La transition commence à 3 % et devient complète à 15 %.
 
-Le centre utilisé pour `x_mm`, `y_mm`, `bearing_yaw_deg` et `bearing_pitch_deg` n'est plus le centre grossier du candidat : il est calculé à partir de l'intersection des diagonales formées par les quatre coins raffinés. `pose_z_mm` reste exposé comme contrôle indépendant de cohérence de la pose homographique.
+Le centre utilisé pour `x_mm`, `y_mm`, `bearing_yaw_deg` et `bearing_pitch_deg` est calculé à partir de l'intersection des diagonales formées par les quatre coins raffinés. `pose_z_mm` reste un contrôle indépendant issu de l'homographie.
+
+Le moteur de mesure sait déjà redimensionner une calibration réalisée à une autre résolution de même cadrage. En mode tracking, les coordonnées détectées sont converties dans le repère de référence **2560×1920** avant la mesure ; une calibration existante 800×600 reste donc mathématiquement exploitable.
 
 ## Réglages caméra
 
@@ -76,28 +80,74 @@ GET /api/camera/settings/set?monochrome=1
 GET /api/camera/settings/set?monochrome=0
 ```
 
-`monochrome=1` active l'effet grayscale de l'OV5640 à chaud. Le framebuffer reste en JPEG : ce réglage ne change ni le `pixel_format`, ni le pipeline de capture/détection. Le changement réel de `pixel_format` reste un réglage de démarrage nécessitant recompilation/reflash.
+`monochrome=1` active l'effet grayscale de l'OV5640 à chaud. Le framebuffer reste en JPEG.
 
-Le mode continu utilise la résolution caméra active. `800x600` reste pratique pour les essais rapides ; une évolution haute résolution + ROI est prévue pour augmenter la précision sans traiter toute l'image.
+## Tracking haute précision SEARCH / PRECISE
+
+Le tracking est volontairement **désactivé par défaut** pendant la première validation matérielle.
+
+Configuration :
+
+```text
+GET /tracking/config
+GET /tracking/config/set?enabled=1
+GET /tracking/config/set?lost_cycles=3&recenter_threshold_pct=70
+GET /tracking/status
+GET /api/camera/viewport
+```
+
+La première version utilise des dimensions fixes :
+
+```text
+repère de référence : 2560×1920
+SEARCH              : plein champ 800×600
+PRECISE             : crop natif 800×600, sortie 800×600
+```
+
+Le PC ne déplace jamais la ROI à chaque cycle. `/continuous/start` démarre seulement l'automate ; l'ESP32 gère ensuite :
+
+```text
+SEARCH 800×600 plein champ
+      ↓ cible validée
+conversion cible vers repère 2560×1920
+      ↓
+PRECISE ROI native 800×600 centrée sur la cible
+      ↓
+mesures successives dans cette ROI
+      ├── cible proche du bord → recentrage pour le cycle suivant
+      └── cible perdue 3 cycles → retour SEARCH
+```
+
+Le changement de viewport est effectué **après le calcul du cycle courant**. La capture suivante purge déjà la frame éventuellement pré-acquise avant la reconfiguration, grâce au mécanisme de `JpegDiagnostic`.
+
+Le filtre ne traite donc jamais une image grayscale 2560×1920 complète : il continue à travailler sur une sortie d'environ 800×600. Le gain de précision vient du fait qu'en PRECISE ces 800×600 pixels correspondent directement à une petite zone native du capteur.
+
+`/api/camera/viewport` expose notamment :
+
+```text
+mode
+reference.width / reference.height
+window.x / window.y / window.width / window.height
+output.width / output.height
+scale.x / scale.y
+```
+
+`/continuous/status` contient aussi un bloc `tracking` avec `enabled`, `supported`, `mode`, `target_locked`, `lost_count`, `transition_count` et la ROI courante.
 
 ## Détection cible V5.5
 
-Le détecteur conserve le score du décodage du motif comme critère de validité, mais utilise maintenant une cohérence temporelle pour choisir entre plusieurs candidats valides. Quand une cible valide a déjà été trouvée, les candidats proches en position et de taille cohérente reçoivent un bonus de sélection. Les sauts importants de position ou de taille sont pénalisés, sans empêcher une vraie réacquisition si le nouveau candidat est nettement meilleur.
-
-Après trois détections manquées consécutives, le suivi temporel est remis à zéro afin de permettre une réacquisition libre.
+Le détecteur utilise le score du motif comme critère de validité et une cohérence temporelle pour stabiliser la sélection. Son historique est remis à zéro à chaque changement de viewport, car SEARCH et PRECISE n'utilisent pas le même repère local.
 
 Dans `/target/preview.bmp` :
 
 ```text
-cadre plein      = cible validée par le décodage du motif
-cadre pointillé  = meilleur candidat localisé mais rejeté par la validation
+cadre plein      = cible validée
+cadre pointillé  = meilleur candidat localisé mais rejeté
 ```
 
-Le cadre pointillé permet donc de distinguer un échec de localisation d'un candidat bien repéré mais non reconnu comme cible.
+## Mode continu
 
-## Mode continu avec contrôle de netteté ciblé V2
-
-Le démarrage est interdit sans calibration valide :
+Le démarrage exige une calibration valide :
 
 ```text
 GET /continuous/start?interval_ms=1000
@@ -105,32 +155,9 @@ GET /continuous/status
 GET /continuous/stop
 ```
 
-Le cycle est :
+Le contrôle de netteté reste local à la cible. Après un changement SEARCH/PRECISE, la ROI et la référence de netteté sont réinitialisées pour éviter de comparer directement les scores de deux niveaux de grossissement différents.
 
-```text
-capture
-→ contrôle netteté dans la ROI de la dernière cible connue
-   ├── aucune ROI connue → pas de rejet, passage direct au filtre
-   ├── cible manifestement floue → recapture immédiate, maximum 2 fois
-   └── OK
-→ filtre
-→ détection
-→ mise à jour ROI + référence netteté
-→ mesure
-→ cycle suivant
-```
-
-La netteté ne dépend donc plus du décor complet. Sur un mur uniforme, seul le voisinage de la cible influence le score.
-
-La ROI vaut maintenant environ **2,5 fois la taille détectée de la cible**, avec un minimum de `48×48 px` dans l'image source. Le JPEG est décodé à `1/4` pour conserver assez de détails quand la cible devient petite.
-
-Le score ne moyenne plus tous les pixels de la ROI : il utilise les **20 % de réponses Laplaciennes les plus fortes**, qui correspondent principalement aux transitions noir/blanc du motif. Cela réduit fortement l'influence du fond uniforme.
-
-La référence de netteté est mise à jour uniquement après une détection valide. Une nouvelle valeur est d'abord limitée à ±15 % de la référence précédente, puis intégrée lentement (`7/8` ancienne référence + `1/8` nouvelle valeur bornée). Une capture n'est recapturée que si son score tombe sous **45 %** de cette référence. Si la troisième capture reste faible, le pipeline continue quand même pour ne pas se bloquer.
-
-Les essais V1 ont montré que le mini-décodage de netteté 1/4 coûte encore environ `315–320 ms`. Cette V2 vise d'abord à vérifier que les recaptures deviennent réellement utiles ; ensuite, si le principe est validé, le double décodage JPEG sera un axe prioritaire d'optimisation.
-
-`/continuous/status` expose les temps détaillés :
+`/continuous/status` expose :
 
 ```text
 timing.capture_ms
@@ -143,36 +170,17 @@ timing.orchestration_ms
 timing.cycle_ms
 ```
 
-`processing_ms` est la somme des cinq traitements chronométrés. `orchestration_ms` correspond au temps mural restant dans le cycle entre ces étapes et les passages de boucle ESPHome ; ce temps est interne à l'ESP32 et ne correspond pas à un traitement réalisé par le PC.
-
-et les informations de netteté :
-
-```text
-sharpness.score_x100
-sharpness.reference_x100
-sharpness.ok
-sharpness.capture_retries
-sharpness.blur_retry_count
-sharpness.roi_active
-sharpness.roi_x
-sharpness.roi_y
-sharpness.roi_width
-sharpness.roi_height
-```
-
-## Interface Web ESPHome
-
-La page principale garde les **dernières valeurs valides** de distance, X/Y/Z, angles et qualité même si un cycle courant ne retrouve pas la cible. La ligne `03 Cible actuelle` indique séparément si la dernière détection a réussi.
-
-Les timings capture/netteté/filtre/détection/calcul et les compteurs de recapture sont affichés sous les mesures principales.
-
 ## API actuelle
 
 ```text
 GET /api/wsdl
 GET /api/runtime/status
 GET /api/camera/settings
-GET /api/camera/settings/set?<parametres>&resolution=<optionnel>&monochrome=<0|1>
+GET /api/camera/settings/set?<parametres>
+GET /api/camera/viewport
+GET /tracking/config
+GET /tracking/config/set?enabled=<0|1>&lost_cycles=<1..10>&recenter_threshold_pct=<50..90>
+GET /tracking/status
 GET /diagnostic-jpeg/capture?resolution=<optionnel>
 GET /diagnostic-jpeg/status
 GET /diagnostic-jpeg/image.jpg
@@ -192,15 +200,21 @@ GET /continuous/stop
 GET /continuous/status
 ```
 
-`/api/wsdl` est la référence du contrat HTTP. Version actuelle : **20**.
+`/api/wsdl` est la référence du contrat HTTP. Version actuelle : **21**.
 
 Les responsabilités détaillées et les règles de développement sont dans [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
-## Étape actuelle
+## Validation de la première version ROI
 
-1. compiler/flasher le firmware courant ;
-2. refaire une calibration à distance connue avec la cible la plus frontale possible ;
-3. laisser la cible parfaitement immobile et comparer la dispersion de `z_mm`, `z_from_width_mm`, `z_from_height_mm` et `pose_z_mm` ;
-4. incliner légèrement la cible puis vérifier que `z_mm` reste continu quand largeur et hauteur échangent leur rôle dominant ;
-5. vérifier en parallèle la stabilité de X/Y et des bearing grâce au centre calculé par les quatre coins ;
-6. seulement après cette validation, décider si un filtrage temporel léger est encore nécessaire.
+1. compiler et flasher avec le tracking laissé désactivé ;
+2. vérifier que le mode continu historique fonctionne toujours ;
+3. appeler `/tracking/status` et vérifier `supported=true` ;
+4. activer `/tracking/config/set?enabled=1` ;
+5. démarrer `/continuous/start?interval_ms=1000` ;
+6. vérifier dans `/continuous/status` le passage `search` → `precise` après détection ;
+7. vérifier que la capture reste déclarée `800x600` en mode PRECISE et que la cible apparaît nettement plus grande ;
+8. contrôler `capture_ms`, `filter_ms`, `detect_ms` et `cycle_ms` pour mesurer le coût réel du crop natif ;
+9. déplacer doucement la cible vers le bord et vérifier le recentrage ;
+10. masquer la cible pendant trois cycles et vérifier le retour automatique en SEARCH.
+
+Cette première version conserve volontairement les timings capteur complets en PRECISE. Une fois le crop natif validé, les timings de lecture OV5640 pourront être resserrés pour réduire aussi le temps d'acquisition, sans modifier l'API.
