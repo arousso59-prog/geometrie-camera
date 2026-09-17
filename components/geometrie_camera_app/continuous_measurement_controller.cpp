@@ -10,6 +10,7 @@
 #include "jpeg_filtered_diagnostic.h"
 #include "measurement_manager.h"
 #include "target_detection_service.h"
+#include "target_tracking_controller.h"
 
 namespace esphome {
 namespace geometrie_camera_app {
@@ -32,12 +33,14 @@ ContinuousMeasurementController::ContinuousMeasurementController(
     ImageSharpnessEvaluator *sharpness_evaluator,
     JpegFilteredDiagnostic *filtered_source,
     TargetDetectionService *detection_service,
-    MeasurementManager *measurement_manager)
+    MeasurementManager *measurement_manager,
+    TargetTrackingController *tracking_controller)
     : jpeg_source_(jpeg_source),
       sharpness_evaluator_(sharpness_evaluator),
       filtered_source_(filtered_source),
       detection_service_(detection_service),
       measurement_manager_(measurement_manager),
+      tracking_controller_(tracking_controller),
       running_(false),
       interval_ms_(1000),
       state_(ContinuousMeasurementState::STOPPED),
@@ -96,6 +99,15 @@ bool ContinuousMeasurementController::start(uint32_t interval_ms) {
     return false;
   }
 
+  if (this->tracking_controller_ != nullptr && !this->tracking_controller_->start()) {
+    this->running_ = false;
+    this->state_ = ContinuousMeasurementState::ERROR;
+    this->last_error_ = this->tracking_controller_->last_error().empty()
+                            ? "tracking_start_failed"
+                            : this->tracking_controller_->last_error();
+    return false;
+  }
+
   this->running_ = true;
   this->state_ = ContinuousMeasurementState::REQUEST_CAPTURE;
   this->cycle_count_ = 0;
@@ -131,14 +143,16 @@ bool ContinuousMeasurementController::start(uint32_t interval_ms) {
   this->sharpness_roi_height_ = 0;
   this->last_error_.clear();
 
-  // La calibration est faite sur une cible detectee : reutiliser cette derniere
-  // position comme ROI initiale si elle correspond encore a l'image filtree.
-  if (this->detection_service_->ready() && this->detection_service_->target_found()) {
+  if (this->tracking_controller_ != nullptr && this->tracking_controller_->enabled()) {
+    this->reset_local_tracking_after_viewport_change_();
+  } else if (this->detection_service_->ready() && this->detection_service_->target_found()) {
     this->update_sharpness_roi_from_target_();
   }
 
-  ESP_LOGI(TAG, "Mesure continue demarree, intervalle=%u ms, ROI nettete=%s",
-           static_cast<unsigned>(this->interval_ms_), this->sharpness_roi_valid_ ? "OUI" : "NON");
+  ESP_LOGI(TAG, "Mesure continue demarree, intervalle=%u ms, tracking=%s, ROI nettete=%s",
+           static_cast<unsigned>(this->interval_ms_),
+           this->tracking_controller_ != nullptr && this->tracking_controller_->enabled() ? "AUTO" : "OFF",
+           this->sharpness_roi_valid_ ? "OUI" : "NON");
   return true;
 }
 
@@ -148,6 +162,10 @@ void ContinuousMeasurementController::stop() {
   }
   this->running_ = false;
   this->state_ = ContinuousMeasurementState::STOPPED;
+  if (this->tracking_controller_ != nullptr) {
+    this->tracking_controller_->stop();
+    this->reset_local_tracking_after_viewport_change_();
+  }
 }
 
 void ContinuousMeasurementController::loop() {
@@ -240,13 +258,24 @@ void ContinuousMeasurementController::loop() {
       this->state_ = ContinuousMeasurementState::DETECT;
       return;
 
-    case ContinuousMeasurementState::DETECT:
+    case ContinuousMeasurementState::DETECT: {
       if (!this->detection_service_->detect()) {
         this->fail_cycle_("detection_failed");
         return;
       }
       this->current_detect_ms_ = this->detection_service_->detection_ms();
       if (!this->detection_service_->target_found()) {
+        if (this->tracking_controller_ != nullptr && this->tracking_controller_->enabled()) {
+          const TrackingUpdateResult tracking_result =
+              this->tracking_controller_->update_after_detection(false, TargetObservation());
+          if (tracking_result == TrackingUpdateResult::ERROR) {
+            this->fail_cycle_("tracking_update_failed");
+            return;
+          }
+          if (tracking_result == TrackingUpdateResult::VIEWPORT_CHANGED) {
+            this->reset_local_tracking_after_viewport_change_();
+          }
+        }
         this->finish_cycle_(false, false);
         return;
       }
@@ -257,17 +286,40 @@ void ContinuousMeasurementController::loop() {
       this->update_sharpness_roi_from_target_();
       this->state_ = ContinuousMeasurementState::COMPUTE;
       return;
+    }
 
     case ContinuousMeasurementState::COMPUTE: {
       const uint32_t compute_started_ms = millis();
+      TargetObservation measurement_observation = this->detection_service_->last_observation();
+      uint16_t measurement_width = this->filtered_source_->width();
+      uint16_t measurement_height = this->filtered_source_->height();
+
+      if (this->tracking_controller_ != nullptr && this->tracking_controller_->enabled()) {
+        measurement_observation = this->tracking_controller_->to_reference(measurement_observation);
+        measurement_width = this->tracking_controller_->reference_width();
+        measurement_height = this->tracking_controller_->reference_height();
+      }
+
       const bool measured = this->measurement_manager_->process(
-          this->detection_service_->last_observation(), this->filtered_source_->width(),
-          this->filtered_source_->height(), millis());
+          measurement_observation, measurement_width, measurement_height, millis());
       this->current_compute_ms_ = millis() - compute_started_ms;
       if (!measured) {
         this->fail_cycle_("measurement_failed");
         return;
       }
+
+      if (this->tracking_controller_ != nullptr && this->tracking_controller_->enabled()) {
+        const TrackingUpdateResult tracking_result = this->tracking_controller_->update_after_detection(
+            true, this->detection_service_->last_observation());
+        if (tracking_result == TrackingUpdateResult::ERROR) {
+          this->fail_cycle_("tracking_update_failed");
+          return;
+        }
+        if (tracking_result == TrackingUpdateResult::VIEWPORT_CHANGED) {
+          this->reset_local_tracking_after_viewport_change_();
+        }
+      }
+
       this->finish_cycle_(true, true);
       return;
     }
@@ -461,6 +513,18 @@ void ContinuousMeasurementController::update_sharpness_roi_from_target_() {
            static_cast<unsigned>(this->sharpness_roi_y_),
            static_cast<unsigned>(this->sharpness_roi_width_),
            static_cast<unsigned>(this->sharpness_roi_height_));
+}
+
+void ContinuousMeasurementController::reset_local_tracking_after_viewport_change_() {
+  this->sharpness_roi_valid_ = false;
+  this->sharpness_roi_x_ = 0;
+  this->sharpness_roi_y_ = 0;
+  this->sharpness_roi_width_ = 0;
+  this->sharpness_roi_height_ = 0;
+  this->sharpness_reference_score_x100_ = 0;
+  if (this->detection_service_ != nullptr) {
+    this->detection_service_->reset_tracking();
+  }
 }
 
 }  // namespace geometrie_camera_app
