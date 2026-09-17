@@ -65,6 +65,12 @@ bool JpegDiagnostic::request_capture() {
   this->acquisition_ms_ = 0;
   this->copy_ms_ = 0;
   this->total_cycle_ms_ = 0;
+
+  // Une nouvelle acquisition invalide immediatement l'ancienne image pour les
+  // traitements. Le buffer peut rester alloue, mais aucun filtre/detecteur ne
+  // doit pouvoir le reutiliser tant qu'une nouvelle frame fraiche n'a pas ete
+  // effectivement copiee et marquee ready_ dans on_camera_image().
+  this->ready_ = false;
   this->capture_pending_ = true;
   this->discard_next_frame_ = true;
   this->fresh_request_pending_ = false;
