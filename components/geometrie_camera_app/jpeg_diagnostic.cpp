@@ -53,6 +53,18 @@ void JpegDiagnostic::set_camera(esp32_camera::ESP32Camera *camera) {
   ESP_LOGI(TAG, "Diagnostic JPEG relie a ESP32Camera");
 }
 
+void JpegDiagnostic::release_buffer() {
+  if (this->capture_pending_) {
+    return;
+  }
+  this->clear_buffer_();
+  this->width_ = 0;
+  this->height_ = 0;
+  this->has_soi_ = false;
+  this->has_eoi_ = false;
+  this->ready_ = false;
+}
+
 bool JpegDiagnostic::request_capture() {
   if (this->camera_ == nullptr || this->capture_pending_) {
     return false;
