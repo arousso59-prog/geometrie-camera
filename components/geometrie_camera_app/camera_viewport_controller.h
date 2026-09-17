@@ -13,6 +13,7 @@ enum class CameraViewportMode : uint8_t {
   SEARCH_FULL,
   ZOOM_WIDE,
   ZOOM_MEDIUM,
+  ZOOM_FINE,
   PRECISE_ROI,
 };
 
@@ -41,8 +42,11 @@ class CameraViewportController {
   bool apply_search();
   bool apply_zoom_wide(float center_reference_x, float center_reference_y);
   bool apply_zoom_medium(float center_reference_x, float center_reference_y);
+  bool apply_zoom_fine(float center_reference_x, float center_reference_y);
   bool apply_precise_roi(float center_reference_x, float center_reference_y);
   bool recenter_current_zoom(float center_reference_x, float center_reference_y);
+  bool recenter_current_zoom_from_local(float local_center_x, float local_center_y,
+                                        bool &viewport_moved);
 
   TargetObservation to_reference(const TargetObservation &observation) const;
   bool target_near_edge(const TargetObservation &observation, uint8_t central_percent) const;
@@ -58,6 +62,8 @@ class CameraViewportController {
   static constexpr uint16_t ZOOM_WIDE_HEIGHT = 1440;
   static constexpr uint16_t ZOOM_MEDIUM_WIDTH = 1280;
   static constexpr uint16_t ZOOM_MEDIUM_HEIGHT = 960;
+  static constexpr uint16_t ZOOM_FINE_WIDTH = 1024;
+  static constexpr uint16_t ZOOM_FINE_HEIGHT = 768;
 
  private:
   bool apply_zoom_window_(CameraViewportMode mode,
