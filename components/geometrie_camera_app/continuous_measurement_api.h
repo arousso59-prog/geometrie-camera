@@ -9,10 +9,12 @@ namespace esphome {
 namespace geometrie_camera_app {
 
 class ContinuousMeasurementController;
+class TargetTrackingController;
 
 class ContinuousMeasurementApiHandler : public AsyncWebHandler {
  public:
-  explicit ContinuousMeasurementApiHandler(ContinuousMeasurementController *controller);
+  ContinuousMeasurementApiHandler(ContinuousMeasurementController *controller,
+                                  TargetTrackingController *tracking_controller);
 
   bool canHandle(AsyncWebServerRequest *request) const override;
   void handleRequest(AsyncWebServerRequest *request) override;
@@ -27,6 +29,7 @@ class ContinuousMeasurementApiHandler : public AsyncWebHandler {
                       const char *status, const char *error = nullptr) const;
 
   ContinuousMeasurementController *controller_;
+  TargetTrackingController *tracking_controller_;
 };
 
 }  // namespace geometrie_camera_app
