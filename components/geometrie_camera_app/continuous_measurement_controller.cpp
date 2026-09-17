@@ -55,6 +55,16 @@ ContinuousMeasurementController::ContinuousMeasurementController(
       capture_count_before_request_(0),
       last_cycle_target_found_(false),
       last_cycle_measurement_valid_(false),
+      current_cycle_viewport_mode_("search"),
+      current_cycle_viewport_x_(0),
+      current_cycle_viewport_y_(0),
+      current_cycle_viewport_width_(2560),
+      current_cycle_viewport_height_(1920),
+      last_cycle_viewport_mode_("search"),
+      last_cycle_viewport_x_(0),
+      last_cycle_viewport_y_(0),
+      last_cycle_viewport_width_(2560),
+      last_cycle_viewport_height_(1920),
       last_error_(),
       current_capture_ms_(0),
       current_sharpness_ms_(0),
@@ -125,6 +135,16 @@ bool ContinuousMeasurementController::start(uint32_t interval_ms) {
   this->capture_count_before_request_ = 0;
   this->last_cycle_target_found_ = false;
   this->last_cycle_measurement_valid_ = false;
+  this->current_cycle_viewport_mode_ = "search";
+  this->current_cycle_viewport_x_ = 0;
+  this->current_cycle_viewport_y_ = 0;
+  this->current_cycle_viewport_width_ = 2560;
+  this->current_cycle_viewport_height_ = 1920;
+  this->last_cycle_viewport_mode_ = "search";
+  this->last_cycle_viewport_x_ = 0;
+  this->last_cycle_viewport_y_ = 0;
+  this->last_cycle_viewport_width_ = 2560;
+  this->last_cycle_viewport_height_ = 1920;
 
   this->current_capture_ms_ = 0;
   this->current_sharpness_ms_ = 0;
@@ -408,6 +428,21 @@ uint32_t ContinuousMeasurementController::valid_measurement_count() const { retu
 uint32_t ContinuousMeasurementController::last_cycle_ms() const { return this->last_cycle_ms_; }
 bool ContinuousMeasurementController::last_cycle_target_found() const { return this->last_cycle_target_found_; }
 bool ContinuousMeasurementController::last_cycle_measurement_valid() const { return this->last_cycle_measurement_valid_; }
+const std::string &ContinuousMeasurementController::last_cycle_viewport_mode() const {
+  return this->last_cycle_viewport_mode_;
+}
+uint16_t ContinuousMeasurementController::last_cycle_viewport_x() const {
+  return this->last_cycle_viewport_x_;
+}
+uint16_t ContinuousMeasurementController::last_cycle_viewport_y() const {
+  return this->last_cycle_viewport_y_;
+}
+uint16_t ContinuousMeasurementController::last_cycle_viewport_width() const {
+  return this->last_cycle_viewport_width_;
+}
+uint16_t ContinuousMeasurementController::last_cycle_viewport_height() const {
+  return this->last_cycle_viewport_height_;
+}
 const std::string &ContinuousMeasurementController::last_error() const { return this->last_error_; }
 uint32_t ContinuousMeasurementController::last_capture_ms() const { return this->last_capture_ms_; }
 uint32_t ContinuousMeasurementController::last_sharpness_ms() const { return this->last_sharpness_ms_; }
@@ -431,6 +466,27 @@ uint16_t ContinuousMeasurementController::sharpness_roi_height() const { return 
 
 void ContinuousMeasurementController::begin_cycle_() {
   this->cycle_started_ms_ = millis();
+
+  // Memoriser le viewport qui va reellement produire cette image. Le tracking
+  // peut changer de viewport APRES la detection du cycle ; sans ce snapshot,
+  // l'API associait l'image precedente au mode suivant, ce qui rendait le
+  // diagnostic du zoom trompeur.
+  if (this->tracking_controller_ != nullptr && this->tracking_controller_->enabled() &&
+      this->tracking_controller_->viewport_controller() != nullptr) {
+    const auto &viewport = this->tracking_controller_->viewport_controller()->snapshot();
+    this->current_cycle_viewport_mode_ = CameraViewportController::mode_text(viewport.mode);
+    this->current_cycle_viewport_x_ = viewport.window_x;
+    this->current_cycle_viewport_y_ = viewport.window_y;
+    this->current_cycle_viewport_width_ = viewport.window_width;
+    this->current_cycle_viewport_height_ = viewport.window_height;
+  } else {
+    this->current_cycle_viewport_mode_ = "search";
+    this->current_cycle_viewport_x_ = 0;
+    this->current_cycle_viewport_y_ = 0;
+    this->current_cycle_viewport_width_ = 2560;
+    this->current_cycle_viewport_height_ = 1920;
+  }
+
   this->current_capture_ms_ = 0;
   this->current_sharpness_ms_ = 0;
   this->current_filter_ms_ = 0;
@@ -462,6 +518,11 @@ void ContinuousMeasurementController::finish_cycle_(bool target_found, bool meas
   if (measurement_valid) this->valid_measurement_count_++;
   this->last_cycle_target_found_ = target_found;
   this->last_cycle_measurement_valid_ = measurement_valid;
+  this->last_cycle_viewport_mode_ = this->current_cycle_viewport_mode_;
+  this->last_cycle_viewport_x_ = this->current_cycle_viewport_x_;
+  this->last_cycle_viewport_y_ = this->current_cycle_viewport_y_;
+  this->last_cycle_viewport_width_ = this->current_cycle_viewport_width_;
+  this->last_cycle_viewport_height_ = this->current_cycle_viewport_height_;
   this->last_cycle_completed_ms_ = now;
   this->last_error_.clear();
   this->state_ = ContinuousMeasurementState::WAIT_INTERVAL;
@@ -473,6 +534,11 @@ void ContinuousMeasurementController::fail_cycle_(const char *error) {
   this->cycle_count_++;
   this->last_cycle_target_found_ = false;
   this->last_cycle_measurement_valid_ = false;
+  this->last_cycle_viewport_mode_ = this->current_cycle_viewport_mode_;
+  this->last_cycle_viewport_x_ = this->current_cycle_viewport_x_;
+  this->last_cycle_viewport_y_ = this->current_cycle_viewport_y_;
+  this->last_cycle_viewport_width_ = this->current_cycle_viewport_width_;
+  this->last_cycle_viewport_height_ = this->current_cycle_viewport_height_;
   this->last_cycle_completed_ms_ = now;
   this->last_error_ = error != nullptr ? error : "cycle_failed";
   this->state_ = ContinuousMeasurementState::WAIT_INTERVAL;
