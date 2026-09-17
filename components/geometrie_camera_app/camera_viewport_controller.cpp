@@ -78,9 +78,8 @@ bool CameraViewportController::apply_precise_roi(float center_reference_x, float
 
   // Le repere 2560x1920 correspond au cadrage 4:3 standard de l'OV5640.
   // Ce cadrage utilise une marge capteur de 32 px horizontalement et 16 px
-  // verticalement. On conserve les timings complets pour cette premiere version
-  // afin de privilegier la stabilite capteur ; ils pourront etre resserres apres
-  // validation sur le materiel reel.
+  // verticalement. On conserve les timings complets afin de garder le meme
+  // repere optique que le mode plein champ.
   const int start_x = x;
   const int start_y = y;
   const int end_x = x + OUTPUT_WIDTH + 2 * SENSOR_MARGIN_X - 1;
@@ -93,6 +92,29 @@ bool CameraViewportController::apply_precise_roi(float center_reference_x, float
                           false, false) != 0) {
     ESP_LOGE(TAG, "Echec set_res_raw ROI x=%d y=%d", static_cast<int>(x), static_cast<int>(y));
     return false;
+  }
+
+  // SEARCH 800x600 utilise le binning + scaling de l'OV5640. set_res_raw()
+  // met bien a jour status.binning/status.scale, mais le driver OV5640 ne
+  // reapplique pas automatiquement tous les registres de set_image_options().
+  // Sans cette etape, le materiel peut donc conserver le mode binning du SEARCH
+  // alors que nos calculs supposent deja une lecture native PRECISE, ce qui
+  // decale fortement la ROI. Reappliquer hmirror avec sa valeur courante force
+  // set_image_options() sans changer l'orientation voulue.
+  if (sensor->set_hmirror != nullptr) {
+    const int hmirror = sensor->status.hmirror ? 1 : 0;
+    if (sensor->set_hmirror(sensor, hmirror) != 0) {
+      ESP_LOGE(TAG, "Echec reapplication options OV5640 apres passage PRECISE");
+      return false;
+    }
+  } else if (sensor->set_vflip != nullptr) {
+    const int vflip = sensor->status.vflip ? 1 : 0;
+    if (sensor->set_vflip(sensor, vflip) != 0) {
+      ESP_LOGE(TAG, "Echec reapplication options OV5640 apres passage PRECISE");
+      return false;
+    }
+  } else {
+    ESP_LOGW(TAG, "Impossible de forcer set_image_options apres set_res_raw");
   }
 
   // esp_camera_fb_get() renseigne width/height depuis status.framesize.
@@ -113,13 +135,15 @@ bool CameraViewportController::apply_precise_roi(float center_reference_x, float
   this->snapshot_.scale_x = 1.0f;
   this->snapshot_.scale_y = 1.0f;
 
-  ESP_LOGI(TAG, "Viewport PRECISE: ROI native x=%u y=%u %ux%u -> %ux%u",
+  ESP_LOGI(TAG, "Viewport PRECISE: ROI native x=%u y=%u %ux%u -> %ux%u (binning=%s scale=%s)",
            static_cast<unsigned>(this->snapshot_.window_x),
            static_cast<unsigned>(this->snapshot_.window_y),
            static_cast<unsigned>(this->snapshot_.window_width),
            static_cast<unsigned>(this->snapshot_.window_height),
            static_cast<unsigned>(this->snapshot_.output_width),
-           static_cast<unsigned>(this->snapshot_.output_height));
+           static_cast<unsigned>(this->snapshot_.output_height),
+           sensor->status.binning ? "ON" : "OFF",
+           sensor->status.scale ? "ON" : "OFF");
   return true;
 }
 
