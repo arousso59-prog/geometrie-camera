@@ -110,8 +110,9 @@ esp32_camera:
 # Resolution de travail :
 # GET /api/camera/settings
 # GET /api/camera/settings/set?resolution=800x600
-# Le champ pixel_format de /api/camera/settings indique le format actif.
-# Pour tester GRAYSCALE, passer camera_pixel_format a GRAYSCALE puis reflasher.
+# Le champ pixel_format de /api/camera/settings reste JPEG.
+# Le N/B nominal est applique par special_effect: GRAYSCALE et reste modifiable
+# a chaud via /api/camera/settings/set?monochrome=0|1.
 
 button:
   - platform: template
