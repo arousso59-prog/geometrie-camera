@@ -269,6 +269,12 @@ void ContinuousMeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *requ
         json += ",\"roi_y\":" + std::to_string(viewport.window_y);
         json += ",\"roi_width\":" + std::to_string(viewport.window_width);
         json += ",\"roi_height\":" + std::to_string(viewport.window_height);
+        json += ",\"sensor_roi_x\":" + std::to_string(viewport.sensor_window_x);
+        json += ",\"sensor_roi_y\":" + std::to_string(viewport.sensor_window_y);
+        json += ",\"horizontal_mirror\":";
+        json += viewport.horizontal_mirror ? "true" : "false";
+        json += ",\"vertical_flip\":";
+        json += viewport.vertical_flip ? "true" : "false";
         json += ",\"capture_mode\":\"" + this->controller_->last_cycle_viewport_mode() + "\"";
         json += ",\"capture_roi_x\":" + std::to_string(this->controller_->last_cycle_viewport_x());
         json += ",\"capture_roi_y\":" + std::to_string(this->controller_->last_cycle_viewport_y());
