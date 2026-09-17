@@ -71,7 +71,7 @@ void CameraSettingsApiHandler::send_snapshot_(AsyncWebServerRequest *request, bo
   }
 
   std::string json;
-  json.reserve(900);
+  json.reserve(1000);
   json += "{\"status\":\"";
   json += status;
   json += "\",\"applied\":";
@@ -82,7 +82,8 @@ void CameraSettingsApiHandler::send_snapshot_(AsyncWebServerRequest *request, bo
     json += ",\"width\":" + std::to_string(this->resolution_controller_->active_width());
     json += ",\"height\":" + std::to_string(this->resolution_controller_->active_height()) + ",";
   }
-  json += "\"brightness\":" + std::to_string(snapshot.brightness);
+  json += "\"pixel_format\":\"" + snapshot.pixel_format + "\"";
+  json += ",\"brightness\":" + std::to_string(snapshot.brightness);
   json += ",\"contrast\":" + std::to_string(snapshot.contrast);
   json += ",\"exposure_ctrl\":" + std::string(snapshot.exposure_ctrl ? "true" : "false");
   json += ",\"ae_level\":" + std::to_string(snapshot.ae_level);
@@ -91,7 +92,7 @@ void CameraSettingsApiHandler::send_snapshot_(AsyncWebServerRequest *request, bo
   json += ",\"agc_gain\":" + std::to_string(snapshot.agc_gain);
   json += "},\"ranges\":{\"resolution\":\"";
   json += CameraResolutionController::allowed_resolutions_text();
-  json += "\",\"brightness\":\"-2..2\",\"contrast\":\"-2..2\",\"exposure_ctrl\":\"0|1\",\"ae_level\":\"-2..2\",\"aec_value\":\"0..1200\",\"gain_ctrl\":\"0|1\",\"agc_gain\":\"0..30\"}}";
+  json += "\",\"pixel_format\":\"jpeg|grayscale (boot only)\",\"brightness\":\"-2..2\",\"contrast\":\"-2..2\",\"exposure_ctrl\":\"0|1\",\"ae_level\":\"-2..2\",\"aec_value\":\"0..1200\",\"gain_ctrl\":\"0|1\",\"agc_gain\":\"0..30\"}}";
   auto *response = request->beginResponse(200, "application/json", json);
   response->addHeader("Cache-Control", "no-store");
   request->send(response);
