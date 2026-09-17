@@ -24,7 +24,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   std::string xml;
   xml.reserve(30000);
   xml += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-  xml += "<api name=\"geometrie-camera\" version=\"26\" style=\"REST-over-HTTP\">\n";
+  xml += "<api name=\"geometrie-camera\" version=\"27\" style=\"REST-over-HTTP\">\n";
   xml += "  <description>API camera OV5640 : capture JPEG, reglages capteur, viewport ROI haute resolution, tracking cible, detection, calibration, mesure geometrique et acquisition continue.</description>\n";
   xml += "  <conventions>\n";
   xml += "    <item>Les routes de commande utilisent encore HTTP GET pendant la phase de mise au point.</item>\n";
@@ -36,7 +36,8 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "    <item>Le zoom tracking est progressif : SEARCH couvre 2560x1920, ZOOM_WIDE 1920x1440, ZOOM_MEDIUM 1280x960, ZOOM_FINE 1024x768 et PRECISE 800x600. Chaque niveau produit une image 800x600 et utilise une boucle fermee sur la position locale de la cible pour recentrer le viewport avant de passer au niveau suivant.</item>\n    <item>Le repere canonique des mesures suit l image affichee. ESPHome applique vertical_flip=true et horizontal_mirror=true par defaut ; avant set_res_raw, le viewport canonique est donc converti vers les coordonnees physiques OV5640. L API expose window (canonique) et sensor_window (brut).</item>\n";
   xml += "    <item>Les coordonnees ROI sont converties en repere de reference 2560x1920 avant le calcul de mesure ; la calibration existante est redimensionnee par GeometryMeasurementEngine selon sa resolution de reference.</item>\n";
   xml += "    <item>Apres lost_cycles pertes consecutives dans un niveau zoome, le capteur revient automatiquement en SEARCH. En PRECISE, un centrage fin rapproche aussi la cible du centre 400x300.</item>\n";
-  xml += "    <item>Le traitement JPEG travaille toujours sur l image de sortie 800x600. En mode continu, artifact_correction=0 supprime la correction des artefacts couleur mais conserve le decodage JPEG vers niveaux de gris necessaire au detecteur.</item>\n";
+  xml += "    <item>Le mode continu travaille sur une sortie 800x600. La calibration full est une exception volontaire : l ESP passe temporairement en 2560x1920 pour 10 acquisitions, puis revient en 800x600.</item>\n";
+  xml += "    <item>Le moteur de geometrie supporte le modele de distorsion Brown-Conrady k1,k2,p1,p2,k3. Les coefficients nuls conservent exactement le comportement sans correction.</item>\n";
   xml += "    <item>Le mode continu exige une calibration valide et n empile jamais les cycles. sharpness=0 saute le controle de nettete et les recaptures pour flou.</item>\n";
   xml += "    <item>Dans timing, processing_ms est la somme capture+nettete+filtre+detection+calcul et orchestration_ms le temps mural restant entre les etapes. filter_decode_ms et filter_correction_ms detaillent filter_ms.</item>\n";
   xml += "  </conventions>\n";
@@ -98,15 +99,33 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  <method name=\"target_preview\" http=\"GET\" path=\"/target/preview.bmp\"><response code=\"200\" content_type=\"image/bmp\"/><response code=\"409\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
 
   xml += "  <method name=\"measurement_config\" http=\"GET\" path=\"/measurement/config\"><response code=\"200\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
-  xml += "  <method name=\"measurement_config_set\" http=\"GET\" path=\"/measurement/config/set\"><parameter name=\"target_size_mm\" location=\"query\" required=\"true\" type=\"number\" allowed=\"1..1000\"/><response code=\"200\" content_type=\"application/json\"/><response code=\"400\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
-  xml += "  <method name=\"measurement_calibrate\" http=\"GET\" path=\"/measurement/calibrate\"><parameter name=\"distance_mm\" location=\"query\" required=\"true\" type=\"number\" allowed=\"50..20000\"/><parameter name=\"target_size_mm\" location=\"query\" required=\"false\" type=\"number\" allowed=\"1..1000\"/><parameter name=\"force\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0,1\" default=\"0\"/><response code=\"200\" content_type=\"application/json\"/><response code=\"400\" content_type=\"application/json\"/><response code=\"409\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
+  xml += "  <method name=\"measurement_config_set\" http=\"GET\" path=\"/measurement/config/set\">\n";
+  xml += "    <parameter name=\"target_size_mm\" location=\"query\" required=\"false\" type=\"number\" allowed=\"1..1000\"/>\n";
+  xml += "    <parameter name=\"k1\" location=\"query\" required=\"false\" type=\"number\"/>\n";
+  xml += "    <parameter name=\"k2\" location=\"query\" required=\"false\" type=\"number\"/>\n";
+  xml += "    <parameter name=\"p1\" location=\"query\" required=\"false\" type=\"number\"/>\n";
+  xml += "    <parameter name=\"p2\" location=\"query\" required=\"false\" type=\"number\"/>\n";
+  xml += "    <parameter name=\"k3\" location=\"query\" required=\"false\" type=\"number\"/>\n";
+  xml += "    <parameter name=\"clear_distortion\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0,1\"/>\n";
+  xml += "    <response code=\"200\" content_type=\"application/json\"/><response code=\"400\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/>\n";
+  xml += "  </method>\n";
+  xml += "  <method name=\"measurement_calibrate\" http=\"GET\" path=\"/measurement/calibrate\"><parameter name=\"distance_mm\" location=\"query\" required=\"true\" type=\"number\" allowed=\"50..20000\"/><parameter name=\"target_size_mm\" location=\"query\" required=\"false\" type=\"number\" allowed=\"1..1000\"/><parameter name=\"force\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0,1\" default=\"0\"/><response code=\"200\" content_type=\"application/json\"/><response code=\"400\" content_type=\"application/json\"/><response code=\"409\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";  xml += "  <method name=\"full_calibration_start\" http=\"GET\" path=\"/calibration/full/start\">\n";
+  xml += "    <comment>Mode autonome ESP : arret du continu, passage 2560x1920, 10 mesures valides par defaut, moyenne fx/fy et retour 800x600.</comment>\n";
+  xml += "    <parameter name=\"distance_mm\" location=\"query\" required=\"true\" type=\"number\" allowed=\"50..20000\"/>\n";
+  xml += "    <parameter name=\"target_size_mm\" location=\"query\" required=\"true\" type=\"number\" allowed=\"1..1000\"/>\n";
+  xml += "    <parameter name=\"samples\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"3..20\" default=\"10\"/>\n";
+  xml += "    <parameter name=\"force\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0,1\" default=\"0\"/>\n";
+  xml += "    <response code=\"202\" content_type=\"application/json\"/><response code=\"400\" content_type=\"application/json\"/><response code=\"409\" content_type=\"application/json\"/>\n";
+  xml += "  </method>\n";
+  xml += "  <method name=\"full_calibration_status\" http=\"GET\" path=\"/calibration/full/status\"><response code=\"200\" content_type=\"application/json\"/></method>\n";
+  xml += "  <method name=\"full_calibration_cancel\" http=\"GET\" path=\"/calibration/full/cancel\"><response code=\"200\" content_type=\"application/json\"/></method>\n";
   xml += "  <method name=\"measurement_compute\" http=\"GET\" path=\"/measurement/compute\"><response code=\"200\" content_type=\"application/json\"/><response code=\"409\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
   xml += "  <method name=\"measurement_status\" http=\"GET\" path=\"/measurement/status\"><response code=\"200\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
 
   xml += "  <method name=\"continuous_start\" http=\"GET\" path=\"/continuous/start\">\n";
   xml += "    <parameter name=\"interval_ms\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"200..10000\"/>\n";
-  xml += "    <parameter name=\"sharpness\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0,1\" default=\"1\"/>\n";
-  xml += "    <parameter name=\"artifact_correction\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0,1\" default=\"1\"/>\n";
+  xml += "    <parameter name=\"sharpness\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0,1\" default=\"0\"/>\n";
+  xml += "    <parameter name=\"artifact_correction\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0,1\" default=\"0\"/>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/><response code=\"400\" content_type=\"application/json\"/><response code=\"409\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
   xml += "  <method name=\"continuous_stop\" http=\"GET\" path=\"/continuous/stop\"><response code=\"200\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
