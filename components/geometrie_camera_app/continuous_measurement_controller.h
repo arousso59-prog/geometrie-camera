@@ -52,6 +52,11 @@ class ContinuousMeasurementController {
   uint32_t last_cycle_ms() const;
   bool last_cycle_target_found() const;
   bool last_cycle_measurement_valid() const;
+  const std::string &last_cycle_viewport_mode() const;
+  uint16_t last_cycle_viewport_x() const;
+  uint16_t last_cycle_viewport_y() const;
+  uint16_t last_cycle_viewport_width() const;
+  uint16_t last_cycle_viewport_height() const;
   const std::string &last_error() const;
 
   uint32_t last_capture_ms() const;
@@ -105,6 +110,16 @@ class ContinuousMeasurementController {
   uint32_t capture_count_before_request_;
   bool last_cycle_target_found_;
   bool last_cycle_measurement_valid_;
+  std::string current_cycle_viewport_mode_;
+  uint16_t current_cycle_viewport_x_;
+  uint16_t current_cycle_viewport_y_;
+  uint16_t current_cycle_viewport_width_;
+  uint16_t current_cycle_viewport_height_;
+  std::string last_cycle_viewport_mode_;
+  uint16_t last_cycle_viewport_x_;
+  uint16_t last_cycle_viewport_y_;
+  uint16_t last_cycle_viewport_width_;
+  uint16_t last_cycle_viewport_height_;
   std::string last_error_;
 
   uint32_t current_capture_ms_;
