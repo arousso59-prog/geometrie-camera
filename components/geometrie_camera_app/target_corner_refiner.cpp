@@ -12,8 +12,12 @@ namespace {
 static const char *const TAG = "target_corner_refiner";
 
 constexpr uint16_t MIN_SEARCH_RADIUS_PX = 3;
-constexpr uint16_t MAX_SEARCH_RADIUS_PX = 12;
-constexpr float SEARCH_RADIUS_RATIO = 0.20f;
+// V5.6 : les coins issus de la localisation basse resolution peuvent etre
+// davantage decales lorsque la cible est vue en perspective, surtout en
+// PRECISE ou elle occupe beaucoup plus de pixels. On autorise donc une zone
+// de recherche plus large tout en gardant la penalite de deplacement.
+constexpr uint16_t MAX_SEARCH_RADIUS_PX = 24;
+constexpr float SEARCH_RADIUS_RATIO = 0.25f;
 constexpr float MIN_EDGE_RATIO = 0.30f;
 constexpr float MIN_AREA_RATIO = 0.20f;
 constexpr float MIN_TOTAL_SCORE_GAIN = 1.0f;
@@ -101,7 +105,7 @@ bool TargetCornerRefiner::refine(const GrayFrameView &frame, const TargetCandida
 
   output = refined;
   ESP_LOGD(TAG,
-           "V5.4 refined center=(%.1f,%.1f) size=%.1fx%.1f radius=%u corner_score=%.1f->%.1f",
+           "V5.6 refined center=(%.1f,%.1f) size=%.1fx%.1f radius=%u corner_score=%.1f->%.1f",
            output.center_x, output.center_y, output.width, output.height,
            static_cast<unsigned>(radius), original_score, refined_score);
   return true;
