@@ -38,9 +38,12 @@ class ContinuousMeasurementController {
   void stop();
   void loop();
   bool set_interval_ms(uint32_t interval_ms);
+  bool set_pipeline_options(bool sharpness_enabled, bool artifact_correction_enabled);
 
   bool running() const;
   uint32_t interval_ms() const;
+  bool sharpness_enabled() const;
+  bool artifact_correction_enabled() const;
   ContinuousMeasurementState state() const;
   const char *state_text() const;
   uint32_t cycle_count() const;
@@ -54,6 +57,8 @@ class ContinuousMeasurementController {
   uint32_t last_capture_ms() const;
   uint32_t last_sharpness_ms() const;
   uint32_t last_filter_ms() const;
+  uint32_t last_filter_decode_ms() const;
+  uint32_t last_filter_correction_ms() const;
   uint32_t last_detect_ms() const;
   uint32_t last_compute_ms() const;
   uint32_t last_sharpness_score_x100() const;
@@ -88,6 +93,8 @@ class ContinuousMeasurementController {
 
   bool running_;
   uint32_t interval_ms_;
+  bool sharpness_enabled_;
+  bool artifact_correction_enabled_;
   ContinuousMeasurementState state_;
   uint32_t cycle_count_;
   uint32_t target_found_count_;
@@ -103,12 +110,16 @@ class ContinuousMeasurementController {
   uint32_t current_capture_ms_;
   uint32_t current_sharpness_ms_;
   uint32_t current_filter_ms_;
+  uint32_t current_filter_decode_ms_;
+  uint32_t current_filter_correction_ms_;
   uint32_t current_detect_ms_;
   uint32_t current_compute_ms_;
 
   uint32_t last_capture_ms_;
   uint32_t last_sharpness_ms_;
   uint32_t last_filter_ms_;
+  uint32_t last_filter_decode_ms_;
+  uint32_t last_filter_correction_ms_;
   uint32_t last_detect_ms_;
   uint32_t last_compute_ms_;
 
