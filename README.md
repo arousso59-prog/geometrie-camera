@@ -62,12 +62,16 @@ z_mm             = min(z_from_width_mm, z_from_height_mm)
 
 Puis le centre de cible donne `x_mm`, `y_mm`, `distance_mm`, `bearing_yaw_deg` et `bearing_pitch_deg`.
 
-## Résolution de travail
+## Réglages caméra
 
 ```text
 GET /api/camera/settings
 GET /api/camera/settings/set?resolution=800x600
+GET /api/camera/settings/set?monochrome=1
+GET /api/camera/settings/set?monochrome=0
 ```
+
+`monochrome=1` active l'effet grayscale de l'OV5640 à chaud. Le framebuffer reste en JPEG : ce réglage ne change ni le `pixel_format`, ni le pipeline de capture/détection. Le changement réel de `pixel_format` reste un réglage de démarrage nécessitant recompilation/reflash.
 
 Le mode continu utilise la résolution caméra active. `800x600` reste pratique pour les essais rapides ; une évolution haute résolution + ROI est prévue pour augmenter la précision sans traiter toute l'image.
 
@@ -144,7 +148,7 @@ Les timings capture/netteté/filtre/détection/calcul et les compteurs de recapt
 GET /api/wsdl
 GET /api/runtime/status
 GET /api/camera/settings
-GET /api/camera/settings/set?<parametres>&resolution=<optionnel>
+GET /api/camera/settings/set?<parametres>&resolution=<optionnel>&monochrome=<0|1>
 GET /diagnostic-jpeg/capture?resolution=<optionnel>
 GET /diagnostic-jpeg/status
 GET /diagnostic-jpeg/image.jpg
@@ -164,16 +168,16 @@ GET /continuous/stop
 GET /continuous/status
 ```
 
-`/api/wsdl` est la référence du contrat HTTP. Version actuelle : **18**.
+`/api/wsdl` est la référence du contrat HTTP. Version actuelle : **19**.
 
 Les responsabilités détaillées et les règles de développement sont dans [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ## Étape actuelle
 
-1. compiler/flasher la netteté ROI V2 ;
-2. observer `score_x100`, `reference_x100` et `blur_retry_count` avec cible immobile ;
-3. provoquer volontairement quelques flous rapides ;
-4. vérifier que les recaptures deviennent réellement utiles sur les images normalement exploitables ;
+1. compiler/flasher le firmware courant ;
+2. vérifier le mode N/B depuis `/api/camera/settings/set?monochrome=1` puis depuis la supervision PC ;
+3. observer `score_x100`, `reference_x100` et `blur_retry_count` avec cible immobile ;
+4. provoquer volontairement quelques flous rapides ;
 5. comparer le taux de cibles trouvées ;
 6. si le filtre est validé, supprimer à terme le coût du double décodage JPEG ;
 7. reprendre ensuite la validation des angles et la future approche haute résolution + ROI.
