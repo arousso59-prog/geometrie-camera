@@ -11,6 +11,7 @@ class JpegDiagnostic;
 class JpegFilteredDiagnostic;
 class MeasurementManager;
 class TargetDetectionService;
+class TargetTrackingController;
 
 enum class ContinuousMeasurementState : uint8_t {
   STOPPED,
@@ -30,7 +31,8 @@ class ContinuousMeasurementController {
                                   ImageSharpnessEvaluator *sharpness_evaluator,
                                   JpegFilteredDiagnostic *filtered_source,
                                   TargetDetectionService *detection_service,
-                                  MeasurementManager *measurement_manager);
+                                  MeasurementManager *measurement_manager,
+                                  TargetTrackingController *tracking_controller);
 
   bool start(uint32_t interval_ms);
   void stop();
@@ -49,7 +51,6 @@ class ContinuousMeasurementController {
   bool last_cycle_measurement_valid() const;
   const std::string &last_error() const;
 
-  // Ces valeurs sont un snapshot immuable du dernier cycle TERMINE.
   uint32_t last_capture_ms() const;
   uint32_t last_sharpness_ms() const;
   uint32_t last_filter_ms() const;
@@ -76,12 +77,14 @@ class ContinuousMeasurementController {
   bool sharpness_is_too_low_(uint32_t score) const;
   void update_sharpness_reference_(uint32_t score);
   void update_sharpness_roi_from_target_();
+  void reset_local_tracking_after_viewport_change_();
 
   JpegDiagnostic *jpeg_source_;
   ImageSharpnessEvaluator *sharpness_evaluator_;
   JpegFilteredDiagnostic *filtered_source_;
   TargetDetectionService *detection_service_;
   MeasurementManager *measurement_manager_;
+  TargetTrackingController *tracking_controller_;
 
   bool running_;
   uint32_t interval_ms_;
@@ -97,15 +100,12 @@ class ContinuousMeasurementController {
   bool last_cycle_measurement_valid_;
   std::string last_error_;
 
-  // Chronometres du cycle actuellement en cours. Ils ne sont jamais exposes
-  // directement par l'API afin d'eviter les valeurs partielles.
   uint32_t current_capture_ms_;
   uint32_t current_sharpness_ms_;
   uint32_t current_filter_ms_;
   uint32_t current_detect_ms_;
   uint32_t current_compute_ms_;
 
-  // Snapshot du dernier cycle termine, publie par /continuous/status.
   uint32_t last_capture_ms_;
   uint32_t last_sharpness_ms_;
   uint32_t last_filter_ms_;
