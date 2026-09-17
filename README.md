@@ -164,7 +164,7 @@ GET /continuous/stop
 GET /continuous/status
 ```
 
-`/api/wsdl` est la référence du contrat HTTP. Version actuelle : **15**.
+`/api/wsdl` est la référence du contrat HTTP. Version actuelle : **17**.
 
 Les responsabilités détaillées et les règles de développement sont dans [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
@@ -173,7 +173,7 @@ Les responsabilités détaillées et les règles de développement sont dans [`A
 1. compiler/flasher la netteté ROI V2 ;
 2. observer `score_x100`, `reference_x100` et `blur_retry_count` avec cible immobile ;
 3. provoquer volontairement quelques flous rapides ;
-4. vérifier que les recaptures sont beaucoup moins fréquentes sur les images normalement exploitables ;
+4. vérifier que les recaptures deviennent réellement utiles sur les images normalement exploitables ;
 5. comparer le taux de cibles trouvées ;
 6. si le filtre est validé, supprimer à terme le coût du double décodage JPEG ;
 7. reprendre ensuite la validation des angles et la future approche haute résolution + ROI.
