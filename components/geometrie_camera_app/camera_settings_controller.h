@@ -8,6 +8,7 @@ namespace geometrie_camera_app {
 
 struct CameraSettingsSnapshot {
   bool available;
+  std::string pixel_format;
   int brightness;
   int contrast;
   bool exposure_ctrl;
