@@ -49,6 +49,7 @@ class ContinuousMeasurementController {
   bool last_cycle_measurement_valid() const;
   const std::string &last_error() const;
 
+  // Ces valeurs sont un snapshot immuable du dernier cycle TERMINE.
   uint32_t last_capture_ms() const;
   uint32_t last_sharpness_ms() const;
   uint32_t last_filter_ms() const;
@@ -67,6 +68,7 @@ class ContinuousMeasurementController {
 
  private:
   void begin_cycle_();
+  void publish_cycle_timing_(uint32_t cycle_ms);
   void finish_cycle_(bool target_found, bool measurement_valid);
   void fail_cycle_(const char *error);
   void stop_with_error_(const char *error);
@@ -95,11 +97,21 @@ class ContinuousMeasurementController {
   bool last_cycle_measurement_valid_;
   std::string last_error_;
 
+  // Chronometres du cycle actuellement en cours. Ils ne sont jamais exposes
+  // directement par l'API afin d'eviter les valeurs partielles.
+  uint32_t current_capture_ms_;
+  uint32_t current_sharpness_ms_;
+  uint32_t current_filter_ms_;
+  uint32_t current_detect_ms_;
+  uint32_t current_compute_ms_;
+
+  // Snapshot du dernier cycle termine, publie par /continuous/status.
   uint32_t last_capture_ms_;
   uint32_t last_sharpness_ms_;
   uint32_t last_filter_ms_;
   uint32_t last_detect_ms_;
   uint32_t last_compute_ms_;
+
   uint32_t last_sharpness_score_x100_;
   uint32_t sharpness_reference_score_x100_;
   bool last_sharpness_ok_;
