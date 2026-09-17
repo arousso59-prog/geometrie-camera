@@ -9,6 +9,7 @@ namespace geometrie_camera_app {
 struct CameraSettingsSnapshot {
   bool available;
   std::string pixel_format;
+  bool monochrome;
   int brightness;
   int contrast;
   bool exposure_ctrl;
@@ -24,6 +25,7 @@ class CameraSettingsController {
 
   CameraSettingsSnapshot read() const;
 
+  bool set_monochrome(bool enabled, std::string &error) const;
   bool set_brightness(int value, std::string &error) const;
   bool set_contrast(int value, std::string &error) const;
   bool set_exposure_ctrl(bool enabled, std::string &error) const;
