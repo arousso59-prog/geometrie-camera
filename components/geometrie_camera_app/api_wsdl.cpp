@@ -24,7 +24,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   std::string xml;
   xml.reserve(24000);
   xml += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-  xml += "<api name=\"geometrie-camera\" version=\"17\" style=\"REST-over-HTTP\">\n";
+  xml += "<api name=\"geometrie-camera\" version=\"18\" style=\"REST-over-HTTP\">\n";
   xml += "  <description>API camera OV5640 : capture JPEG, controle nettete cible, correction grayscale, detection cible, calibration optique verrouillee, distance robuste et acquisition continue.</description>\n";
   xml += "  <conventions>\n";
   xml += "    <item>Les routes de commande de mise au point utilisent encore HTTP GET.</item>\n";
@@ -58,6 +58,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  <method name=\"camera_settings_get\" http=\"GET\" path=\"/api/camera/settings\">\n";
   xml += "    <comment>Lit la resolution de travail, le pixel_format actif et les reglages d acquisition du capteur. pixel_format est informatif et configure au demarrage.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
+  xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"503\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
@@ -75,6 +76,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "    <parameter name=\"agc_gain\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0..30\"/>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"400\" content_type=\"application/json\"/>\n";
+  xml += "    <response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "    <response code=\"503\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
@@ -89,20 +91,20 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "    <response code=\"503\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
-  xml += "  <method name=\"jpeg_status\" http=\"GET\" path=\"/diagnostic-jpeg/status\"><response code=\"200\" content_type=\"application/json\"/></method>\n";
+  xml += "  <method name=\"jpeg_status\" http=\"GET\" path=\"/diagnostic-jpeg/status\"><response code=\"200\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
   xml += "  <method name=\"jpeg_image\" http=\"GET\" path=\"/diagnostic-jpeg/image.jpg\"><response code=\"200\" content_type=\"image/jpeg\"/><response code=\"404\" content_type=\"application/json\"/></method>\n";
   xml += "  <method name=\"jpeg_filter\" http=\"GET\" path=\"/diagnostic-jpeg/filter\"><response code=\"200\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
-  xml += "  <method name=\"jpeg_filter_status\" http=\"GET\" path=\"/diagnostic-jpeg/filter-status\"><response code=\"200\" content_type=\"application/json\"/></method>\n";
+  xml += "  <method name=\"jpeg_filter_status\" http=\"GET\" path=\"/diagnostic-jpeg/filter-status\"><response code=\"200\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
   xml += "  <method name=\"jpeg_filtered_image\" http=\"GET\" path=\"/diagnostic-jpeg/filtered.bmp\"><response code=\"200\" content_type=\"image/bmp\"/><response code=\"404\" content_type=\"application/json\"/></method>\n";
 
   xml += "  <method name=\"target_detect\" http=\"GET\" path=\"/target/detect\"><comment>Lance TargetDetector sur la derniere image grayscale corrigee.</comment><response code=\"200\" content_type=\"application/json\"/><response code=\"409\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
   xml += "  <method name=\"target_status\" http=\"GET\" path=\"/target/status\"><response code=\"200\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
   xml += "  <method name=\"target_preview\" http=\"GET\" path=\"/target/preview.bmp\"><response code=\"200\" content_type=\"image/bmp\"/><response code=\"409\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
 
-  xml += "  <method name=\"measurement_config\" http=\"GET\" path=\"/measurement/config\"><comment>Expose taille cible, calibration et diagnostics.</comment><response code=\"200\" content_type=\"application/json\"/></method>\n";
+  xml += "  <method name=\"measurement_config\" http=\"GET\" path=\"/measurement/config\"><comment>Expose taille cible, calibration et diagnostics.</comment><response code=\"200\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
   xml += "  <method name=\"measurement_config_set\" http=\"GET\" path=\"/measurement/config/set\">\n";
   xml += "    <parameter name=\"target_size_mm\" location=\"query\" required=\"true\" type=\"number\" allowed=\"1..1000\"/>\n";
-  xml += "    <response code=\"200\" content_type=\"application/json\"/><response code=\"400\" content_type=\"application/json\"/>\n";
+  xml += "    <response code=\"200\" content_type=\"application/json\"/><response code=\"400\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
   xml += "  <method name=\"measurement_calibrate\" http=\"GET\" path=\"/measurement/calibrate\">\n";
   xml += "    <parameter name=\"distance_mm\" location=\"query\" required=\"true\" type=\"number\" allowed=\"50..20000\"/>\n";
@@ -111,7 +113,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "    <response code=\"200\" content_type=\"application/json\"/><response code=\"400\" content_type=\"application/json\"/><response code=\"409\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
   xml += "  <method name=\"measurement_compute\" http=\"GET\" path=\"/measurement/compute\"><comment>Calcule distance robuste, X/Y/Z, bearing et pose validee.</comment><response code=\"200\" content_type=\"application/json\"/><response code=\"409\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
-  xml += "  <method name=\"measurement_status\" http=\"GET\" path=\"/measurement/status\"><response code=\"200\" content_type=\"application/json\"/></method>\n";
+  xml += "  <method name=\"measurement_status\" http=\"GET\" path=\"/measurement/status\"><response code=\"200\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
 
   xml += "  <method name=\"continuous_start\" http=\"GET\" path=\"/continuous/start\">\n";
   xml += "    <comment>Demarre l automate capture-nettete-filtre-detection-mesure. Refuse le demarrage si aucune calibration valide n est presente. Un nouvel appel redemarre les compteurs de session, la reference de nettete et initialise la ROI depuis la derniere cible connue si possible.</comment>\n";
