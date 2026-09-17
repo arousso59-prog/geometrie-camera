@@ -19,6 +19,25 @@ sensor_t *get_sensor(std::string &error) {
   }
   return sensor;
 }
+
+const char *pixel_format_to_text(pixformat_t format) {
+  switch (format) {
+    case PIXFORMAT_JPEG:
+      return "jpeg";
+    case PIXFORMAT_GRAYSCALE:
+      return "grayscale";
+    case PIXFORMAT_RGB565:
+      return "rgb565";
+    case PIXFORMAT_YUV422:
+      return "yuv422";
+    case PIXFORMAT_RGB888:
+      return "rgb888";
+    case PIXFORMAT_RAW:
+      return "raw";
+    default:
+      return "unknown";
+  }
+}
 }  // namespace
 
 CameraSettingsController::CameraSettingsController() {}
@@ -32,6 +51,7 @@ CameraSettingsSnapshot CameraSettingsController::read() const {
   }
 
   snapshot.available = true;
+  snapshot.pixel_format = pixel_format_to_text(sensor->pixformat);
   snapshot.brightness = sensor->status.brightness;
   snapshot.contrast = sensor->status.contrast;
   snapshot.exposure_ctrl = sensor->status.aec != 0;
