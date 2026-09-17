@@ -123,7 +123,7 @@ bool target_safe_for_window(const TargetObservation &reference,
 
 TargetTrackingController::TargetTrackingController(CameraViewportController *viewport_controller)
     : viewport_controller_(viewport_controller),
-      enabled_(false),
+      enabled_(true),
       active_(false),
       lost_cycles_(3),
       recenter_threshold_pct_(70),
