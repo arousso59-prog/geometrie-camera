@@ -5,12 +5,15 @@
 #include <string>
 
 #include "continuous_measurement_controller.h"
+#include "target_tracking_controller.h"
 
 namespace esphome {
 namespace geometrie_camera_app {
 
-ContinuousMeasurementApiHandler::ContinuousMeasurementApiHandler(ContinuousMeasurementController *controller)
-    : controller_(controller) {}
+ContinuousMeasurementApiHandler::ContinuousMeasurementApiHandler(
+    ContinuousMeasurementController *controller,
+    TargetTrackingController *tracking_controller)
+    : controller_(controller), tracking_controller_(tracking_controller) {}
 
 bool ContinuousMeasurementApiHandler::canHandle(AsyncWebServerRequest *request) const {
   if (request->method() != HTTP_GET) {
@@ -90,7 +93,8 @@ void ContinuousMeasurementApiHandler::handle_start_(AsyncWebServerRequest *reque
 
   if (!this->controller_->start(interval_ms)) {
     const std::string &start_error = this->controller_->last_error();
-    const int response_code = start_error == "calibration_required" ? 409 : 500;
+    const int response_code = (start_error == "calibration_required" ||
+                               start_error == "precise_roi_unsupported") ? 409 : 500;
     this->send_snapshot_(request, response_code, "error",
                          start_error.empty() ? "continuous_start_failed" : start_error.c_str());
     return;
@@ -122,7 +126,7 @@ void ContinuousMeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *requ
                                                        const char *status,
                                                        const char *error) const {
   std::string json;
-  json.reserve(1550);
+  json.reserve(2100);
   json += "{\"status\":\"";
   json += status;
   json += "\"";
@@ -186,6 +190,30 @@ void ContinuousMeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *requ
     json += ",\"roi_width\":" + std::to_string(this->controller_->sharpness_roi_width());
     json += ",\"roi_height\":" + std::to_string(this->controller_->sharpness_roi_height());
     json += "}";
+
+    if (this->tracking_controller_ != nullptr) {
+      json += ",\"tracking\":{";
+      json += "\"enabled\":";
+      json += this->tracking_controller_->enabled() ? "true" : "false";
+      json += ",\"supported\":";
+      json += this->tracking_controller_->supported() ? "true" : "false";
+      json += ",\"mode\":\"";
+      json += this->tracking_controller_->mode_text();
+      json += "\"";
+      json += ",\"target_locked\":";
+      json += this->tracking_controller_->target_locked() ? "true" : "false";
+      json += ",\"lost_count\":" + std::to_string(this->tracking_controller_->current_lost_count());
+      json += ",\"transition_count\":" + std::to_string(this->tracking_controller_->transition_count());
+      const auto *viewport_controller = this->tracking_controller_->viewport_controller();
+      if (viewport_controller != nullptr) {
+        const auto &viewport = viewport_controller->snapshot();
+        json += ",\"roi_x\":" + std::to_string(viewport.window_x);
+        json += ",\"roi_y\":" + std::to_string(viewport.window_y);
+        json += ",\"roi_width\":" + std::to_string(viewport.window_width);
+        json += ",\"roi_height\":" + std::to_string(viewport.window_height);
+      }
+      json += "}";
+    }
 
     json += ",\"last_error\":\"";
     json += this->controller_->last_error();
