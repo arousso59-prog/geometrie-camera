@@ -26,7 +26,11 @@ constexpr float MAX_ASPECT_RATIO = 2.00f;
 constexpr float MIN_FILL_RATIO = 0.10f;
 constexpr float MAX_FILL_RATIO = 0.94f;
 constexpr uint16_t MIN_TARGET_SIDE_PX = 12;
-constexpr uint16_t MAX_TARGET_SIDE_DIVISOR = 4;
+// PRECISE conserve une sortie 800x600 mais la cible y devient environ 3,2 fois
+// plus grande qu'en SEARCH. Avec /4, tout candidat >150 px etait rejete avant
+// le decodeur 7x7. /2 autorise jusqu'a 300 px sur 800x600 sans changer les
+// autres controles de forme, remplissage, contraste et code.
+constexpr uint16_t MAX_TARGET_SIDE_DIVISOR = 2;
 constexpr size_t MAX_REDUCED_PIXELS = static_cast<size_t>(MAX_REDUCED_DIMENSION) * MAX_REDUCED_DIMENSION;
 
 float distance_between(const TargetPoint &a, const TargetPoint &b) {
