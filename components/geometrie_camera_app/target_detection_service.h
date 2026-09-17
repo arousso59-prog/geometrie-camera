@@ -15,6 +15,7 @@ class TargetDetectionService {
   TargetDetectionService(JpegFilteredDiagnostic *source, TargetDetector *detector);
 
   bool detect();
+  void reset_tracking();
 
   bool ready() const;
   bool target_found() const;
