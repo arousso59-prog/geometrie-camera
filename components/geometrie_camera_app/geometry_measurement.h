@@ -23,6 +23,13 @@ class GeometryMeasurementEngine {
   bool calibrate_from_known_distance(const TargetObservation &observation,
                                      uint16_t frame_width, uint16_t frame_height,
                                      float known_distance_mm);
+  bool derive_calibration_from_known_distance(const TargetObservation &observation,
+                                              uint16_t frame_width, uint16_t frame_height,
+                                              float known_distance_mm,
+                                              CameraCalibration &result) const;
+
+  bool set_distortion_coefficients(float k1, float k2, float p1, float p2, float k3);
+  void clear_distortion();
 
   GeometryMeasurement compute(const TargetObservation &observation,
                               uint16_t frame_width, uint16_t frame_height,
