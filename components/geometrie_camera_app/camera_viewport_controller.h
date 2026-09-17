@@ -11,6 +11,8 @@ class CameraResolutionController;
 
 enum class CameraViewportMode : uint8_t {
   SEARCH_FULL,
+  ZOOM_WIDE,
+  ZOOM_MEDIUM,
   PRECISE_ROI,
 };
 
@@ -37,7 +39,10 @@ class CameraViewportController {
 
   bool supports_precise_roi() const;
   bool apply_search();
+  bool apply_zoom_wide(float center_reference_x, float center_reference_y);
+  bool apply_zoom_medium(float center_reference_x, float center_reference_y);
   bool apply_precise_roi(float center_reference_x, float center_reference_y);
+  bool recenter_current_zoom(float center_reference_x, float center_reference_y);
 
   TargetObservation to_reference(const TargetObservation &observation) const;
   bool target_near_edge(const TargetObservation &observation, uint8_t central_percent) const;
@@ -49,8 +54,15 @@ class CameraViewportController {
   static constexpr uint16_t REFERENCE_HEIGHT = 1920;
   static constexpr uint16_t OUTPUT_WIDTH = 800;
   static constexpr uint16_t OUTPUT_HEIGHT = 600;
+  static constexpr uint16_t ZOOM_WIDE_WIDTH = 1920;
+  static constexpr uint16_t ZOOM_WIDE_HEIGHT = 1440;
+  static constexpr uint16_t ZOOM_MEDIUM_WIDTH = 1280;
+  static constexpr uint16_t ZOOM_MEDIUM_HEIGHT = 960;
 
  private:
+  bool apply_zoom_window_(CameraViewportMode mode,
+                          float center_reference_x, float center_reference_y,
+                          uint16_t window_width, uint16_t window_height);
   ImagePoint to_reference_point_(const ImagePoint &point) const;
   void set_search_snapshot_();
 
