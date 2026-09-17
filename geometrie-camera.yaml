@@ -91,8 +91,11 @@ esp32_camera:
   href_pin: GPIO7
   pixel_clock_pin: GPIO13
   pixel_format: ${camera_pixel_format}
-  resolution: 2560x1920
+  resolution: 800x600
   jpeg_quality: 10
+  # Reglage nominal du projet : JPEG en niveaux de gris. On garde JPEG pour
+  # les performances/memoire et on applique l'effet monochrome du capteur.
+  special_effect: GRAYSCALE
   # ESPHome utilise true par defaut pour ces deux options. On les fixe
   # explicitement car le calcul des ROI convertit le repere image affiche
   # vers le repere physique OV5640 en tenant compte de cette orientation.
