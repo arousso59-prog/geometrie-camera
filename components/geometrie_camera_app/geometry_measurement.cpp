@@ -58,6 +58,65 @@ float point_distance(const ImagePoint &a, const ImagePoint &b) {
   return std::sqrt(dx * dx + dy * dy);
 }
 
+bool distortion_is_zero(const CameraCalibration &calibration) {
+  constexpr float EPS = 1.0e-12f;
+  return std::fabs(calibration.k1) < EPS &&
+         std::fabs(calibration.k2) < EPS &&
+         std::fabs(calibration.p1) < EPS &&
+         std::fabs(calibration.p2) < EPS &&
+         std::fabs(calibration.k3) < EPS;
+}
+
+ImagePoint undistort_point(const ImagePoint &point, const CameraCalibration &calibration) {
+  if (distortion_is_zero(calibration) ||
+      calibration.fx_px <= 0.0f || calibration.fy_px <= 0.0f) {
+    return point;
+  }
+
+  const float xd = (point.x - calibration.cx_px) / calibration.fx_px;
+  const float yd = (point.y - calibration.cy_px) / calibration.fy_px;
+
+  float xu = xd;
+  float yu = yd;
+  for (uint8_t iteration = 0; iteration < 6; ++iteration) {
+    const float x2 = xu * xu;
+    const float y2 = yu * yu;
+    const float r2 = x2 + y2;
+    const float r4 = r2 * r2;
+    const float r6 = r4 * r2;
+    const float radial = 1.0f + calibration.k1 * r2 +
+                         calibration.k2 * r4 + calibration.k3 * r6;
+    if (!std::isfinite(radial) || std::fabs(radial) < 1.0e-6f) {
+      return point;
+    }
+
+    const float delta_x = 2.0f * calibration.p1 * xu * yu +
+                          calibration.p2 * (r2 + 2.0f * x2);
+    const float delta_y = calibration.p1 * (r2 + 2.0f * y2) +
+                          2.0f * calibration.p2 * xu * yu;
+
+    xu = (xd - delta_x) / radial;
+    yu = (yd - delta_y) / radial;
+    if (!std::isfinite(xu) || !std::isfinite(yu)) {
+      return point;
+    }
+  }
+
+  ImagePoint result;
+  result.x = calibration.fx_px * xu + calibration.cx_px;
+  result.y = calibration.fy_px * yu + calibration.cy_px;
+  return result;
+}
+
+void undistort_points(ImagePoint (&points)[4], const CameraCalibration &calibration) {
+  if (distortion_is_zero(calibration)) {
+    return;
+  }
+  for (auto &point : points) {
+    point = undistort_point(point, calibration);
+  }
+}
+
 ImagePoint quadrilateral_center(const ImagePoint (&points)[4]) {
   // L'intersection des diagonales est l'image projective du centre du carre.
   // Elle exploite directement les quatre coins raffines et evite de reutiliser
@@ -247,15 +306,24 @@ CameraCalibration GeometryMeasurementEngine::effective_calibration(uint16_t fram
   result.fy_px = this->calibration_.fy_px * scale_y;
   result.cx_px = (this->calibration_.cx_px + 0.5f) * scale_x - 0.5f;
   result.cy_px = (this->calibration_.cy_px + 0.5f) * scale_y - 0.5f;
+  // Les coefficients Brown-Conrady sont exprimes en coordonnees normalisees :
+  // ils ne changent pas avec la resolution.
+  result.k1 = this->calibration_.k1;
+  result.k2 = this->calibration_.k2;
+  result.p1 = this->calibration_.p1;
+  result.p2 = this->calibration_.p2;
+  result.k3 = this->calibration_.k3;
   result.reference_width_px = frame_width;
   result.reference_height_px = frame_height;
   return result;
 }
 
-bool GeometryMeasurementEngine::calibrate_from_known_distance(const TargetObservation &observation,
-                                                               uint16_t frame_width,
-                                                               uint16_t frame_height,
-                                                               float known_distance_mm) {
+bool GeometryMeasurementEngine::derive_calibration_from_known_distance(
+    const TargetObservation &observation,
+    uint16_t frame_width,
+    uint16_t frame_height,
+    float known_distance_mm,
+    CameraCalibration &result) const {
   if (!observation.valid || frame_width == 0 || frame_height == 0 ||
       !std::isfinite(known_distance_mm) || known_distance_mm <= 0.0f ||
       this->target_size_mm_ <= 0.0f) {
@@ -264,11 +332,21 @@ bool GeometryMeasurementEngine::calibrate_from_known_distance(const TargetObserv
 
   ImagePoint points[4];
   canonical_corners(observation, points);
+
+  // Si une calibration avec distorsion existe deja, utiliser ses coefficients
+  // comme correction provisoire avant de reestimer fx/fy. Sans coefficients,
+  // cette etape est strictement neutre.
+  if (this->has_calibration()) {
+    const CameraCalibration current = this->effective_calibration(frame_width, frame_height);
+    undistort_points(points, current);
+  }
+
   const float width_px = 0.5f * (point_distance(points[0], points[1]) +
                                  point_distance(points[3], points[2]));
   const float height_px = 0.5f * (point_distance(points[0], points[3]) +
                                   point_distance(points[1], points[2]));
-  if (!std::isfinite(width_px) || !std::isfinite(height_px) || width_px < 4.0f || height_px < 4.0f) {
+  if (!std::isfinite(width_px) || !std::isfinite(height_px) ||
+      width_px < 4.0f || height_px < 4.0f) {
     return false;
   }
 
@@ -280,13 +358,66 @@ bool GeometryMeasurementEngine::calibrate_from_known_distance(const TargetObserv
   calibration.reference_width_px = frame_width;
   calibration.reference_height_px = frame_height;
 
+  // La calibration distance ne sait pas estimer la distorsion a elle seule.
+  // Conserver les coefficients deja connus ; sinon ils restent nuls.
+  calibration.k1 = this->calibration_.k1;
+  calibration.k2 = this->calibration_.k2;
+  calibration.p1 = this->calibration_.p1;
+  calibration.p2 = this->calibration_.p2;
+  calibration.k3 = this->calibration_.k3;
+
   if (!std::isfinite(calibration.fx_px) || !std::isfinite(calibration.fy_px) ||
       calibration.fx_px <= 0.0f || calibration.fy_px <= 0.0f) {
     return false;
   }
 
+  result = calibration;
+  return true;
+}
+
+bool GeometryMeasurementEngine::calibrate_from_known_distance(
+    const TargetObservation &observation,
+    uint16_t frame_width,
+    uint16_t frame_height,
+    float known_distance_mm) {
+  CameraCalibration calibration;
+  if (!this->derive_calibration_from_known_distance(
+          observation, frame_width, frame_height, known_distance_mm, calibration)) {
+    return false;
+  }
   this->calibration_ = calibration;
   return true;
+}
+
+bool GeometryMeasurementEngine::set_distortion_coefficients(
+    float k1, float k2, float p1, float p2, float k3) {
+  if (!std::isfinite(k1) || !std::isfinite(k2) ||
+      !std::isfinite(p1) || !std::isfinite(p2) || !std::isfinite(k3)) {
+    return false;
+  }
+
+  // Bornes volontairement larges mais finies pour eviter une configuration
+  // manifestement corrompue.
+  if (std::fabs(k1) > 5.0f || std::fabs(k2) > 5.0f ||
+      std::fabs(k3) > 5.0f || std::fabs(p1) > 1.0f ||
+      std::fabs(p2) > 1.0f) {
+    return false;
+  }
+
+  this->calibration_.k1 = k1;
+  this->calibration_.k2 = k2;
+  this->calibration_.p1 = p1;
+  this->calibration_.p2 = p2;
+  this->calibration_.k3 = k3;
+  return true;
+}
+
+void GeometryMeasurementEngine::clear_distortion() {
+  this->calibration_.k1 = 0.0f;
+  this->calibration_.k2 = 0.0f;
+  this->calibration_.p1 = 0.0f;
+  this->calibration_.p2 = 0.0f;
+  this->calibration_.k3 = 0.0f;
 }
 
 GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &observation,
@@ -309,6 +440,7 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
 
   ImagePoint points[4];
   canonical_corners(observation, points);
+  undistort_points(points, calibration);
   const float width_px = 0.5f * (point_distance(points[0], points[1]) +
                                  point_distance(points[3], points[2]));
   const float height_px = 0.5f * (point_distance(points[0], points[3]) +
