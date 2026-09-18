@@ -333,18 +333,32 @@ bool GeometryMeasurementEngine::derive_calibration_from_known_distance(
   ImagePoint points[4];
   canonical_corners(observation, points);
 
+  bool use_v4_edges =
+      observation.subpixel_refined &&
+      observation.subpixel_width_px >= 4.0f &&
+      observation.subpixel_height_px >= 4.0f;
+
   // Si une calibration avec distorsion existe deja, utiliser ses coefficients
-  // comme correction provisoire avant de reestimer fx/fy. Sans coefficients,
-  // cette etape est strictement neutre.
+  // comme correction provisoire avant de reestimer fx/fy. Les dimensions V4
+  // sont mesurees dans l'image brute : tant que la distorsion n'est pas nulle,
+  // conserver le chemin par coins corriges.
   if (this->has_calibration()) {
-    const CameraCalibration current = this->effective_calibration(frame_width, frame_height);
+    const CameraCalibration current =
+        this->effective_calibration(frame_width, frame_height);
     undistort_points(points, current);
+    use_v4_edges = use_v4_edges && distortion_is_zero(current);
   }
 
-  const float width_px = 0.5f * (point_distance(points[0], points[1]) +
-                                 point_distance(points[3], points[2]));
-  const float height_px = 0.5f * (point_distance(points[0], points[3]) +
-                                  point_distance(points[1], points[2]));
+  float width_px = 0.5f * (point_distance(points[0], points[1]) +
+                           point_distance(points[3], points[2]));
+  float height_px = 0.5f * (point_distance(points[0], points[3]) +
+                            point_distance(points[1], points[2]));
+
+  if (use_v4_edges) {
+    width_px = observation.subpixel_width_px;
+    height_px = observation.subpixel_height_px;
+  }
+
   if (!std::isfinite(width_px) || !std::isfinite(height_px) ||
       width_px < 4.0f || height_px < 4.0f) {
     return false;
@@ -485,15 +499,37 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
   ImagePoint points[4];
   canonical_corners(observation, points);
   undistort_points(points, calibration);
-  const float width_px = 0.5f * (point_distance(points[0], points[1]) +
-                                 point_distance(points[3], points[2]));
-  const float height_px = 0.5f * (point_distance(points[0], points[3]) +
-                                  point_distance(points[1], points[2]));
-  if (!std::isfinite(width_px) || !std::isfinite(height_px) || width_px < 4.0f || height_px < 4.0f) {
+
+  float width_px = 0.5f * (point_distance(points[0], points[1]) +
+                           point_distance(points[3], points[2]));
+  float height_px = 0.5f * (point_distance(points[0], points[3]) +
+                            point_distance(points[1], points[2]));
+
+  // Distance V4 : quand le raffinement des bords a reussi et qu'aucune
+  // correction de distorsion n'est necessaire, utiliser directement la
+  // separation des paires de droites opposees. On evite ainsi de convertir
+  // quatre droites stables en quatre intersections plus bruitees, puis de
+  // recalculer les dimensions a partir de ces coins.
+  const bool use_v4_edges =
+      observation.subpixel_refined &&
+      observation.subpixel_width_px >= 4.0f &&
+      observation.subpixel_height_px >= 4.0f &&
+      distortion_is_zero(calibration);
+  if (use_v4_edges) {
+    width_px = observation.subpixel_width_px;
+    height_px = observation.subpixel_height_px;
+  }
+
+  if (!std::isfinite(width_px) || !std::isfinite(height_px) ||
+      width_px < 4.0f || height_px < 4.0f) {
     return result;
   }
 
-  // Distance V3 : exploiter les quatre cotes raffines sans basculement brutal
+  result.edge_v4_used = use_v4_edges;
+  result.apparent_width_px = width_px;
+  result.apparent_height_px = height_px;
+
+  // Distance V4 : fusionner les deux dimensions apparentes. Quand les deux
   // entre largeur et hauteur. Quand les deux axes sont coherents, leurs tailles
   // apparentes sont fusionnees. En cas d'inclinaison marquee, la fusion revient
   // progressivement vers l'estimation la moins affectee par le raccourcissement.
