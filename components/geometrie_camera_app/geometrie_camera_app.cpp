@@ -24,9 +24,10 @@ GeometrieCameraApp::GeometrieCameraApp()
       continuous_measurement_controller_(&this->jpeg_diagnostic_, &this->image_sharpness_evaluator_,
                                          &this->jpeg_filtered_diagnostic_, &this->target_detection_service_,
                                          &this->measurement_manager_, &this->tracking_controller_),
-      full_calibration_controller_(&this->resolution_controller_, &this->jpeg_diagnostic_,
+      full_calibration_controller_(&this->jpeg_diagnostic_,
                                    &this->jpeg_filtered_diagnostic_, &this->target_detection_service_,
-                                   &this->measurement_manager_, &this->continuous_measurement_controller_),
+                                   &this->measurement_manager_, &this->continuous_measurement_controller_,
+                                   &this->tracking_controller_),
       runtime_diagnostics_(),
       api_wsdl_handler_(&this->resolution_controller_),
       settings_api_handler_(&this->settings_controller_, &this->resolution_controller_),
@@ -47,14 +48,6 @@ void GeometrieCameraApp::setup() {
   ESP_LOGI(TAG, "Initialisation application geometrie camera");
   this->measurement_manager_.setup();
   this->resolution_controller_.sync_from_sensor();
-
-  // Le driver est initialise en 2560x1920 uniquement pour reserver un
-  // framebuffer assez grand pour la calibration 5 MP. Le mode nominal de
-  // fonctionnement reste 800x600.
-  if (!this->resolution_controller_.apply("800x600")) {
-    ESP_LOGE(TAG, "Impossible d'appliquer la resolution nominale 800x600");
-  }
-
   this->register_api_if_possible_();
 }
 
@@ -108,7 +101,7 @@ std::string GeometrieCameraApp::status_text() const {
   }
 
   if (this->full_calibration_controller_.running()) {
-    return std::string("Calibration 2560x1920 - ") +
+    return std::string("Calibration native PRECISE - ") +
            this->full_calibration_controller_.state_text() + " - " +
            std::to_string(this->full_calibration_controller_.valid_samples()) + "/" +
            std::to_string(this->full_calibration_controller_.requested_samples());
