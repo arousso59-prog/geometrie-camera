@@ -53,13 +53,11 @@ logger:
 
     # Details internes tres verbeux : silencieux sauf anomalie.
     jpeg_diag: WARN
-    jpeg_filter_diag: WARN
     target_candidate_finder: WARN
     target_corner_refiner: WARN
     target_subpixel_refiner: WARN
     target_code_decoder: WARN
     target_detector: WARN
-    image_sharpness: WARN
 
     # Journal de travail : visible uniquement quand une operation est
     # reellement en cours (mesure continue, calibration, zoom/recentrage).
@@ -140,12 +138,9 @@ esp32_camera:
   idle_framerate: 0 fps
   test_pattern: false
 
-# Resolution de travail :
-# GET /api/camera/settings
-# GET /api/camera/settings/set?resolution=800x600
-# Le champ pixel_format de /api/camera/settings reste JPEG.
-# Le N/B nominal est applique par special_effect: GRAYSCALE et reste modifiable
-# a chaud via /api/camera/settings/set?monochrome=0|1.
+# Resolution de travail fixe pour le pipeline operationnel.
+# Les reglages optiques ne sont plus exposes manuellement : la calibration
+# automatique pilote en interne les parametres necessaires de l'OV5640.
 
 button:
   - platform: template
