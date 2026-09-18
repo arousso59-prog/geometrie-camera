@@ -33,6 +33,7 @@ float safe_ratio(float a, float b) {
 TargetDetector::TargetDetector()
     : candidate_finder_(),
       corner_refiner_(),
+      pattern_refiner_(),
       subpixel_refiner_(),
       code_decoder_(),
       candidates_(),
@@ -201,6 +202,33 @@ TargetObservation TargetDetector::detect(const GrayFrameView &frame) {
                   subpixel_metrics.left_line_dx;
               candidate_best.subpixel_left_line.dy =
                   subpixel_metrics.left_line_dy;
+
+              // Pose V3 : exploiter les transitions internes du motif 7x7.
+              // Ce raffinement ne remplace jamais les coins/droites utilisés
+              // par la distance V6.1 ; il produit uniquement une homographie
+              // canonique dédiée à l'orientation.
+              TargetPatternMetrics pattern_metrics;
+              const uint8_t rotation_quarters = static_cast<uint8_t>(
+                  static_cast<int>(
+                      std::lround(candidate_best.rotation_deg / 90.0f)) &
+                  0x03);
+              if (this->pattern_refiner_.refine(
+                      frame, subpixel_candidate, rotation_quarters,
+                      pattern_metrics)) {
+                candidate_best.pattern_refined = true;
+                candidate_best.pattern_feature_count =
+                    pattern_metrics.feature_count;
+                candidate_best.pattern_inlier_count =
+                    pattern_metrics.inlier_count;
+                candidate_best.pattern_rms_px =
+                    pattern_metrics.rms_px;
+                candidate_best.pattern_max_residual_px =
+                    pattern_metrics.max_residual_px;
+                for (uint8_t h = 0; h < 9; ++h) {
+                  candidate_best.pattern_homography[h] =
+                      pattern_metrics.homography[h];
+                }
+              }
             }
           }
         }
