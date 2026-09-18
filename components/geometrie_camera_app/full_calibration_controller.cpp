@@ -807,10 +807,25 @@ bool FullCalibrationController::handle_tuning_result_(
     const TargetObservation &observation, bool target_found) {
   this->tuning_attempts_++;
 
-  const CameraSettingsSnapshot actual = this->settings_controller_->read();
-  if (actual.available) {
-    this->current_exposure_ = actual.aec_value;
-    this->current_gain_ = actual.agc_gain;
+  if (this->phase_ == CalibrationPhase::TUNE_AUTO_SETTLE) {
+    std::string live_error;
+    int live_exposure = 0;
+    int live_gain = 0;
+    if (!this->settings_controller_->read_live_exposure_gain(
+            live_exposure, live_gain, live_error)) {
+      ESP_LOGE(TAG, "Lecture AEC/AGC reels impossible: %s", live_error.c_str());
+      return false;
+    }
+    this->current_exposure_ = live_exposure;
+    this->current_gain_ = live_gain;
+  } else {
+    const CameraSettingsSnapshot actual = this->settings_controller_->read();
+    if (actual.available) {
+      this->current_exposure_ = actual.aec_value;
+      this->current_gain_ = actual.agc_gain;
+      this->current_brightness_ = actual.brightness;
+      this->current_contrast_ = actual.contrast;
+    }
   }
 
   this->current_optical_score_ =
@@ -818,7 +833,8 @@ bool FullCalibrationController::handle_tuning_result_(
 
   ESP_LOGI(TAG,
            "Optique %u/%u phase=%s AE=%d exp=%d gain=%d lum=%d ctr=%d score=%.1f "
-           "qual=%.3f rms=%.3f sigmaW=%.3f sigmaH=%.3f gradW=%.1f gradH=%.1f P10=%u P90=%u C=%u luma=%.1f clip=%.1f%%",
+           "qual=%.3f rms=%.3f sigmaW=%.3f sigmaH=%.3f gradW=%.1f gradH=%.1f "
+           "P10=%u P90=%u C=%u luma=%.1f clip=%.1f%%",
            static_cast<unsigned>(this->tuning_attempts_),
            static_cast<unsigned>(OPTICAL_TUNING_MAX_ATTEMPTS),
            this->phase_text(), this->current_ae_level_,
@@ -839,12 +855,66 @@ bool FullCalibrationController::handle_tuning_result_(
                               this->current_bright_percent_x100_) /
                100.0f);
 
-  if (this->phase_ == CalibrationPhase::TUNE_MANUAL_BASELINE) {
+  if (this->phase_ == CalibrationPhase::TUNE_AUTO_SETTLE) {
+    if (this->current_optical_score_ > this->best_optical_score_) {
+      this->best_optical_score_ = this->current_optical_score_;
+      this->best_exposure_ = this->current_exposure_;
+      this->best_gain_ = this->current_gain_;
+      this->best_brightness_ = 0;
+      this->best_contrast_ = 0;
+    }
+
+    this->tuning_index_++;
+    const uint8_t settle_target =
+        this->auto_fallback_ ? AUTO_RECOVERY_FRAMES : AUTO_SETTLE_FRAMES;
+    if (this->tuning_index_ < settle_target) {
+      return this->request_next_capture_();
+    }
+
+    if (this->best_optical_score_ <= 0.0f ||
+        this->best_exposure_ <= 0 || this->best_gain_ < 0) {
+      ESP_LOGE(TAG,
+               "AEC/AGC auto inutilisable: aucune image metrologique valide");
+      return false;
+    }
+
+    if (this->auto_fallback_) {
+      this->phase_ = CalibrationPhase::SAMPLING;
+      this->current_optical_score_ = this->best_optical_score_;
+      ESP_LOGW(TAG,
+               "Calibration poursuivie en AEC/AGC AUTO: exp reel=%d gain reel=%d "
+               "score=%.1f; verrouillage manuel abandonne",
+               this->best_exposure_, this->best_gain_,
+               this->best_optical_score_);
+      return this->request_next_capture_();
+    }
+
+    this->phase_ = CalibrationPhase::TUNE_MANUAL_VALIDATE;
+    ESP_LOGI(TAG,
+             "AEC/AGC stabilises: verrouillage test sur exp reel=%d gain reel=%d",
+             this->best_exposure_, this->best_gain_);
+    if (!this->prepare_manual_candidate_(
+            this->best_exposure_, this->best_gain_)) {
+      return this->fallback_to_auto_sampling_("manual_apply_failed");
+    }
+    return this->request_next_capture_();
+  }
+
+  if (this->phase_ == CalibrationPhase::TUNE_MANUAL_VALIDATE) {
+    if (this->current_optical_score_ <= 0.0f ||
+        !target_found || !observation.subpixel_refined) {
+      return this->fallback_to_auto_sampling_("manual_lock_invalid_image");
+    }
+
+    // Le verrouillage manuel reproduit bien l'image auto. Il devient la
+    // nouvelle baseline pour un affinage tres local uniquement.
     this->best_optical_score_ = this->current_optical_score_;
     this->best_exposure_ = this->current_exposure_;
     this->best_gain_ = this->current_gain_;
+    this->best_brightness_ = 0;
+    this->best_contrast_ = 0;
     this->tuning_round_ = 0;
-    this->tuning_step_ = 80;
+    this->tuning_step_ = 20;
     return this->start_manual_exposure_round_();
   }
 
@@ -885,7 +955,10 @@ bool FullCalibrationController::handle_tuning_result_(
 
     if (this->tuning_index_ == 0) {
       this->tuning_index_ = 1;
-      if (!this->prepare_postprocess_candidate_(1, this->best_contrast_)) return false;
+      if (!this->prepare_postprocess_candidate_(
+              1, this->best_contrast_)) {
+        return false;
+      }
       return this->request_next_capture_();
     }
 
