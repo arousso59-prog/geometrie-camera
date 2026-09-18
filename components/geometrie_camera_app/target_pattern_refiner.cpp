@@ -115,7 +115,7 @@ bool TargetPatternRefiner::refine(
     return false;
   }
 
-  Feature features[MAX_FEATURES];
+  Feature *features = this->features_;
   uint16_t feature_count = 0;
   const float segment_positions[2] = {0.33f, 0.67f};
 
@@ -422,9 +422,11 @@ bool TargetPatternRefiner::fit_homography_(
     float &max_residual_px) const {
   if (features == nullptr || count < MIN_FEATURES) return false;
 
-  float robust_weights[MAX_FEATURES];
+  float *robust_weights = this->robust_weights_;
+  float *residuals = this->residuals_;
   for (uint16_t i = 0; i < count; ++i) {
     robust_weights[i] = 1.0f;
+    residuals[i] = 0.0f;
   }
 
   float h[9] = {0.0f, 0.0f, 0.0f,
@@ -432,8 +434,8 @@ bool TargetPatternRefiner::fit_homography_(
                 0.0f, 0.0f, 1.0f};
 
   for (uint8_t iteration = 0; iteration < 3; ++iteration) {
-    float normal[8][9];
-    std::memset(normal, 0, sizeof(normal));
+    float (*normal)[9] = this->normal_matrix_;
+    std::memset(this->normal_matrix_, 0, sizeof(this->normal_matrix_));
 
     for (uint16_t i = 0; i < count; ++i) {
       const Feature &f = features[i];
@@ -467,7 +469,6 @@ bool TargetPatternRefiner::fit_homography_(
     for (uint8_t i = 0; i < 8; ++i) h[i] = solution[i];
     h[8] = 1.0f;
 
-    float residuals[MAX_FEATURES];
     for (uint16_t i = 0; i < count; ++i) {
       float px = 0.0f;
       float py = 0.0f;
@@ -494,7 +495,6 @@ bool TargetPatternRefiner::fit_homography_(
     }
   }
 
-  float residuals[MAX_FEATURES];
   for (uint16_t i = 0; i < count; ++i) {
     float px = 0.0f;
     float py = 0.0f;
