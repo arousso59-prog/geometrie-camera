@@ -74,7 +74,7 @@ void TargetDetectionApiHandler::handle_preview_(AsyncWebServerRequest *request) 
 void TargetDetectionApiHandler::send_status_(AsyncWebServerRequest *request, int response_code,
                                              const char *status, const char *error) const {
   std::string json;
-  json.reserve(2600);
+  json.reserve(3200);
   json += "{\"status\":\"";
   json += status;
   json += "\"";
@@ -161,6 +161,16 @@ void TargetDetectionApiHandler::send_status_(AsyncWebServerRequest *request, int
     json += std::to_string(observation.subpixel_bottom_gradient);
     json += ",\"edge_left_gradient\":";
     json += std::to_string(observation.subpixel_left_gradient);
+    json += ",\"pattern_refined\":";
+    json += observation.pattern_refined ? "true" : "false";
+    json += ",\"pattern_feature_count\":";
+    json += std::to_string(observation.pattern_feature_count);
+    json += ",\"pattern_inlier_count\":";
+    json += std::to_string(observation.pattern_inlier_count);
+    json += ",\"pattern_rms_px\":";
+    json += std::to_string(observation.pattern_rms_px);
+    json += ",\"pattern_max_residual_px\":";
+    json += std::to_string(observation.pattern_max_residual_px);
     json += "},\"preview\":\"/target/preview.bmp\"";
   }
 
