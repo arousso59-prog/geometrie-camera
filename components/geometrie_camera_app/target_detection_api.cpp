@@ -74,7 +74,7 @@ void TargetDetectionApiHandler::handle_preview_(AsyncWebServerRequest *request) 
 void TargetDetectionApiHandler::send_status_(AsyncWebServerRequest *request, int response_code,
                                              const char *status, const char *error) const {
   std::string json;
-  json.reserve(1250);
+  json.reserve(2600);
   json += "{\"status\":\"";
   json += status;
   json += "\"";
@@ -129,6 +129,38 @@ void TargetDetectionApiHandler::send_status_(AsyncWebServerRequest *request, int
     json += std::to_string(observation.subpixel_width_gradient);
     json += ",\"subpixel_height_gradient\":";
     json += std::to_string(observation.subpixel_height_gradient);
+    json += ",\"v5_width_px\":";
+    json += std::to_string(observation.subpixel_v5_width_px);
+    json += ",\"v5_height_px\":";
+    json += std::to_string(observation.subpixel_v5_height_px);
+    json += ",\"v5_width_sigma_px\":";
+    json += std::to_string(observation.subpixel_v5_width_sigma_px);
+    json += ",\"v5_height_sigma_px\":";
+    json += std::to_string(observation.subpixel_v5_height_sigma_px);
+    json += ",\"v6_width_px\":";
+    json += std::to_string(observation.subpixel_v6_width_px);
+    json += ",\"v6_height_px\":";
+    json += std::to_string(observation.subpixel_v6_height_px);
+    json += ",\"v6_width_sigma_px\":";
+    json += std::to_string(observation.subpixel_v6_width_sigma_px);
+    json += ",\"v6_height_sigma_px\":";
+    json += std::to_string(observation.subpixel_v6_height_sigma_px);
+    json += ",\"edge_top_rms_px\":";
+    json += std::to_string(observation.subpixel_top_rms_px);
+    json += ",\"edge_right_rms_px\":";
+    json += std::to_string(observation.subpixel_right_rms_px);
+    json += ",\"edge_bottom_rms_px\":";
+    json += std::to_string(observation.subpixel_bottom_rms_px);
+    json += ",\"edge_left_rms_px\":";
+    json += std::to_string(observation.subpixel_left_rms_px);
+    json += ",\"edge_top_gradient\":";
+    json += std::to_string(observation.subpixel_top_gradient);
+    json += ",\"edge_right_gradient\":";
+    json += std::to_string(observation.subpixel_right_gradient);
+    json += ",\"edge_bottom_gradient\":";
+    json += std::to_string(observation.subpixel_bottom_gradient);
+    json += ",\"edge_left_gradient\":";
+    json += std::to_string(observation.subpixel_left_gradient);
     json += "},\"preview\":\"/target/preview.bmp\"";
   }
 
