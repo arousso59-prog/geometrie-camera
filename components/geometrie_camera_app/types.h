@@ -58,6 +58,13 @@ struct TargetObservation {
   float subpixel_width_px;
   float subpixel_height_px;
 
+  // V5 : incertitude estimee sur la separation des paires de droites et
+  // contraste moyen des bords correspondants.
+  float subpixel_width_sigma_px;
+  float subpixel_height_sigma_px;
+  float subpixel_width_gradient;
+  float subpixel_height_gradient;
+
   ImagePoint top_left_px;
   ImagePoint top_right_px;
   ImagePoint bottom_right_px;
@@ -71,8 +78,13 @@ struct GeometryMeasurement {
   bool calibrated;
   bool pose_valid;
   bool edge_v4_used;
+  bool edge_v5_used;
   float apparent_width_px;
   float apparent_height_px;
+  float apparent_width_sigma_px;
+  float apparent_height_sigma_px;
+  float width_distance_weight;
+  float height_distance_weight;
   float distance_mm;
   float x_mm;
   float y_mm;
