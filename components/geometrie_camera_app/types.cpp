@@ -8,6 +8,15 @@ ImagePoint::ImagePoint() : x(0.0f), y(0.0f) {}
 ImageLine::ImageLine()
     : valid(false), point(), dx(0.0f), dy(0.0f) {}
 
+PatternFeature::PatternFeature()
+    : u(0.0f),
+      v(0.0f),
+      x(0.0f),
+      y(0.0f),
+      strength(0.0f),
+      residual(0.0f),
+      inlier(false) {}
+
 CameraCalibration::CameraCalibration()
     : fx_px(0.0f),
       fy_px(0.0f),
@@ -67,6 +76,8 @@ TargetObservation::TargetObservation()
       pattern_homography{0.0f, 0.0f, 0.0f,
                          0.0f, 0.0f, 0.0f,
                          0.0f, 0.0f, 1.0f},
+      pattern_features(nullptr),
+      pattern_features_count(0),
       top_left_px(),
       top_right_px(),
       bottom_right_px(),
@@ -81,6 +92,8 @@ GeometryMeasurement::GeometryMeasurement()
       pose_v2_used(false),
       pose_v3_valid(false),
       pose_v3_used(false),
+      pose_v4_valid(false),
+      pose_v4_used(false),
       edge_v4_used(false),
       edge_v5_used(false),
       edge_v6_used(false),
@@ -137,6 +150,13 @@ GeometryMeasurement::GeometryMeasurement()
       pose_v3_fit_rms_px(0.0f),
       pose_v3_feature_count(0),
       pose_v3_inlier_count(0),
+      pose_v4_yaw_deg(0.0f),
+      pose_v4_pitch_deg(0.0f),
+      pose_v4_roll_deg(0.0f),
+      pose_v4_rms_px(0.0f),
+      pose_v4_max_residual_px(0.0f),
+      pose_v4_feature_count(0),
+      pose_v4_inlier_count(0),
       pose_normal_x(0.0f),
       pose_normal_y(0.0f),
       pose_normal_z(0.0f),
