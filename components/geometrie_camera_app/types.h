@@ -104,6 +104,15 @@ struct TargetObservation {
   ImageLine subpixel_bottom_line;
   ImageLine subpixel_left_line;
 
+  // Pose V3 : homographie robuste issue des transitions internes du motif 7x7.
+  // Elle reste totalement separee de la chaine de distance.
+  bool pattern_refined;
+  uint16_t pattern_feature_count;
+  uint16_t pattern_inlier_count;
+  float pattern_rms_px;
+  float pattern_max_residual_px;
+  float pattern_homography[9];
+
   ImagePoint top_left_px;
   ImagePoint top_right_px;
   ImagePoint bottom_right_px;
@@ -119,6 +128,8 @@ struct GeometryMeasurement {
   bool pose_v1_valid;
   bool pose_v2_valid;
   bool pose_v2_used;
+  bool pose_v3_valid;
+  bool pose_v3_used;
   bool edge_v4_used;
   bool edge_v5_used;
   bool edge_v6_used;
@@ -175,6 +186,13 @@ struct GeometryMeasurement {
   float pose_v2_roll_deg;
   float pose_v2_line_rms_px;
   float pose_v2_corner_rms_px;
+  float pose_v3_yaw_deg;
+  float pose_v3_pitch_deg;
+  float pose_v3_roll_deg;
+  float pose_v3_pattern_rms_px;
+  float pose_v3_fit_rms_px;
+  uint16_t pose_v3_feature_count;
+  uint16_t pose_v3_inlier_count;
   float pose_normal_x;
   float pose_normal_y;
   float pose_normal_z;
