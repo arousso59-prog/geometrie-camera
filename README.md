@@ -65,7 +65,7 @@ La référence du contrat HTTP est :
 GET /api/wsdl
 ```
 
-Version actuelle : **32**.
+Version actuelle : **33**.
 
 ### Diagnostic lecture seule
 
@@ -316,3 +316,16 @@ La recherche multi-échelle descend jusqu'à **0,0005° = 0,03 minute d'arc**. V
 Ordre de repli : V4 direct → V3 homographie motif → V2 quatre droites → V1 homographie historique.
 
 Après validation de cette V32, si yaw/pitch restent nettement au-dessus de 1 minute d'arc, l'évolution suivante sera matérielle : cible plus grande, typiquement autour de **300×100 mm**, afin d'augmenter fortement le bras de levier angulaire sans modifier la chaîne caméra/distance.
+
+
+## Correctifs V33
+
+V33 ne change ni la camera V25, ni la calibration, ni la formule de distance V6.1-robust5, ni le pipeline de capture.
+
+Deux correctifs de fiabilite sont ajoutes :
+
+1. **Preview HTTP thread-safe au niveau de la vue source** : le pointeur de l'image grise n'est capture qu'une seule fois. Si un nouveau decode commence ou se termine pendant la copie, la preview est rejetee et le poll suivant retentera. Cela corrige le `LoadProhibited` observe dans `TargetDetectionPreview::render()`.
+
+2. **Haute precision stricte** : une frame PRECISE sans raffinement subpixel V6.1 n'est plus convertie en mesure par repli sur les coins. Elle est rejetee. Cela evite de polluer robust5 avec des tailles de coins fortement dispersees alors que V5/V6 restent stables.
+
+La Pose V4 directe reste calculee et exposee en diagnostic, mais n'est plus publiee comme pose officielle avec la cible 50x50 mm. La Pose V3 redevient la methode officielle, V4 servant a mesurer la limite logicielle avant passage a une cible plus grande.
