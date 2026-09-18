@@ -32,6 +32,10 @@ CameraCalibration::CameraCalibration()
 
 TargetObservation::TargetObservation()
     : valid(false),
+      marker_id(TargetMarkerId::NONE),
+      board_marker_mask(0),
+      board_marker_count(0),
+      board_complete(false),
       center_x_px(0.0f),
       center_y_px(0.0f),
       width_px(0.0f),
