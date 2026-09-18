@@ -14,13 +14,19 @@ static const char *const TAG = "target_subpixel_refiner";
 constexpr uint8_t EDGE_SAMPLE_COUNT = 31;
 constexpr uint8_t MIN_EDGE_SAMPLES = 15;
 constexpr float EDGE_MARGIN_RATIO = 0.18f;
-constexpr int TANGENT_AVERAGE_RADIUS_PX = 2;
-constexpr int NORMAL_SEARCH_RADIUS_PX = 3;
+constexpr int TANGENT_AVERAGE_RADIUS_PX = 3;
+constexpr float NORMAL_SEARCH_RADIUS_PX = 3.0f;
+constexpr float NORMAL_PROFILE_STEP_PX = 0.25f;
+constexpr uint8_t NORMAL_PROFILE_COUNT =
+    static_cast<uint8_t>((2.0f * NORMAL_SEARCH_RADIUS_PX) /
+                         NORMAL_PROFILE_STEP_PX) + 1U;
+constexpr uint8_t NORMAL_CENTROID_RADIUS = 4;
 constexpr float GRADIENT_HALF_SPAN_PX = 0.75f;
 constexpr float MIN_EDGE_GRADIENT = 8.0f;
 constexpr float INITIAL_OFFSET_GATE_PX = 2.0f;
 constexpr float RESIDUAL_GATE_PX = 0.85f;
-constexpr float MAX_LINE_RMS_PX = 0.65f;
+constexpr float MIN_ADAPTIVE_GATE_PX = 0.30f;
+constexpr float MAX_LINE_RMS_PX = 0.60f;
 constexpr float MAX_SLOPE_CORRECTION = 0.08f;
 constexpr float MAX_CORNER_SHIFT_PX = 4.0f;
 constexpr float MIN_EDGE_LENGTH_PX = 8.0f;
@@ -93,6 +99,10 @@ bool TargetSubpixelRefiner::refine(const GrayFrameView &frame,
     metrics->min_edge_samples = 0;
     metrics->width_px = 0.0f;
     metrics->height_px = 0.0f;
+    metrics->width_sigma_px = 0.0f;
+    metrics->height_sigma_px = 0.0f;
+    metrics->width_gradient = 0.0f;
+    metrics->height_gradient = 0.0f;
   }
 
   if (frame.data == nullptr || frame.width < 4 || frame.height < 4 ||
@@ -152,11 +162,21 @@ bool TargetSubpixelRefiner::refine(const GrayFrameView &frame,
                  std::min(bottom.samples, left.samples));
     metrics->width_px = direct_width_px;
     metrics->height_px = direct_height_px;
+    metrics->width_sigma_px =
+        std::sqrt(left.position_sigma * left.position_sigma +
+                  right.position_sigma * right.position_sigma);
+    metrics->height_sigma_px =
+        std::sqrt(top.position_sigma * top.position_sigma +
+                  bottom.position_sigma * bottom.position_sigma);
+    metrics->width_gradient =
+        0.5f * (left.mean_gradient + right.mean_gradient);
+    metrics->height_gradient =
+        0.5f * (top.mean_gradient + bottom.mean_gradient);
   }
 
   ESP_LOGD(
       TAG,
-      "Subpixel V4 OK center=(%.3f,%.3f) corners=%.3fx%.3f edges=%.3fx%.3f "
+      "Subpixel V5 OK center=(%.3f,%.3f) corners=%.3fx%.3f edges=%.3fx%.3f "
       "rms=(%.3f,%.3f,%.3f,%.3f) grad=(%.1f,%.1f,%.1f,%.1f)",
       output.center_x, output.center_y, output.width, output.height,
       direct_width_px, direct_height_px,
@@ -264,16 +284,33 @@ bool TargetSubpixelRefiner::refine_edge_(const GrayFrameView &frame,
   const float initial_intercept =
       initial_point_d - initial_slope * initial_point_s;
 
+  float residual_abs[EDGE_SAMPLE_COUNT];
+  for (uint8_t i = 0; i < gated_count; ++i) {
+    const float predicted = initial_slope * gated_s[i] + initial_intercept;
+    residual_abs[i] = std::fabs(gated_offsets[i] - predicted);
+  }
+  const float median_residual = median_copy(residual_abs, gated_count);
+  const float adaptive_gate = std::max(
+      MIN_ADAPTIVE_GATE_PX,
+      std::min(RESIDUAL_GATE_PX, 3.5f * median_residual + 0.05f));
+
   float final_s[EDGE_SAMPLE_COUNT];
   float final_offsets[EDGE_SAMPLE_COUNT];
   float final_weights[EDGE_SAMPLE_COUNT];
   uint8_t final_count = 0;
   for (uint8_t i = 0; i < gated_count; ++i) {
-    const float predicted = initial_slope * gated_s[i] + initial_intercept;
-    if (std::fabs(gated_offsets[i] - predicted) <= RESIDUAL_GATE_PX) {
+    const float residual = residual_abs[i];
+    if (residual <= adaptive_gate) {
       final_s[final_count] = gated_s[i];
       final_offsets[final_count] = gated_offsets[i];
-      final_weights[final_count] = gated_weights[i];
+
+      // Poids robuste de type Cauchy : un point proche de la droite et avec un
+      // gradient fort contribue davantage, sans qu'un seul pixel tres contraste
+      // puisse dominer tout l'ajustement.
+      const float normalized = residual / std::max(0.05f, adaptive_gate);
+      const float robust_weight = 1.0f / (1.0f + normalized * normalized);
+      final_weights[final_count] =
+          std::max(1.0f, gated_weights[i] * robust_weight);
       ++final_count;
     }
   }
@@ -302,26 +339,25 @@ bool TargetSubpixelRefiner::find_edge_offset_(const GrayFrameView &frame,
                                               float normal_y,
                                               float &offset,
                                               float &gradient) const {
-  constexpr uint8_t PROFILE_COUNT =
-      static_cast<uint8_t>(NORMAL_SEARCH_RADIUS_PX * 2 + 1);
-  float strengths[PROFILE_COUNT];
+  float strengths[NORMAL_PROFILE_COUNT];
 
   int best_index = -1;
   float best_strength = -1.0f;
 
-  for (int delta = -NORMAL_SEARCH_RADIUS_PX;
-       delta <= NORMAL_SEARCH_RADIUS_PX; ++delta) {
-    const float before_offset =
-        static_cast<float>(delta) - GRADIENT_HALF_SPAN_PX;
-    const float after_offset =
-        static_cast<float>(delta) + GRADIENT_HALF_SPAN_PX;
+  // V5 : echantillonner le profil a 0,25 px. L'interpolation bilineaire donne
+  // une vraie courbe de gradient subpixel, beaucoup moins sensible au passage
+  // d'un maximum d'un pixel entier au suivant.
+  for (uint8_t index = 0; index < NORMAL_PROFILE_COUNT; ++index) {
+    const float delta =
+        -NORMAL_SEARCH_RADIUS_PX +
+        static_cast<float>(index) * NORMAL_PROFILE_STEP_PX;
+    const float before_offset = delta - GRADIENT_HALF_SPAN_PX;
+    const float after_offset = delta + GRADIENT_HALF_SPAN_PX;
 
-    // V4 : lisser le profil perpendiculaire en moyennant plusieurs pixels le
-    // long du bord. Le bord externe est continu ; cette moyenne reduit le
-    // bruit JPEG et les variations locales sans deplacer sa position.
     float before_sum = 0.0f;
     float after_sum = 0.0f;
     uint8_t valid_pairs = 0;
+
     for (int tangent_offset = -TANGENT_AVERAGE_RADIUS_PX;
          tangent_offset <= TANGENT_AVERAGE_RADIUS_PX; ++tangent_offset) {
       const float along = static_cast<float>(tangent_offset);
@@ -348,15 +384,13 @@ bool TargetSubpixelRefiner::find_edge_offset_(const GrayFrameView &frame,
       ++valid_pairs;
     }
 
-    const int index = delta + NORMAL_SEARCH_RADIUS_PX;
-    if (valid_pairs < 3) {
+    if (valid_pairs < 5) {
       strengths[index] = 0.0f;
       continue;
     }
 
-    const float before_mean = before_sum / valid_pairs;
-    const float after_mean = after_sum / valid_pairs;
-    const float strength = std::fabs(after_mean - before_mean);
+    const float strength =
+        std::fabs(after_sum / valid_pairs - before_sum / valid_pairs);
     strengths[index] = strength;
     if (strength > best_strength) {
       best_strength = strength;
@@ -364,30 +398,46 @@ bool TargetSubpixelRefiner::find_edge_offset_(const GrayFrameView &frame,
     }
   }
 
-  if (best_index <= 0 ||
-      best_index >= static_cast<int>(PROFILE_COUNT) - 1 ||
+  if (best_index < static_cast<int>(NORMAL_CENTROID_RADIUS) ||
+      best_index >=
+          static_cast<int>(NORMAL_PROFILE_COUNT - NORMAL_CENTROID_RADIUS) ||
       best_strength < MIN_EDGE_GRADIENT) {
     return false;
   }
 
-  const float left = strengths[best_index - 1];
-  const float center = strengths[best_index];
-  const float right = strengths[best_index + 1];
-
-  float subpixel_delta = 0.0f;
-  const float denominator = left - 2.0f * center + right;
-  if (denominator < -EPSILON) {
-    subpixel_delta = 0.5f * (left - right) / denominator;
-    subpixel_delta = std::max(-0.75f, std::min(0.75f, subpixel_delta));
+  // Au lieu d'une parabole definie par seulement trois points, calculer le
+  // barycentre du lobe de gradient sur +/-1 px. Soustraire le plancher local
+  // rend la position beaucoup moins sensible au bruit JPEG.
+  float local_floor = strengths[best_index - NORMAL_CENTROID_RADIUS];
+  for (int i = best_index - NORMAL_CENTROID_RADIUS;
+       i <= best_index + NORMAL_CENTROID_RADIUS; ++i) {
+    local_floor = std::min(local_floor, strengths[i]);
   }
 
-  const int integer_delta = best_index - NORMAL_SEARCH_RADIUS_PX;
-  offset = static_cast<float>(integer_delta) + subpixel_delta;
-  gradient = center;
+  double weighted_position = 0.0;
+  double weight_sum = 0.0;
+  for (int i = best_index - NORMAL_CENTROID_RADIUS;
+       i <= best_index + NORMAL_CENTROID_RADIUS; ++i) {
+    const float delta =
+        -NORMAL_SEARCH_RADIUS_PX +
+        static_cast<float>(i) * NORMAL_PROFILE_STEP_PX;
+    const float excess = std::max(0.0f, strengths[i] - local_floor);
+    const float weight = excess * excess;
+    weighted_position += static_cast<double>(delta) * weight;
+    weight_sum += weight;
+  }
+
+  if (weight_sum > EPSILON) {
+    offset = static_cast<float>(weighted_position / weight_sum);
+  } else {
+    offset =
+        -NORMAL_SEARCH_RADIUS_PX +
+        static_cast<float>(best_index) * NORMAL_PROFILE_STEP_PX;
+  }
+  gradient = best_strength;
 
   return std::isfinite(offset) && std::isfinite(gradient) &&
-         std::fabs(offset) <=
-             static_cast<float>(NORMAL_SEARCH_RADIUS_PX) + 0.75f;
+         std::fabs(offset) <= NORMAL_SEARCH_RADIUS_PX;
 }
 
 bool TargetSubpixelRefiner::fit_edge_line_(const float *s,
@@ -468,6 +518,8 @@ bool TargetSubpixelRefiner::fit_edge_line_(const float *s,
   line.dx = dir_x;
   line.dy = dir_y;
   line.rms = rms;
+  line.position_sigma =
+      std::max(0.005f, rms / std::sqrt(static_cast<float>(count)));
   line.mean_gradient = static_cast<float>(gradient_sum / count);
   line.samples = count;
   return finite_point(line.point);
