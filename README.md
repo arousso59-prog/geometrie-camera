@@ -65,7 +65,7 @@ La référence du contrat HTTP est :
 GET /api/wsdl
 ```
 
-Version actuelle : **24**.
+Version actuelle : **25**.
 
 ### Diagnostic lecture seule
 
@@ -167,3 +167,20 @@ Après l'optimisation exposition/gain, la calibration affine maintenant aussi le
 - le profil final conserve exposition, gain, contraste et luminosité.
 
 Le même score métrologique est utilisé pour tous les candidats : RMS, sigma, gradients horizontaux/verticaux, équilibre des gradients, P10/P90, contraste utile, clipping et qualité de détection.
+
+
+## Verrouillage caméra V25
+
+Le réglage optique ne suppose plus une exposition/gain nominale.
+
+1. La cible est verrouillée en PRECISE avec AEC/AGC automatiques.
+2. Quatre images laissent l'OV5640 stabiliser son exposition.
+3. L'ESP lit directement les registres matériels OV5640 :
+   - exposition : 0x3500..0x3502 ;
+   - gain : 0x350A..0x350B.
+4. Ces valeurs réelles sont appliquées en mode manuel.
+5. Une capture valide obligatoirement le verrouillage manuel.
+6. Si la capture devient blanche/noire, perd la cible ou obtient un score nul, le verrouillage est refusé.
+7. L'ESP réactive alors AEC/AGC auto, attend trois images de récupération et réalise la calibration en mode auto.
+
+Si le verrouillage manuel est valide, l'affinage est volontairement local : exposition ±20 puis ±10, gain ±1, puis contraste et luminosité.
