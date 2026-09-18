@@ -103,6 +103,22 @@ bool TargetSubpixelRefiner::refine(const GrayFrameView &frame,
     metrics->height_sigma_px = 0.0f;
     metrics->width_gradient = 0.0f;
     metrics->height_gradient = 0.0f;
+    metrics->v5_width_px = 0.0f;
+    metrics->v5_height_px = 0.0f;
+    metrics->v5_width_sigma_px = 0.0f;
+    metrics->v5_height_sigma_px = 0.0f;
+    metrics->v6_width_px = 0.0f;
+    metrics->v6_height_px = 0.0f;
+    metrics->v6_width_sigma_px = 0.0f;
+    metrics->v6_height_sigma_px = 0.0f;
+    metrics->top_rms_px = 0.0f;
+    metrics->right_rms_px = 0.0f;
+    metrics->bottom_rms_px = 0.0f;
+    metrics->left_rms_px = 0.0f;
+    metrics->top_gradient = 0.0f;
+    metrics->right_gradient = 0.0f;
+    metrics->bottom_gradient = 0.0f;
+    metrics->left_gradient = 0.0f;
   }
 
   if (frame.data == nullptr || frame.width < 4 || frame.height < 4 ||
@@ -139,12 +155,14 @@ bool TargetSubpixelRefiner::refine(const GrayFrameView &frame,
   const float direct_height_px =
       this->opposite_edge_separation_(top, bottom);
 
-  float direct_width_sigma_px =
+  const float v5_width_sigma_px =
       std::sqrt(left.position_sigma * left.position_sigma +
                 right.position_sigma * right.position_sigma);
-  float direct_height_sigma_px =
+  const float v5_height_sigma_px =
       std::sqrt(top.position_sigma * top.position_sigma +
                 bottom.position_sigma * bottom.position_sigma);
+  float direct_width_sigma_px = v5_width_sigma_px;
+  float direct_height_sigma_px = v5_height_sigma_px;
 
   float local_width_sigma_px = 0.0f;
   float local_height_sigma_px = 0.0f;
@@ -210,6 +228,28 @@ bool TargetSubpixelRefiner::refine(const GrayFrameView &frame,
         0.5f * (left.mean_gradient + right.mean_gradient);
     metrics->height_gradient =
         0.5f * (top.mean_gradient + bottom.mean_gradient);
+
+    metrics->v5_width_px = direct_width_px;
+    metrics->v5_height_px = direct_height_px;
+    metrics->v5_width_sigma_px = v5_width_sigma_px;
+    metrics->v5_height_sigma_px = v5_height_sigma_px;
+    metrics->v6_width_px =
+        std::isfinite(local_width_px) ? local_width_px : 0.0f;
+    metrics->v6_height_px =
+        std::isfinite(local_height_px) ? local_height_px : 0.0f;
+    metrics->v6_width_sigma_px =
+        std::isfinite(local_width_sigma_px) ? local_width_sigma_px : 0.0f;
+    metrics->v6_height_sigma_px =
+        std::isfinite(local_height_sigma_px) ? local_height_sigma_px : 0.0f;
+
+    metrics->top_rms_px = top.rms;
+    metrics->right_rms_px = right.rms;
+    metrics->bottom_rms_px = bottom.rms;
+    metrics->left_rms_px = left.rms;
+    metrics->top_gradient = top.mean_gradient;
+    metrics->right_gradient = right.mean_gradient;
+    metrics->bottom_gradient = bottom.mean_gradient;
+    metrics->left_gradient = left.mean_gradient;
   }
 
   ESP_LOGD(
