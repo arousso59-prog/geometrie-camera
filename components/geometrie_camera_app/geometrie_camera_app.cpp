@@ -25,6 +25,8 @@ GeometrieCameraApp::GeometrieCameraApp()
                                          &this->jpeg_filtered_diagnostic_, &this->target_detection_service_,
                                          &this->measurement_manager_, &this->tracking_controller_),
       full_calibration_controller_(&this->jpeg_diagnostic_,
+                                   &this->image_sharpness_evaluator_,
+                                   &this->settings_controller_,
                                    &this->jpeg_filtered_diagnostic_, &this->target_detection_service_,
                                    &this->measurement_manager_, &this->continuous_measurement_controller_,
                                    &this->tracking_controller_, &this->target_detection_preview_),
