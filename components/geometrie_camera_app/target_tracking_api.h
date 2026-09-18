@@ -19,15 +19,8 @@ class TargetTrackingApiHandler : public AsyncWebHandler {
   void handleRequest(AsyncWebServerRequest *request) override;
 
  private:
-  void handle_config_(AsyncWebServerRequest *request) const;
-  void handle_config_set_(AsyncWebServerRequest *request);
   void handle_status_(AsyncWebServerRequest *request) const;
   void handle_viewport_(AsyncWebServerRequest *request) const;
-
-  bool parse_uint_(AsyncWebServerRequest *request, const char *name,
-                   uint32_t &value, bool &present, std::string &error) const;
-  void send_config_(AsyncWebServerRequest *request, int response_code,
-                    const char *status, const char *error = nullptr) const;
   void append_viewport_json_(std::string &json) const;
 
   TargetTrackingController *tracking_controller_;
