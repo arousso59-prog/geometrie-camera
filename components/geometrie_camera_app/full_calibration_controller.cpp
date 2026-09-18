@@ -26,7 +26,6 @@ constexpr uint16_t NATIVE_OUTPUT_WIDTH = CameraViewportController::OUTPUT_WIDTH;
 constexpr uint16_t NATIVE_OUTPUT_HEIGHT = CameraViewportController::OUTPUT_HEIGHT;
 constexpr uint32_t CAPTURE_TIMEOUT_MS = 15000;
 constexpr uint8_t MAX_TOTAL_ATTEMPTS = 100;
-constexpr int AUTO_AE_LEVELS[5] = {-2, -1, 0, 1, 2};
 
 int clamp_int(int value, int minimum, int maximum) {
   return std::max(minimum, std::min(maximum, value));
@@ -89,7 +88,6 @@ FullCalibrationController::FullCalibrationController(
       last_sample_fx_px_(0.0f),
       last_sample_fy_px_(0.0f),
       tuning_attempts_(0),
-      tuning_index_(0),
       tuning_round_(0),
       tuning_side_(0),
       tuning_pair_base_(0),
@@ -440,7 +438,6 @@ const char *FullCalibrationController::state_text() const {
 const char *FullCalibrationController::phase_text() const {
   switch (this->phase_) {
     case CalibrationPhase::TRACKING: return "tracking";
-    case CalibrationPhase::TUNE_AUTO_AE: return "optical_auto_ae";
     case CalibrationPhase::TUNE_MANUAL_BASELINE: return "optical_manual_baseline";
     case CalibrationPhase::TUNE_MANUAL_EXPOSURE: return "optical_exposure";
     case CalibrationPhase::TUNE_MANUAL_GAIN: return "optical_gain";
@@ -506,10 +503,8 @@ bool FullCalibrationController::begin_native_tracking_() {
 
 bool FullCalibrationController::begin_optical_tuning_(
     const TargetObservation &observation) {
-  // La qualite optique doit etre mesuree sur le motif lui-meme. L'ancienne
-  // marge de 35 % faisait dominer le fond de la scene dans P10/P90 et dans le
-  // diagnostic optique. Garder seulement une petite marge pour couvrir le bord
-  // externe sans diluer la cible.
+  // La qualite optique est mesuree directement sur le marqueur et son bord
+  // externe. Une petite marge suffit ; une grande ROI ferait dominer le fond.
   const float margin_x = std::max(4.0f, observation.width_px * 0.08f);
   const float margin_y = std::max(4.0f, observation.height_px * 0.08f);
   const int left = clamp_int(
@@ -535,62 +530,58 @@ bool FullCalibrationController::begin_optical_tuning_(
   this->tuning_roi_height_ = static_cast<uint16_t>(bottom - top);
 
   this->tuning_attempts_ = 0;
-  this->tuning_index_ = 0;
+  this->tuning_round_ = 0;
+  this->tuning_side_ = 0;
   this->best_optical_score_ = -1.0f;
 
-  // Le frame PRECISE qui vient de verrouiller la cible sert de baseline :
-  // aucun essai futur ne remplacera ce profil s'il est moins bon.
+  // L'image finale de mesure est toujours AEC=OFF / AGC=OFF. Tester les cinq
+  // niveaux AE automatiques puis les bornes 0/1200 et 0/30 consommait des
+  // captures sans information utile. On part maintenant d'un profil manuel
+  // plausible et on affine localement.
+  //
+  // Une calibration precedente fournit le meilleur centre de recherche.
+  // Lors d'une premiere calibration (ou si la camera etait encore en auto),
+  // les valeurs empiriques 400 / 7 donnent une bonne base sur l'OV5640.
   const CameraSettingsSnapshot baseline = this->settings_controller_->read();
-  if (baseline.available) {
-    this->current_ae_level_ = baseline.ae_level;
-    this->current_exposure_ = baseline.aec_value;
-    this->current_gain_ = baseline.agc_gain;
-    this->best_ae_level_ = baseline.ae_level;
-    this->best_exposure_ = baseline.aec_value;
-    this->best_gain_ = baseline.agc_gain;
-    this->best_optical_score_ =
-        this->evaluate_optical_score_(observation, true);
+  int seed_exposure = 400;
+  int seed_gain = 7;
+  int seed_ae_level = 1;
 
-    ESP_LOGI(TAG,
-             "Baseline optique PRECISE: AE=%d exp_ref=%d gain_ref=%d score=%.1f P10=%u P90=%u C=%u",
-             this->best_ae_level_, this->best_exposure_, this->best_gain_,
-             this->best_optical_score_,
-             static_cast<unsigned>(this->current_p10_luma_),
-             static_cast<unsigned>(this->current_p90_luma_),
-             static_cast<unsigned>(this->current_contrast_luma_));
+  if (baseline.available) {
+    seed_ae_level = clamp_int(baseline.ae_level, -2, 2);
+
+    if (!baseline.exposure_ctrl &&
+        baseline.aec_value >= 120 && baseline.aec_value <= 900) {
+      seed_exposure = baseline.aec_value;
+    }
+    if (!baseline.gain_ctrl &&
+        baseline.agc_gain >= 0 && baseline.agc_gain <= 16) {
+      seed_gain = baseline.agc_gain;
+    }
   }
 
-  this->phase_ = CalibrationPhase::TUNE_AUTO_AE;
+  this->best_ae_level_ = seed_ae_level;
+  this->best_exposure_ = seed_exposure;
+  this->best_gain_ = seed_gain;
+  this->current_ae_level_ = seed_ae_level;
+  this->current_exposure_ = seed_exposure;
+  this->current_gain_ = seed_gain;
+
+  this->phase_ = CalibrationPhase::TUNE_MANUAL_BASELINE;
 
   ESP_LOGI(TAG,
-           "Auto-reglage optique: ROI %ux%u @%u,%u, balayage AE puis verrouillage exposition/gain",
+           "Auto-reglage metrologique: ROI %ux%u @%u,%u, centre exp=%d gain=%d; "
+           "recherche exp +/-160/80/40/20 puis gain +/-4/2/1",
            static_cast<unsigned>(this->tuning_roi_width_),
            static_cast<unsigned>(this->tuning_roi_height_),
            static_cast<unsigned>(this->tuning_roi_x_),
-           static_cast<unsigned>(this->tuning_roi_y_));
+           static_cast<unsigned>(this->tuning_roi_y_),
+           seed_exposure, seed_gain);
 
-  return this->prepare_auto_ae_candidate_(0);
-}
-
-bool FullCalibrationController::prepare_auto_ae_candidate_(uint8_t index) {
-  if (index >= 5 || this->settings_controller_ == nullptr) return false;
-
-  std::string error;
-  const int ae_level = AUTO_AE_LEVELS[index];
-  if (!this->settings_controller_->set_exposure_ctrl(true, error) ||
-      !this->settings_controller_->set_gain_ctrl(true, error) ||
-      !this->settings_controller_->set_ae_level(ae_level, error)) {
-    ESP_LOGE(TAG, "Reglage auto AE impossible: %s", error.c_str());
+  if (!this->prepare_manual_candidate_(seed_exposure, seed_gain)) {
     return false;
   }
-
-  this->current_ae_level_ = ae_level;
-  const CameraSettingsSnapshot snapshot = this->settings_controller_->read();
-  if (snapshot.available) {
-    this->current_exposure_ = snapshot.aec_value;
-    this->current_gain_ = snapshot.agc_gain;
-  }
-  return true;
+  return this->request_next_capture_();
 }
 
 bool FullCalibrationController::prepare_manual_candidate_(int exposure, int gain) {
@@ -805,43 +796,12 @@ bool FullCalibrationController::handle_tuning_result_(
                               this->current_bright_percent_x100_) /
                100.0f);
 
-  if (this->phase_ == CalibrationPhase::TUNE_AUTO_AE) {
-    if (this->current_optical_score_ > this->best_optical_score_) {
-      this->best_optical_score_ = this->current_optical_score_;
-      this->best_ae_level_ = this->current_ae_level_;
-      this->best_exposure_ = this->current_exposure_;
-      this->best_gain_ = this->current_gain_;
-    }
-
-    this->tuning_index_++;
-    if (this->tuning_index_ < 5) {
-      if (!this->prepare_auto_ae_candidate_(this->tuning_index_)) return false;
-      return this->request_next_capture_();
-    }
-
-    // Les registres status.aec_value/agc_gain ne representent pas les valeurs
-    // instantanees choisies par l'OV5640 lorsque AEC/AGC sont actifs. Le
-    // balayage AE sert donc a comparer les images, mais la recherche manuelle
-    // exposition/gain est toujours executee sur toute la plage.
-    this->phase_ = CalibrationPhase::TUNE_MANUAL_BASELINE;
-    if (!this->prepare_manual_candidate_(
-            this->best_exposure_, this->best_gain_)) {
-      return false;
-    }
-    return this->request_next_capture_();
-  }
-
   if (this->phase_ == CalibrationPhase::TUNE_MANUAL_BASELINE) {
-    if (this->current_optical_score_ >= this->best_optical_score_) {
-      this->best_optical_score_ = this->current_optical_score_;
-      this->best_exposure_ = this->current_exposure_;
-      this->best_gain_ = this->current_gain_;
-    }
+    this->best_optical_score_ = this->current_optical_score_;
+    this->best_exposure_ = this->current_exposure_;
+    this->best_gain_ = this->current_gain_;
     this->tuning_round_ = 0;
-    // Premiere passe : atteindre explicitement les deux bornes 0/1200,
-    // puis resserrer autour du meilleur point aux tours suivants.
-    this->tuning_step_ = std::max(
-        this->best_exposure_, 1200 - this->best_exposure_);
+    this->tuning_step_ = 160;
     return this->start_manual_exposure_round_();
   }
 
@@ -914,19 +874,17 @@ bool FullCalibrationController::advance_manual_pair_(bool exposure_axis) {
 
   this->tuning_round_++;
   if (exposure_axis) {
-    if (this->tuning_round_ < 3) {
-      this->tuning_step_ = std::max(40, this->tuning_step_ / 2);
+    if (this->tuning_round_ < 4) {
+      this->tuning_step_ = std::max(20, this->tuning_step_ / 2);
       return this->start_manual_exposure_round_();
     }
     this->tuning_round_ = 0;
-    // Meme principe pour le gain : premiere paire aux bornes 0/30.
-    this->tuning_step_ = std::max(
-        this->best_gain_, 30 - this->best_gain_);
+    this->tuning_step_ = 4;
     return this->start_manual_gain_round_();
   }
 
-  if (this->tuning_round_ < 2) {
-    this->tuning_step_ = std::max(2, this->tuning_step_ / 2);
+  if (this->tuning_round_ < 3) {
+    this->tuning_step_ = std::max(1, this->tuning_step_ / 2);
     return this->start_manual_gain_round_();
   }
 
@@ -1178,7 +1136,6 @@ void FullCalibrationController::reset_run_() {
   this->last_sample_fy_px_ = 0.0f;
 
   this->tuning_attempts_ = 0;
-  this->tuning_index_ = 0;
   this->tuning_round_ = 0;
   this->tuning_side_ = 0;
   this->tuning_pair_base_ = 0;
