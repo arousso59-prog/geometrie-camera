@@ -98,7 +98,9 @@ TargetPatternMetrics::TargetPatternMetrics()
       max_residual_px(0.0f),
       homography{0.0f, 0.0f, 0.0f,
                  0.0f, 0.0f, 0.0f,
-                 0.0f, 0.0f, 1.0f} {}
+                 0.0f, 0.0f, 1.0f},
+      features(nullptr),
+      features_count(0) {}
 
 TargetPatternRefiner::TargetPatternRefiner() {}
 
@@ -115,7 +117,7 @@ bool TargetPatternRefiner::refine(
     return false;
   }
 
-  Feature *features = this->features_;
+  PatternFeature *features = this->features_;
   uint16_t feature_count = 0;
   const float segment_positions[2] = {0.33f, 0.67f};
 
@@ -134,7 +136,7 @@ bool TargetPatternRefiner::refine(
         const float u = static_cast<float>(column) / 7.0f;
         const float v =
             (static_cast<float>(row) + segment) / 7.0f;
-        Feature feature{};
+        PatternFeature feature{};
         if (this->find_transition_(
                 frame, candidate, u, v, true,
                 expected_sign, rotation_quarters, feature)) {
@@ -159,7 +161,7 @@ bool TargetPatternRefiner::refine(
         const float u =
             (static_cast<float>(column) + segment) / 7.0f;
         const float v = static_cast<float>(row) / 7.0f;
-        Feature feature{};
+        PatternFeature feature{};
         if (this->find_transition_(
                 frame, candidate, u, v, false,
                 expected_sign, rotation_quarters, feature)) {
@@ -170,6 +172,8 @@ bool TargetPatternRefiner::refine(
   }
 
   metrics.feature_count = feature_count;
+  metrics.features = this->features_;
+  metrics.features_count = feature_count;
   if (feature_count < MIN_FEATURES) {
     ESP_LOGD(TAG, "Pose V3 motif: seulement %u transitions valides",
              static_cast<unsigned>(feature_count));
@@ -325,7 +329,7 @@ bool TargetPatternRefiner::find_transition_(
     bool along_u,
     int expected_sign,
     uint8_t rotation_quarters,
-    Feature &feature) const {
+    PatternFeature &feature) const {
   const TargetPoint base =
       this->project_candidate_(candidate, observed_u, observed_v);
 
@@ -415,7 +419,7 @@ bool TargetPatternRefiner::find_transition_(
 }
 
 bool TargetPatternRefiner::fit_homography_(
-    Feature *features, uint16_t count,
+    PatternFeature *features, uint16_t count,
     float homography[9],
     uint16_t &inlier_count,
     float &rms_px,
@@ -438,7 +442,7 @@ bool TargetPatternRefiner::fit_homography_(
     std::memset(this->normal_matrix_, 0, sizeof(this->normal_matrix_));
 
     for (uint16_t i = 0; i < count; ++i) {
-      const Feature &f = features[i];
+      const PatternFeature &f = features[i];
       const float strength_weight =
           clampf(f.strength / 18.0f, 0.60f, 1.60f);
       const float weight = strength_weight * robust_weights[i];
@@ -517,7 +521,8 @@ bool TargetPatternRefiner::fit_homography_(
   inlier_count = 0;
   max_residual_px = 0.0f;
   for (uint16_t i = 0; i < count; ++i) {
-    if (features[i].residual <= inlier_limit) {
+    features[i].inlier = features[i].residual <= inlier_limit;
+    if (features[i].inlier) {
       sum_sq +=
           static_cast<double>(features[i].residual) *
           features[i].residual;
