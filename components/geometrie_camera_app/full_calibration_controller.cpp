@@ -578,10 +578,11 @@ bool FullCalibrationController::begin_optical_tuning_(
            static_cast<unsigned>(this->tuning_roi_y_),
            seed_exposure, seed_gain);
 
-  if (!this->prepare_manual_candidate_(seed_exposure, seed_gain)) {
-    return false;
-  }
-  return this->request_next_capture_();
+  // Ne pas demander la capture ici : le bloc DETECT qui vient de verrouiller
+  // PRECISE appelle request_next_capture_() juste apres le retour. Garder un
+  // seul proprietaire de la transition evite une double requete et un faux
+  // capture_request_failed lorsque capture_pending_ vient de passer a true.
+  return this->prepare_manual_candidate_(seed_exposure, seed_gain);
 }
 
 bool FullCalibrationController::prepare_manual_candidate_(int exposure, int gain) {
