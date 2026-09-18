@@ -65,7 +65,7 @@ La référence du contrat HTTP est :
 GET /api/wsdl
 ```
 
-Version actuelle : **26**.
+Version actuelle : **27**.
 
 ### Diagnostic lecture seule
 
@@ -145,16 +145,17 @@ Les modes supprimés ne doivent pas être réintroduits comme dépendances des t
 
 ## Recherche optique ciblée
 
-Le réglage n'utilise plus de valeur nominale supposée. Il part des valeurs réellement choisies par l'OV5640 en AEC/AGC automatique, les valide en manuel, puis ne cherche que très localement autour de ce point.
+La calibration ne balaie plus les cinq niveaux AE automatiques ni les bornes extrêmes d'exposition/gain.
 
-Après validation du verrouillage manuel :
+Le profil final restant en AEC=OFF / AGC=OFF, la recherche est centrée sur les paramètres réellement utilisés en mesure :
 
-- exposition : meilleur point ±10 ;
-- gain : meilleur point ±1 ;
-- contraste : 0, +1, -1, puis +2 uniquement si +1 progresse ;
-- luminosité : 0, -1, +1.
+- centre initial : dernier bon profil manuel si disponible, sinon exposition 400 / gain 7 ;
+- exposition : ±160, ±80, ±40, ±20 ;
+- gain : ±4, ±2, ±1 ;
+- 15 captures de réglage au maximum.
 
-Les images saturées, noires, sans contraste ou sans détection subpixel valide ont un score nul.
+Le score privilégie RMS faible, sigma faible et gradients horizontaux/verticaux forts et équilibrés.
+
 
 ## Optimisation optique V24
 
@@ -182,19 +183,27 @@ Le réglage optique ne suppose plus une exposition/gain nominale.
 6. Si la capture devient blanche/noire, perd la cible ou obtient un score nul, le verrouillage est refusé.
 7. L'ESP réactive alors AEC/AGC auto, attend trois images de récupération et réalise la calibration en mode auto.
 
-Si le verrouillage manuel est valide, l'affinage reste volontairement local : exposition ±10, gain ±1, puis contraste et luminosité.
+Si le verrouillage manuel est valide, l'affinage est volontairement local : exposition ±20 puis ±10, gain ±1, puis contraste et luminosité.
 
 
-## Optimisation finale caméra V26
+## Configuration figée V27
 
-Chaque candidat manuel est maintenant observé sur **2 images consécutives** avec exactement le même réglage.
+La partie caméra est figée sur la stratégie V25 validée expérimentalement :
 
-Un candidat est rejeté si l'une des deux images perd la cible ou ne fournit pas de raffinement subpixel valide. Sinon, le score instantané moyen est pénalisé par la dispersion entre les deux mesures de largeur et de hauteur :
+- PRECISE natif 800×600 ;
+- AEC/AGC automatiques pendant la stabilisation initiale ;
+- lecture des registres réels OV5640 ;
+- validation du verrouillage manuel ;
+- affinage local exposition/gain puis contraste/luminosité ;
+- retour automatique en AEC/AGC auto si le verrouillage manuel dégrade l'image.
 
-- `repW` : sigma inter-image de la largeur ;
-- `repH` : sigma inter-image de la hauteur ;
-- le plus mauvais des deux axes pilote la pénalité.
+La tentative V26 basée sur deux images par candidat a été abandonnée car elle a dégradé la répétabilité sur l'essai réel.
 
-Le but n'est plus de choisir l'image ponctuellement la plus flatteuse, mais le profil donnant la meilleure **répétabilité métrologique**. À qualité proche, la pénalité de gain déjà présente dans le score favorise naturellement le gain le plus faible.
+La méthode de mesure opérationnelle est également figée :
 
-Cette V26 est destinée à figer le réglage caméra. Si les essais sont meilleurs ou équivalents à la V25, aucune nouvelle modification caméra n'est prévue.
+- **V6.1** pour les dimensions et la pondération de distance ;
+- **stabilisation robuste sur 5 mesures** dans `MeasurementManager` ;
+- V5 et V6 restent calculées uniquement comme diagnostics comparatifs ;
+- la pose/homographie ne pilote jamais la distance principale.
+
+Cette combinaison constitue désormais la référence avant le travail spécifique sur yaw/pitch/roll.
