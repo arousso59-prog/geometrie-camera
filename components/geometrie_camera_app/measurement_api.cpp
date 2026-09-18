@@ -384,6 +384,8 @@ void MeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *request, int r
     json += measurement.edge_v4_used ? "true" : "false";
     json += ",\"edge_v5_used\":";
     json += measurement.edge_v5_used ? "true" : "false";
+    json += ",\"edge_v6_used\":";
+    json += measurement.edge_v6_used ? "true" : "false";
     json += ",\"apparent_width_px\":" + std::to_string(measurement.apparent_width_px);
     json += ",\"apparent_height_px\":" + std::to_string(measurement.apparent_height_px);
     json += ",\"apparent_width_sigma_px\":" + std::to_string(measurement.apparent_width_sigma_px);
@@ -428,6 +430,8 @@ void MeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *request, int r
     json += raw_measurement.edge_v4_used ? "true" : "false";
     json += ",\"edge_v5_used\":";
     json += raw_measurement.edge_v5_used ? "true" : "false";
+    json += ",\"edge_v6_used\":";
+    json += raw_measurement.edge_v6_used ? "true" : "false";
     json += ",\"apparent_width_px\":" + std::to_string(raw_measurement.apparent_width_px);
     json += ",\"apparent_height_px\":" + std::to_string(raw_measurement.apparent_height_px);
     json += ",\"apparent_width_sigma_px\":" + std::to_string(raw_measurement.apparent_width_sigma_px);
