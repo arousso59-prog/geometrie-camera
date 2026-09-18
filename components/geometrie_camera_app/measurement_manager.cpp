@@ -250,6 +250,8 @@ void MeasurementManager::compute_stabilized_measurement_() {
   float pose_z_values[STABILIZATION_WINDOW];
   float pose_error_values[STABILIZATION_WINDOW];
   uint8_t pose_count = 0;
+  uint8_t pose_v2_count = 0;
+  uint8_t pose_v1_count = 0;
 
   for (uint8_t i = 0; i < this->stabilization_count_; ++i) {
     const GeometryMeasurement &sample = this->stabilization_samples_[i];
@@ -272,6 +274,11 @@ void MeasurementManager::compute_stabilized_measurement_() {
       normal_z_values[pose_count] = sample.pose_normal_z;
       pose_z_values[pose_count] = sample.pose_z_mm;
       pose_error_values[pose_count] = sample.pose_scale_error_pct;
+      if (sample.pose_v2_used) {
+        pose_v2_count++;
+      } else if (sample.pose_v1_valid) {
+        pose_v1_count++;
+      }
       pose_count++;
     }
   }
@@ -331,6 +338,9 @@ void MeasurementManager::compute_stabilized_measurement_() {
       static_cast<uint8_t>((this->stabilization_count_ + 1U) / 2U);
   result.pose_valid = pose_count >= required_pose;
   if (result.pose_valid) {
+    result.pose_v2_used = pose_v2_count >= required_pose;
+    result.pose_v2_valid = pose_v2_count > 0;
+    result.pose_v1_valid = pose_v1_count > 0 || result.pose_v1_valid;
     float normal_x = robust_center(normal_x_values, pose_count);
     float normal_y = robust_center(normal_y_values, pose_count);
     float normal_z = robust_center(normal_z_values, pose_count);
