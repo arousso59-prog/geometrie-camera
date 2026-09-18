@@ -117,15 +117,36 @@ bool TargetSubpixelRefiner::refine(const GrayFrameView &frame,
   EdgeLine bottom;
   EdgeLine left;
 
-  if (!this->refine_edge_(frame, input.top_left, input.top_right, top) ||
-      !this->refine_edge_(frame, input.top_right, input.bottom_right, right) ||
-      !this->refine_edge_(frame, input.bottom_left, input.bottom_right, bottom) ||
-      !this->refine_edge_(frame, input.top_left, input.bottom_left, left)) {
+  TargetPoint target_center;
+  target_center.x = input.center_x;
+  target_center.y = input.center_y;
+
+  if (!this->refine_edge_(frame, input.top_left, input.top_right, target_center, top) ||
+      !this->refine_edge_(frame, input.top_right, input.bottom_right, target_center, right) ||
+      !this->refine_edge_(frame, input.bottom_left, input.bottom_right, target_center, bottom) ||
+      !this->refine_edge_(frame, input.top_left, input.bottom_left, target_center, left)) {
     return false;
   }
 
-  const float direct_width_px = this->opposite_edge_separation_(left, right);
-  const float direct_height_px = this->opposite_edge_separation_(top, bottom);
+  float direct_width_sigma_px = 0.0f;
+  float direct_height_sigma_px = 0.0f;
+  float direct_width_px =
+      this->robust_local_separation_(left, right, direct_width_sigma_px);
+  float direct_height_px =
+      this->robust_local_separation_(top, bottom, direct_height_sigma_px);
+
+  if (!std::isfinite(direct_width_px) || direct_width_px <= 0.0f) {
+    direct_width_px = this->opposite_edge_separation_(left, right);
+    direct_width_sigma_px =
+        std::sqrt(left.position_sigma * left.position_sigma +
+                  right.position_sigma * right.position_sigma);
+  }
+  if (!std::isfinite(direct_height_px) || direct_height_px <= 0.0f) {
+    direct_height_px = this->opposite_edge_separation_(top, bottom);
+    direct_height_sigma_px =
+        std::sqrt(top.position_sigma * top.position_sigma +
+                  bottom.position_sigma * bottom.position_sigma);
+  }
   if (!std::isfinite(direct_width_px) || !std::isfinite(direct_height_px) ||
       direct_width_px < MIN_EDGE_LENGTH_PX ||
       direct_height_px < MIN_EDGE_LENGTH_PX) {
@@ -162,12 +183,8 @@ bool TargetSubpixelRefiner::refine(const GrayFrameView &frame,
                  std::min(bottom.samples, left.samples));
     metrics->width_px = direct_width_px;
     metrics->height_px = direct_height_px;
-    metrics->width_sigma_px =
-        std::sqrt(left.position_sigma * left.position_sigma +
-                  right.position_sigma * right.position_sigma);
-    metrics->height_sigma_px =
-        std::sqrt(top.position_sigma * top.position_sigma +
-                  bottom.position_sigma * bottom.position_sigma);
+    metrics->width_sigma_px = direct_width_sigma_px;
+    metrics->height_sigma_px = direct_height_sigma_px;
     metrics->width_gradient =
         0.5f * (left.mean_gradient + right.mean_gradient);
     metrics->height_gradient =
@@ -176,7 +193,7 @@ bool TargetSubpixelRefiner::refine(const GrayFrameView &frame,
 
   ESP_LOGD(
       TAG,
-      "Subpixel V5 OK center=(%.3f,%.3f) corners=%.3fx%.3f edges=%.3fx%.3f "
+      "Subpixel V6 OK center=(%.3f,%.3f) corners=%.3fx%.3f edges=%.3fx%.3f "
       "rms=(%.3f,%.3f,%.3f,%.3f) grad=(%.1f,%.1f,%.1f,%.1f)",
       output.center_x, output.center_y, output.width, output.height,
       direct_width_px, direct_height_px,
@@ -189,6 +206,7 @@ bool TargetSubpixelRefiner::refine(const GrayFrameView &frame,
 bool TargetSubpixelRefiner::refine_edge_(const GrayFrameView &frame,
                                          const TargetPoint &start,
                                          const TargetPoint &end,
+                                         const TargetPoint &target_center,
                                          EdgeLine &line) const {
   const float vx = end.x - start.x;
   const float vy = end.y - start.y;
@@ -201,6 +219,22 @@ bool TargetSubpixelRefiner::refine_edge_(const GrayFrameView &frame,
   const float tangent_y = vy / length;
   const float normal_x = -tangent_y;
   const float normal_y = tangent_x;
+
+  // Le cadre exterieur du marqueur est noir. Determiner de quel cote de cette
+  // normale se trouve l'interieur permet de chercher uniquement la transition
+  // fond clair -> bord noir dans le bon sens et d'ignorer les transitions
+  // internes du motif qui ont la polarite opposee.
+  const float mid_x = 0.5f * (start.x + end.x);
+  const float mid_y = 0.5f * (start.y + end.y);
+  const float inward_projection =
+      (target_center.x - mid_x) * normal_x +
+      (target_center.y - mid_y) * normal_y;
+  if (!std::isfinite(inward_projection) ||
+      std::fabs(inward_projection) < EPSILON) {
+    return false;
+  }
+  const float expected_gradient_sign =
+      inward_projection > 0.0f ? -1.0f : 1.0f;
 
   float s_values[EDGE_SAMPLE_COUNT];
   float offsets[EDGE_SAMPLE_COUNT];
@@ -221,6 +255,7 @@ bool TargetSubpixelRefiner::refine_edge_(const GrayFrameView &frame,
     if (!this->find_edge_offset_(frame, anchor_x, anchor_y,
                                  tangent_x, tangent_y,
                                  normal_x, normal_y,
+                                 expected_gradient_sign,
                                  offset, gradient)) {
       continue;
     }
@@ -325,6 +360,18 @@ bool TargetSubpixelRefiner::refine_edge_(const GrayFrameView &frame,
     return false;
   }
 
+  line.local_sample_count = 0;
+  for (uint8_t i = 0;
+       i < final_count && line.local_sample_count < EDGE_SAMPLE_CAPACITY;
+       ++i) {
+    const uint8_t out = line.local_sample_count++;
+    line.local_fraction[out] = final_s[i] / length;
+    line.local_x[out] =
+        start.x + tangent_x * final_s[i] + normal_x * final_offsets[i];
+    line.local_y[out] =
+        start.y + tangent_y * final_s[i] + normal_y * final_offsets[i];
+  }
+
   return line.rms <= MAX_LINE_RMS_PX &&
          std::isfinite(line.mean_gradient) &&
          line.mean_gradient >= MIN_EDGE_GRADIENT;
@@ -337,6 +384,7 @@ bool TargetSubpixelRefiner::find_edge_offset_(const GrayFrameView &frame,
                                               float tangent_y,
                                               float normal_x,
                                               float normal_y,
+                                              float expected_gradient_sign,
                                               float &offset,
                                               float &gradient) const {
   float strengths[NORMAL_PROFILE_COUNT];
@@ -389,8 +437,11 @@ bool TargetSubpixelRefiner::find_edge_offset_(const GrayFrameView &frame,
       continue;
     }
 
-    const float strength =
-        std::fabs(after_sum / valid_pairs - before_sum / valid_pairs);
+    const float signed_gradient =
+        after_sum / valid_pairs - before_sum / valid_pairs;
+    const float oriented_strength =
+        signed_gradient * expected_gradient_sign;
+    const float strength = std::max(0.0f, oriented_strength);
     strengths[index] = strength;
     if (strength > best_strength) {
       best_strength = strength;
@@ -561,6 +612,100 @@ float TargetSubpixelRefiner::opposite_edge_separation_(
   const float distance_to_b =
       std::fabs(delta_x * normal_b_x + delta_y * normal_b_y);
   return 0.5f * (distance_to_a + distance_to_b);
+}
+
+float TargetSubpixelRefiner::robust_local_separation_(
+    const EdgeLine &a, const EdgeLine &b, float &sigma_px) const {
+  sigma_px = 0.0f;
+  if (a.local_sample_count < 7 || b.local_sample_count < 7) {
+    return NAN;
+  }
+
+  float b_dx = b.dx;
+  float b_dy = b.dy;
+  if (a.dx * b_dx + a.dy * b_dy < 0.0f) {
+    b_dx = -b_dx;
+    b_dy = -b_dy;
+  }
+
+  float tangent_x = a.dx + b_dx;
+  float tangent_y = a.dy + b_dy;
+  const float tangent_norm =
+      std::sqrt(tangent_x * tangent_x + tangent_y * tangent_y);
+  if (!std::isfinite(tangent_norm) || tangent_norm < EPSILON) {
+    return NAN;
+  }
+  tangent_x /= tangent_norm;
+  tangent_y /= tangent_norm;
+  const float normal_x = -tangent_y;
+  const float normal_y = tangent_x;
+
+  float separations[EDGE_SAMPLE_CAPACITY];
+  uint8_t count = 0;
+
+  for (uint8_t i = 0;
+       i < a.local_sample_count && count < EDGE_SAMPLE_CAPACITY;
+       ++i) {
+    int best_j = -1;
+    float best_fraction_delta = 1.0f;
+    for (uint8_t j = 0; j < b.local_sample_count; ++j) {
+      const float delta =
+          std::fabs(a.local_fraction[i] - b.local_fraction[j]);
+      if (delta < best_fraction_delta) {
+        best_fraction_delta = delta;
+        best_j = j;
+      }
+    }
+
+    if (best_j < 0 || best_fraction_delta > 0.04f) {
+      continue;
+    }
+
+    const float dx = b.local_x[best_j] - a.local_x[i];
+    const float dy = b.local_y[best_j] - a.local_y[i];
+    const float separation = std::fabs(dx * normal_x + dy * normal_y);
+    if (std::isfinite(separation) && separation >= MIN_EDGE_LENGTH_PX) {
+      separations[count++] = separation;
+    }
+  }
+
+  if (count < 7) {
+    return NAN;
+  }
+
+  const float median = median_copy(separations, count);
+  float deviations[EDGE_SAMPLE_CAPACITY];
+  for (uint8_t i = 0; i < count; ++i) {
+    deviations[i] = std::fabs(separations[i] - median);
+  }
+  const float mad = median_copy(deviations, count);
+  const float robust_sigma = 1.4826f * mad;
+  const float gate = std::max(0.30f, 3.5f * robust_sigma);
+
+  double sum = 0.0;
+  double sum_sq = 0.0;
+  uint8_t inliers = 0;
+  for (uint8_t i = 0; i < count; ++i) {
+    if (std::fabs(separations[i] - median) > gate) {
+      continue;
+    }
+    sum += separations[i];
+    sum_sq += static_cast<double>(separations[i]) * separations[i];
+    ++inliers;
+  }
+
+  if (inliers < 5) {
+    return NAN;
+  }
+
+  const float mean = static_cast<float>(sum / inliers);
+  const double variance =
+      std::max(0.0, sum_sq / inliers -
+                        static_cast<double>(mean) * mean);
+  const float standard_error =
+      static_cast<float>(std::sqrt(variance / inliers));
+  sigma_px = std::max(0.010f, standard_error);
+  return mean;
 }
 
 bool TargetSubpixelRefiner::bilinear_sample_(const GrayFrameView &frame,
