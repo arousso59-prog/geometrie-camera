@@ -6,7 +6,6 @@
 namespace esphome {
 namespace geometrie_camera_app {
 
-class ImageSharpnessEvaluator;
 class JpegDiagnostic;
 class JpegFilteredDiagnostic;
 class MeasurementManager;
@@ -17,8 +16,7 @@ enum class ContinuousMeasurementState : uint8_t {
   STOPPED,
   REQUEST_CAPTURE,
   WAIT_CAPTURE,
-  SHARPNESS,
-  FILTER,
+  DECODE,
   DETECT,
   COMPUTE,
   WAIT_INTERVAL,
@@ -28,8 +26,7 @@ enum class ContinuousMeasurementState : uint8_t {
 class ContinuousMeasurementController {
  public:
   ContinuousMeasurementController(JpegDiagnostic *jpeg_source,
-                                  ImageSharpnessEvaluator *sharpness_evaluator,
-                                  JpegFilteredDiagnostic *filtered_source,
+                                  JpegFilteredDiagnostic *decoded_source,
                                   TargetDetectionService *detection_service,
                                   MeasurementManager *measurement_manager,
                                   TargetTrackingController *tracking_controller);
@@ -38,12 +35,9 @@ class ContinuousMeasurementController {
   void stop();
   void loop();
   bool set_interval_ms(uint32_t interval_ms);
-  bool set_pipeline_options(bool sharpness_enabled, bool artifact_correction_enabled);
 
   bool running() const;
   uint32_t interval_ms() const;
-  bool sharpness_enabled() const;
-  bool artifact_correction_enabled() const;
   ContinuousMeasurementState state() const;
   const char *state_text() const;
   uint32_t cycle_count() const;
@@ -60,22 +54,9 @@ class ContinuousMeasurementController {
   const std::string &last_error() const;
 
   uint32_t last_capture_ms() const;
-  uint32_t last_sharpness_ms() const;
-  uint32_t last_filter_ms() const;
-  uint32_t last_filter_decode_ms() const;
-  uint32_t last_filter_correction_ms() const;
+  uint32_t last_decode_ms() const;
   uint32_t last_detect_ms() const;
   uint32_t last_compute_ms() const;
-  uint32_t last_sharpness_score_x100() const;
-  uint32_t sharpness_reference_score_x100() const;
-  bool last_sharpness_ok() const;
-  uint8_t last_capture_retry_count() const;
-  uint32_t blur_retry_count() const;
-  bool sharpness_roi_valid() const;
-  uint16_t sharpness_roi_x() const;
-  uint16_t sharpness_roi_y() const;
-  uint16_t sharpness_roi_width() const;
-  uint16_t sharpness_roi_height() const;
 
  private:
   void begin_cycle_();
@@ -84,22 +65,16 @@ class ContinuousMeasurementController {
   void fail_cycle_(const char *error);
   void stop_with_error_(const char *error);
   bool request_capture_();
-  bool sharpness_is_too_low_(uint32_t score) const;
-  void update_sharpness_reference_(uint32_t score);
-  void update_sharpness_roi_from_target_();
   void reset_local_tracking_after_viewport_change_();
 
   JpegDiagnostic *jpeg_source_;
-  ImageSharpnessEvaluator *sharpness_evaluator_;
-  JpegFilteredDiagnostic *filtered_source_;
+  JpegFilteredDiagnostic *decoded_source_;
   TargetDetectionService *detection_service_;
   MeasurementManager *measurement_manager_;
   TargetTrackingController *tracking_controller_;
 
   bool running_;
   uint32_t interval_ms_;
-  bool sharpness_enabled_;
-  bool artifact_correction_enabled_;
   ContinuousMeasurementState state_;
   uint32_t cycle_count_;
   uint32_t target_found_count_;
@@ -110,6 +85,7 @@ class ContinuousMeasurementController {
   uint32_t capture_count_before_request_;
   bool last_cycle_target_found_;
   bool last_cycle_measurement_valid_;
+
   std::string current_cycle_viewport_mode_;
   uint16_t current_cycle_viewport_x_;
   uint16_t current_cycle_viewport_y_;
@@ -123,32 +99,13 @@ class ContinuousMeasurementController {
   std::string last_error_;
 
   uint32_t current_capture_ms_;
-  uint32_t current_sharpness_ms_;
-  uint32_t current_filter_ms_;
-  uint32_t current_filter_decode_ms_;
-  uint32_t current_filter_correction_ms_;
+  uint32_t current_decode_ms_;
   uint32_t current_detect_ms_;
   uint32_t current_compute_ms_;
-
   uint32_t last_capture_ms_;
-  uint32_t last_sharpness_ms_;
-  uint32_t last_filter_ms_;
-  uint32_t last_filter_decode_ms_;
-  uint32_t last_filter_correction_ms_;
+  uint32_t last_decode_ms_;
   uint32_t last_detect_ms_;
   uint32_t last_compute_ms_;
-
-  uint32_t last_sharpness_score_x100_;
-  uint32_t sharpness_reference_score_x100_;
-  bool last_sharpness_ok_;
-  uint8_t last_capture_retry_count_;
-  uint32_t blur_retry_count_;
-
-  bool sharpness_roi_valid_;
-  uint16_t sharpness_roi_x_;
-  uint16_t sharpness_roi_y_;
-  uint16_t sharpness_roi_width_;
-  uint16_t sharpness_roi_height_;
 };
 
 }  // namespace geometrie_camera_app
