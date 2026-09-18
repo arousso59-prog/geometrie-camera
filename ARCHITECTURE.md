@@ -182,7 +182,7 @@ cycle_ms
 
 ## API
 
-Contrat : `GET /api/wsdl`, version **30**.
+Contrat : `GET /api/wsdl`, version **32**.
 
 ### Lecture seule
 
@@ -301,3 +301,16 @@ Le mode continu utilise desormais un pipeline d'acquisition sans modifier le cap
 - la calibration conserve toujours la strategie de frame strictement fraiche.
 
 Cette optimisation ne modifie pas la chaine camera V25, V6.1-robust5 ni Pose V3.
+
+
+## Pose V4 V32
+
+La Pose V4 consomme directement la vue persistante des correspondances subpixel produites par `TargetPatternRefiner`. Aucun tableau supplémentaire de plusieurs kilo-octets n'est ajouté sur la pile FreeRTOS.
+
+Pipeline d'orientation :
+
+`transitions 7x7 subpixel → rejet robuste V3 → correspondances inliers directes → optimisation SO(3) V4`
+
+La translation X/Y/Z est exclusivement celle de V6.1-robust5. V4 ne peut donc modifier ni distance, ni X/Y/Z, ni calibration caméra.
+
+Cette V32 constitue la dernière optimisation logicielle avant augmentation de la base physique de la cible.
