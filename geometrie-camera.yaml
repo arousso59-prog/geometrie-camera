@@ -28,23 +28,29 @@ preferences:
   flash_write_interval: 5s
 
 logger:
-  # Logs d'exploitation : conserver les transitions utiles sans noyer la
-  # console avec tous les etats ESPHome republies chaque seconde.
-  level: INFO
+  # Au repos : uniquement warnings/erreurs. Les publications periodiques des
+  # entites ESPHome restent disponibles via API/web mais sont totalement
+  # retirees du journal.
+  level: WARN
   logs:
-    sensor: WARN
-    text_sensor: WARN
-    number: WARN
+    sensor: NONE
+    text_sensor: NONE
+    number: NONE
+    button: NONE
+
+    # Details internes tres verbeux : silencieux sauf anomalie.
     jpeg_diag: WARN
     jpeg_filter_diag: WARN
     target_candidate_finder: WARN
     target_corner_refiner: WARN
+    target_subpixel_refiner: WARN
     target_code_decoder: WARN
     target_detector: WARN
     image_sharpness: WARN
 
-    # Ces trois blocs restent visibles : ils permettent de suivre une
-    # calibration et le zoom automatique sans remettre le logger en DEBUG.
+    # Journal de travail : visible uniquement quand une operation est
+    # reellement en cours (mesure continue, calibration, zoom/recentrage).
+    continuous_measurement: INFO
     full_calibration: INFO
     target_tracking: INFO
     camera_viewport: INFO
