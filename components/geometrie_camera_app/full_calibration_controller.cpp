@@ -594,7 +594,7 @@ bool FullCalibrationController::begin_optical_tuning_(
 
   ESP_LOGI(TAG,
            "Auto-reglage metrologique: ROI %ux%u @%u,%u, centre exp=%d gain=%d; "
-           "recherche exp +/-160/80/40/20, gain +/-4/2/1, contraste puis luminosite",
+           "recherche exp +/-80/40/20/10, gain +/-2/1, contraste puis luminosite",
            static_cast<unsigned>(this->tuning_roi_width_),
            static_cast<unsigned>(this->tuning_roi_height_),
            static_cast<unsigned>(this->tuning_roi_x_),
@@ -732,6 +732,17 @@ float FullCalibrationController::evaluate_optical_score_(
                                  this->current_p10_luma_)
           : 0;
 
+  // Rejet dur des images manifestement inutilisables. Le ROI contient le
+  // marqueur noir et son fond blanc : si P10 est deja presque blanc, ou P90
+  // presque noir, la cible ne peut plus porter une information subpixel
+  // exploitable. Cela empeche surtout un candidat "tout blanc" de devenir un
+  // point de recentrage de la recherche.
+  if (this->current_p10_luma_ >= 235 ||
+      this->current_p90_luma_ <= 20 ||
+      this->current_contrast_luma_ < 12) {
+    return 0.0f;
+  }
+
   // Un candidat sans detection subpixel fiable ne peut pas devenir le
   // meilleur profil optique.
   if (!target_found || !observation.subpixel_refined) return 0.0f;
@@ -844,7 +855,7 @@ bool FullCalibrationController::handle_tuning_result_(
     this->best_exposure_ = this->current_exposure_;
     this->best_gain_ = this->current_gain_;
     this->tuning_round_ = 0;
-    this->tuning_step_ = 160;
+    this->tuning_step_ = 80;
     return this->start_manual_exposure_round_();
   }
 
@@ -954,15 +965,15 @@ bool FullCalibrationController::advance_manual_pair_(bool exposure_axis) {
   this->tuning_round_++;
   if (exposure_axis) {
     if (this->tuning_round_ < 4) {
-      this->tuning_step_ = std::max(20, this->tuning_step_ / 2);
+      this->tuning_step_ = std::max(10, this->tuning_step_ / 2);
       return this->start_manual_exposure_round_();
     }
     this->tuning_round_ = 0;
-    this->tuning_step_ = 4;
+    this->tuning_step_ = 2;
     return this->start_manual_gain_round_();
   }
 
-  if (this->tuning_round_ < 3) {
+  if (this->tuning_round_ < 2) {
     this->tuning_step_ = std::max(1, this->tuning_step_ / 2);
     return this->start_manual_gain_round_();
   }
