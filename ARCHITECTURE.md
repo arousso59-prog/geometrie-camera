@@ -182,7 +182,7 @@ cycle_ms
 
 ## API
 
-Contrat : `GET /api/wsdl`, version **28**.
+Contrat : `GET /api/wsdl`, version **29**.
 
 ### Lecture seule
 
@@ -267,3 +267,24 @@ La pose V2 est isolée de cette chaîne :
 - repli V1 si V2 n'est pas valide.
 
 La stabilisation temporelle utilise la normale 3D pour yaw/pitch et une statistique périodique modulo 180 degrés pour roll.
+
+
+## Pose V3 V29
+
+La chaîne de distance reste indépendante et figée.
+
+La chaîne d'orientation V3 est :
+
+`frame gris → candidat reconnu → bords subpixel → transitions internes 7×7 → homographie robuste canonique → rotation V3`
+
+Le raffineur de motif :
+
+- recherche les transitions attendues entre cellules adjacentes de couleurs différentes ;
+- échantillonne deux positions par segment de frontière ;
+- recherche le gradient sur ±2,5 px avec pas de 0,25 px ;
+- affine le maximum par interpolation parabolique ;
+- ajuste les 8 paramètres d'homographie par moindres carrés pondérés ;
+- effectue trois itérations robustes de type Huber ;
+- publie nombre de transitions, nombre d'inliers, RMS et résidu maximal.
+
+La pose V3 utilise ensuite la translation X/Y/Z V6.1 figée et optimise uniquement SO(3). V2 et V1 restent disponibles comme replis et diagnostics.
