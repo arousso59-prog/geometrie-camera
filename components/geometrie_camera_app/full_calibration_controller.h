@@ -108,7 +108,7 @@ class FullCalibrationController {
     SAMPLING,
   };
 
-  static constexpr uint8_t OPTICAL_TUNING_MAX_ATTEMPTS = 20;
+  static constexpr uint8_t OPTICAL_TUNING_MAX_ATTEMPTS = 18;
 
   bool begin_native_tracking_();
   bool begin_optical_tuning_(const TargetObservation &observation);
