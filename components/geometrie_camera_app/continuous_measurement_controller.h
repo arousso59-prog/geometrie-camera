@@ -57,6 +57,7 @@ class ContinuousMeasurementController {
   uint32_t last_decode_ms() const;
   uint32_t last_detect_ms() const;
   uint32_t last_compute_ms() const;
+  bool last_capture_pipelined() const;
 
  private:
   void begin_cycle_();
@@ -106,6 +107,9 @@ class ContinuousMeasurementController {
   uint32_t last_decode_ms_;
   uint32_t last_detect_ms_;
   uint32_t last_compute_ms_;
+  bool force_fresh_capture_;
+  bool current_capture_pipelined_;
+  bool last_capture_pipelined_;
 };
 
 }  // namespace geometrie_camera_app
