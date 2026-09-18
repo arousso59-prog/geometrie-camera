@@ -1245,10 +1245,18 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
       observation.subpixel_width_px >= 4.0f &&
       observation.subpixel_height_px >= 4.0f &&
       distortion_is_zero(calibration);
-  if (use_v4_edges) {
-    width_px = observation.subpixel_width_px;
-    height_px = observation.subpixel_height_px;
+
+  // Mode haute precision permanent : V6.1 est la methode officielle figee.
+  // Si le raffinement subpixel n'est pas disponible sur cette frame, NE PAS
+  // retomber silencieusement sur les coins. Une mesure moins precise polluerait
+  // la fenetre robust5 et explique les pics observes dans "V6.1 retenue"
+  // alors que V5/V6 restent stables. La frame est simplement rejetee.
+  if (!use_v4_edges) {
+    return result;
   }
+
+  width_px = observation.subpixel_width_px;
+  height_px = observation.subpixel_height_px;
 
   if (!std::isfinite(width_px) || !std::isfinite(height_px) ||
       width_px < 4.0f || height_px < 4.0f) {
@@ -1618,7 +1626,11 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
             observation.pattern_features_count,
             pose_v4_basis, pose_v4_score)) {
       result.pose_v4_valid = true;
-      result.pose_v4_used = true;
+      // V32 a montre que la cible 50x50 mm ne fournit pas assez de levier
+      // perspectif pour rendre V4 plus repetitive que V3. On conserve V4
+      // comme diagnostic de limite metrologique, sans l'utiliser pour la pose
+      // officielle tant que la cible physique n'est pas agrandie.
+      result.pose_v4_used = false;
       result.pose_v4_rms_px = pose_v4_score.rms_px;
       result.pose_v4_max_residual_px =
           pose_v4_score.max_residual_px;
@@ -1633,14 +1645,6 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
           result.pose_v4_pitch_deg,
           result.pose_v4_roll_deg);
 
-      result.yaw_deg = result.pose_v4_yaw_deg;
-      result.pitch_deg = result.pose_v4_pitch_deg;
-      result.roll_deg = result.pose_v4_roll_deg;
-      result.pose_normal_x = pose_v4_basis.normal.x;
-      result.pose_normal_y = pose_v4_basis.normal.y;
-      result.pose_normal_z = pose_v4_basis.normal.z;
-      result.pose_valid = true;
-      return result;
     }
   }
 
