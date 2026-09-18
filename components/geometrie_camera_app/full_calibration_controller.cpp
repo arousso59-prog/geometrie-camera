@@ -928,17 +928,16 @@ void FullCalibrationController::update_running_stats_() {
 
   float fx_values[MAX_SAMPLE_COUNT];
   float fy_values[MAX_SAMPLE_COUNT];
+  float fx_sorted[MAX_SAMPLE_COUNT];
+  float fy_sorted[MAX_SAMPLE_COUNT];
+
   for (uint8_t i = 0; i < this->valid_samples_; ++i) {
     fx_values[i] = this->samples_[i].fx_px;
     fy_values[i] = this->samples_[i].fy_px;
-  }
-
-  float fx_sorted[MAX_SAMPLE_COUNT];
-  float fy_sorted[MAX_SAMPLE_COUNT];
-  for (uint8_t i = 0; i < this->valid_samples_; ++i) {
     fx_sorted[i] = fx_values[i];
     fy_sorted[i] = fy_values[i];
   }
+
   const float median_fx = median_float(fx_sorted, this->valid_samples_);
   const float median_fy = median_float(fy_sorted, this->valid_samples_);
 
@@ -948,12 +947,10 @@ void FullCalibrationController::update_running_stats_() {
     fx_dev[i] = std::fabs(fx_values[i] - median_fx);
     fy_dev[i] = std::fabs(fy_values[i] - median_fy);
   }
+
   const float mad_fx = median_float(fx_dev, this->valid_samples_);
   const float mad_fy = median_float(fy_dev, this->valid_samples_);
 
-  // 1,4826 transforme le MAD en estimation sigma pour un bruit gaussien.
-  // Ajouter un plancher relatif de 0,05 % pour ne pas sur-rejeter une serie
-  // exceptionnellement stable ou quantifiee.
   const float gate_fx = std::max(
       std::fabs(median_fx) * 0.0005f,
       3.5f * 1.4826f * mad_fx);
@@ -961,27 +958,29 @@ void FullCalibrationController::update_running_stats_() {
       std::fabs(median_fy) * 0.0005f,
       3.5f * 1.4826f * mad_fy);
 
+  bool inlier_mask[MAX_SAMPLE_COUNT] = {};
   double sum_fx = 0.0;
   double sum_fy = 0.0;
   uint8_t inlier_count = 0;
+
   for (uint8_t i = 0; i < this->valid_samples_; ++i) {
-    if (use_all_samples ||
-        (std::fabs(fx_values[i] - median_fx) <= gate_fx &&
-         std::fabs(fy_values[i] - median_fy) <= gate_fy)) {
+    const bool inlier =
+        std::fabs(fx_values[i] - median_fx) <= gate_fx &&
+        std::fabs(fy_values[i] - median_fy) <= gate_fy;
+    inlier_mask[i] = inlier;
+    if (inlier) {
       sum_fx += fx_values[i];
       sum_fy += fy_values[i];
       ++inlier_count;
     }
   }
 
-  // Securite pour les toutes petites series.
-  bool use_all_samples = false;
   if (inlier_count < 3) {
-    use_all_samples = true;
     sum_fx = 0.0;
     sum_fy = 0.0;
     inlier_count = this->valid_samples_;
     for (uint8_t i = 0; i < this->valid_samples_; ++i) {
+      inlier_mask[i] = true;
       sum_fx += fx_values[i];
       sum_fy += fy_values[i];
     }
@@ -994,17 +993,14 @@ void FullCalibrationController::update_running_stats_() {
   double variance_fy = 0.0;
   uint8_t variance_count = 0;
   for (uint8_t i = 0; i < this->valid_samples_; ++i) {
-    if (std::fabs(fx_values[i] - median_fx) <= gate_fx &&
-        std::fabs(fy_values[i] - median_fy) <= gate_fy) {
-      const double dx = fx_values[i] - this->mean_fx_px_;
-      const double dy = fy_values[i] - this->mean_fy_px_;
-      variance_fx += dx * dx;
-      variance_fy += dy * dy;
-      ++variance_count;
-    }
+    if (!inlier_mask[i]) continue;
+    const double dx = fx_values[i] - this->mean_fx_px_;
+    const double dy = fy_values[i] - this->mean_fy_px_;
+    variance_fx += dx * dx;
+    variance_fy += dy * dy;
+    ++variance_count;
   }
 
-  if (variance_count == 0) variance_count = inlier_count;
   this->stddev_fx_px_ = static_cast<float>(
       std::sqrt(variance_fx / std::max<uint8_t>(1, variance_count)));
   this->stddev_fy_px_ = static_cast<float>(
