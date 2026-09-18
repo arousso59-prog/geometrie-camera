@@ -502,8 +502,12 @@ bool FullCalibrationController::begin_native_tracking_() {
 
 bool FullCalibrationController::begin_optical_tuning_(
     const TargetObservation &observation) {
-  const float margin_x = std::max(16.0f, observation.width_px * 0.35f);
-  const float margin_y = std::max(16.0f, observation.height_px * 0.35f);
+  // La qualite optique doit etre mesuree sur le motif lui-meme. L'ancienne
+  // marge de 35 % faisait dominer le fond de la scene dans P10/P90 et dans le
+  // score de nettete. Garder seulement une petite marge pour couvrir le bord
+  // externe sans diluer la cible.
+  const float margin_x = std::max(4.0f, observation.width_px * 0.08f);
+  const float margin_y = std::max(4.0f, observation.height_px * 0.08f);
   const int left = clamp_int(
       static_cast<int>(std::floor(observation.center_x_px -
                                   observation.width_px * 0.5f - margin_x)),
@@ -537,21 +541,19 @@ bool FullCalibrationController::begin_optical_tuning_(
     this->current_ae_level_ = baseline.ae_level;
     this->current_exposure_ = baseline.aec_value;
     this->current_gain_ = baseline.agc_gain;
-    const float baseline_score =
+    this->best_ae_level_ = baseline.ae_level;
+    this->best_exposure_ = baseline.aec_value;
+    this->best_gain_ = baseline.agc_gain;
+    this->best_optical_score_ =
         this->evaluate_optical_score_(observation, true);
-    if (baseline_score > 0.0f) {
-      this->best_optical_score_ = baseline_score;
-      this->best_ae_level_ = baseline.ae_level;
-      this->best_exposure_ = baseline.aec_value;
-      this->best_gain_ = baseline.agc_gain;
-      ESP_LOGI(TAG,
-               "Baseline optique PRECISE conservee: AE=%d exp=%d gain=%d score=%.1f P10=%u P90=%u C=%u",
-               this->best_ae_level_, this->best_exposure_, this->best_gain_,
-               this->best_optical_score_,
-               static_cast<unsigned>(this->current_p10_luma_),
-               static_cast<unsigned>(this->current_p90_luma_),
-               static_cast<unsigned>(this->current_contrast_luma_));
-    }
+
+    ESP_LOGI(TAG,
+             "Baseline optique PRECISE: AE=%d exp_ref=%d gain_ref=%d score=%.1f P10=%u P90=%u C=%u",
+             this->best_ae_level_, this->best_exposure_, this->best_gain_,
+             this->best_optical_score_,
+             static_cast<unsigned>(this->current_p10_luma_),
+             static_cast<unsigned>(this->current_p90_luma_),
+             static_cast<unsigned>(this->current_contrast_luma_));
   }
 
   this->phase_ = CalibrationPhase::TUNE_AUTO_AE;
@@ -642,16 +644,6 @@ float FullCalibrationController::evaluate_optical_score_(
     return 0.0f;
   }
 
-  // Eliminer les images franchement sous-exposees ou sans contraste utile.
-  // Le motif noir/blanc doit fournir un blanc haut, un noir bas et une large
-  // dynamique. Ces seuils sont volontairement larges pour rester robustes aux
-  // conditions de lumiere de la piece.
-  if (this->current_p90_luma_ < 140U ||
-      this->current_contrast_luma_ < 80U ||
-      this->current_p10_luma_ > 140U) {
-    return 0.0f;
-  }
-
   const float quality_factor =
       target_found ? (0.55f + 0.45f * std::max(0.0f, std::min(1.0f, observation.quality)))
                    : 0.20f;
@@ -661,18 +653,21 @@ float FullCalibrationController::evaluate_optical_score_(
           ? 1.0f / (1.0f + 1.5f * rms)
           : 0.45f;
 
+  // Score continu : une image sombre doit pouvoir etre comparee avec une
+  // image plus claire afin que la recherche manuelle puisse sortir d'un mauvais
+  // point de depart. Pas de seuil binaire ici.
   const float white_factor = std::max(
-      0.10f, std::min(1.0f,
-                      (static_cast<float>(this->current_p90_luma_) - 140.0f) / 70.0f));
+      0.05f, std::min(1.15f,
+                      static_cast<float>(this->current_p90_luma_) / 210.0f));
   const float black_factor = std::max(
       0.10f, std::min(1.0f,
-                      (140.0f - static_cast<float>(this->current_p10_luma_)) / 80.0f));
+                      (220.0f - static_cast<float>(this->current_p10_luma_)) / 180.0f));
   const float contrast_factor = std::max(
-      0.10f, std::min(1.0f,
-                      (static_cast<float>(this->current_contrast_luma_) - 80.0f) / 110.0f));
+      0.05f, std::min(1.20f,
+                      static_cast<float>(this->current_contrast_luma_) / 175.0f));
 
   // Le gain peut artificiellement faire monter un score de nettete en
-  // ajoutant du bruit. La penalite est volontairement plus forte qu'avant.
+  // ajoutant du bruit. A qualite geometrique comparable, favoriser le gain bas.
   const float gain_factor =
       1.0f / (1.0f + 0.025f * static_cast<float>(std::max(0, this->current_gain_)));
 
@@ -727,11 +722,10 @@ bool FullCalibrationController::handle_tuning_result_(
       return this->request_next_capture_();
     }
 
-    if (this->best_optical_score_ <= 0.0f) {
-      ESP_LOGE(TAG, "Aucun profil optique valide pendant le balayage AE");
-      return false;
-    }
-
+    // Les registres status.aec_value/agc_gain ne representent pas les valeurs
+    // instantanees choisies par l'OV5640 lorsque AEC/AGC sont actifs. Le
+    // balayage AE sert donc a comparer les images, mais la recherche manuelle
+    // exposition/gain est toujours executee sur toute la plage.
     this->phase_ = CalibrationPhase::TUNE_MANUAL_BASELINE;
     if (!this->prepare_manual_candidate_(
             this->best_exposure_, this->best_gain_)) {
