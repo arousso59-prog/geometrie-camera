@@ -183,6 +183,8 @@ void ContinuousMeasurementApiHandler::send_snapshot_(
 
     json += ",\"timing\":{";
     json += "\"capture_ms\":" + std::to_string(capture_ms);
+    json += ",\"capture_pipelined\":";
+    json += this->controller_->last_capture_pipelined() ? "true" : "false";
     json += ",\"decode_ms\":" + std::to_string(decode_ms);
     json += ",\"detect_ms\":" + std::to_string(detect_ms);
     json += ",\"compute_ms\":" + std::to_string(compute_ms);
