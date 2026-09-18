@@ -22,6 +22,18 @@ struct ImageLine {
   float dy;
 };
 
+struct PatternFeature {
+  PatternFeature();
+
+  float u;
+  float v;
+  float x;
+  float y;
+  float strength;
+  float residual;
+  bool inlier;
+};
+
 struct CameraCalibration {
   CameraCalibration();
 
@@ -113,6 +125,11 @@ struct TargetObservation {
   float pattern_max_residual_px;
   float pattern_homography[9];
 
+  // Vue non possedante vers les points subpixel persistants du
+  // TargetPatternRefiner. Valide jusqu'a la detection suivante.
+  const PatternFeature *pattern_features;
+  uint16_t pattern_features_count;
+
   ImagePoint top_left_px;
   ImagePoint top_right_px;
   ImagePoint bottom_right_px;
@@ -130,6 +147,8 @@ struct GeometryMeasurement {
   bool pose_v2_used;
   bool pose_v3_valid;
   bool pose_v3_used;
+  bool pose_v4_valid;
+  bool pose_v4_used;
   bool edge_v4_used;
   bool edge_v5_used;
   bool edge_v6_used;
@@ -193,6 +212,13 @@ struct GeometryMeasurement {
   float pose_v3_fit_rms_px;
   uint16_t pose_v3_feature_count;
   uint16_t pose_v3_inlier_count;
+  float pose_v4_yaw_deg;
+  float pose_v4_pitch_deg;
+  float pose_v4_roll_deg;
+  float pose_v4_rms_px;
+  float pose_v4_max_residual_px;
+  uint16_t pose_v4_feature_count;
+  uint16_t pose_v4_inlier_count;
   float pose_normal_x;
   float pose_normal_y;
   float pose_normal_z;
