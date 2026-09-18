@@ -11,7 +11,6 @@ namespace esphome {
 namespace geometrie_camera_app {
 
 class ContinuousMeasurementController;
-class ImageSharpnessEvaluator;
 class JpegDiagnostic;
 class JpegFilteredDiagnostic;
 class MeasurementManager;
@@ -35,7 +34,6 @@ class FullCalibrationController {
   static constexpr uint8_t MAX_SAMPLE_COUNT = 20;
 
   FullCalibrationController(JpegDiagnostic *jpeg_source,
-                            ImageSharpnessEvaluator *sharpness_evaluator,
                             CameraSettingsController *settings_controller,
                             JpegFilteredDiagnostic *filtered_source,
                             TargetDetectionService *detection_service,
@@ -79,7 +77,6 @@ class FullCalibrationController {
   int current_exposure() const;
   int current_gain() const;
   float current_optical_score() const;
-  uint32_t current_sharpness_x100() const;
   float current_detection_quality() const;
   float current_subpixel_rms_px() const;
   uint32_t current_mean_luma_x100() const;
@@ -129,7 +126,6 @@ class FullCalibrationController {
   void reset_run_();
 
   JpegDiagnostic *jpeg_source_;
-  ImageSharpnessEvaluator *sharpness_evaluator_;
   CameraSettingsController *settings_controller_;
   JpegFilteredDiagnostic *filtered_source_;
   TargetDetectionService *detection_service_;
@@ -176,7 +172,6 @@ class FullCalibrationController {
   int current_exposure_;
   int current_gain_;
   float current_optical_score_;
-  uint32_t current_sharpness_x100_;
   float current_detection_quality_;
   float current_subpixel_rms_px_;
   uint32_t current_mean_luma_x100_;
@@ -197,8 +192,6 @@ class FullCalibrationController {
   float previous_target_size_mm_;
   CameraCalibration previous_calibration_;
   bool previous_config_saved_;
-  bool previous_tracking_enabled_;
-  bool tracking_setting_saved_;
   CameraSettingsSnapshot previous_camera_settings_;
   bool previous_camera_settings_saved_;
 };
