@@ -24,6 +24,24 @@ struct TargetSubpixelMetrics {
   float height_sigma_px;
   float width_gradient;
   float height_gradient;
+
+  float v5_width_px;
+  float v5_height_px;
+  float v5_width_sigma_px;
+  float v5_height_sigma_px;
+  float v6_width_px;
+  float v6_height_px;
+  float v6_width_sigma_px;
+  float v6_height_sigma_px;
+
+  float top_rms_px;
+  float right_rms_px;
+  float bottom_rms_px;
+  float left_rms_px;
+  float top_gradient;
+  float right_gradient;
+  float bottom_gradient;
+  float left_gradient;
 };
 
 class TargetSubpixelRefiner {
