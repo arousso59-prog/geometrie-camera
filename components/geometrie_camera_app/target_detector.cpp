@@ -66,7 +66,7 @@ TargetObservation TargetDetector::detect(const GrayFrameView &frame) {
       const TargetObservation refined_observation =
           this->code_decoder_.decode(frame, refined_candidate);
       ESP_LOGD(TAG,
-               "V5.7 candidate[%u] coarse=%.4f refined=%.4f refined_valid=%s",
+               "V6.1 candidate[%u] coarse=%.4f refined=%.4f refined_valid=%s",
                static_cast<unsigned>(index), coarse_observation.quality,
                refined_observation.quality, refined_observation.valid ? "YES" : "NO");
 
