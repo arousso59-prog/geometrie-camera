@@ -83,8 +83,6 @@ class FullCalibrationController {
   float current_subpixel_rms_px() const;
   float current_width_gradient() const;
   float current_height_gradient() const;
-  float current_repeat_width_sigma_px() const;
-  float current_repeat_height_sigma_px() const;
   uint32_t current_mean_luma_x100() const;
   uint32_t current_dark_percent_x100() const;
   uint32_t current_bright_percent_x100() const;
@@ -112,9 +110,8 @@ class FullCalibrationController {
     SAMPLING,
   };
 
-  static constexpr uint8_t OPTICAL_TUNING_MAX_ATTEMPTS = 28;
+  static constexpr uint8_t OPTICAL_TUNING_MAX_ATTEMPTS = 19;
   static constexpr uint8_t AUTO_SETTLE_FRAMES = 4;
-  static constexpr uint8_t CANDIDATE_REPEAT_FRAMES = 2;
   static constexpr uint8_t AUTO_RECOVERY_FRAMES = 3;
 
   bool begin_native_tracking_();
@@ -124,10 +121,6 @@ class FullCalibrationController {
   bool prepare_postprocess_candidate_(int brightness, int contrast);
   bool handle_tuning_result_(const TargetObservation &observation, bool target_found);
   float evaluate_optical_score_(const TargetObservation &observation, bool target_found);
-  bool accumulate_candidate_result_(const TargetObservation &observation,
-                                    bool target_found,
-                                    float raw_score);
-  void reset_candidate_accumulator_();
   bool start_manual_exposure_round_();
   bool start_manual_gain_round_();
   bool start_contrast_tuning_();
@@ -200,8 +193,6 @@ class FullCalibrationController {
   float current_subpixel_rms_px_;
   float current_width_gradient_;
   float current_height_gradient_;
-  float current_repeat_width_sigma_px_;
-  float current_repeat_height_sigma_px_;
   uint32_t current_mean_luma_x100_;
   uint32_t current_dark_percent_x100_;
   uint32_t current_bright_percent_x100_;
@@ -215,15 +206,6 @@ class FullCalibrationController {
   int best_contrast_;
   float best_optical_score_;
   bool auto_fallback_;
-
-  uint8_t candidate_repeat_count_;
-  uint8_t candidate_valid_count_;
-  float candidate_score_sum_;
-  float candidate_width_sum_;
-  float candidate_height_sum_;
-  float candidate_width_sq_sum_;
-  float candidate_height_sq_sum_;
-
   uint16_t tuning_roi_x_;
   uint16_t tuning_roi_y_;
   uint16_t tuning_roi_width_;
