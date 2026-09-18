@@ -18,6 +18,8 @@ struct TargetSubpixelMetrics {
   float max_rms_px;
   float mean_gradient;
   uint8_t min_edge_samples;
+  float width_px;
+  float height_px;
 };
 
 class TargetSubpixelRefiner {
@@ -47,6 +49,8 @@ class TargetSubpixelRefiner {
   bool find_edge_offset_(const GrayFrameView &frame,
                          float anchor_x,
                          float anchor_y,
+                         float tangent_x,
+                         float tangent_y,
                          float normal_x,
                          float normal_y,
                          float &offset,
@@ -66,6 +70,8 @@ class TargetSubpixelRefiner {
   bool intersect_(const EdgeLine &a,
                   const EdgeLine &b,
                   TargetPoint &point) const;
+  float opposite_edge_separation_(const EdgeLine &a,
+                                  const EdgeLine &b) const;
 
   bool bilinear_sample_(const GrayFrameView &frame,
                         float x,
