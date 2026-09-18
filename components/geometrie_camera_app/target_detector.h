@@ -1,6 +1,7 @@
 #pragma once
 
 #include "target_candidate_finder.h"
+#include "target_board_model.h"
 #include "target_code_decoder.h"
 #include "target_corner_refiner.h"
 #include "target_pattern_refiner.h"
@@ -28,6 +29,13 @@ class TargetDetector {
   TargetSubpixelRefiner subpixel_refiner_;
   TargetCodeDecoder code_decoder_;
   TargetCandidateSet candidates_;
+
+  static constexpr uint16_t MAX_MARKER_PATTERN_FEATURES = 128;
+  static constexpr uint16_t MAX_BOARD_PATTERN_FEATURES = 384;
+  TargetObservation marker_best_[3];
+  PatternFeature marker_features_[3][MAX_MARKER_PATTERN_FEATURES];
+  uint16_t marker_feature_counts_[3];
+  PatternFeature board_features_[MAX_BOARD_PATTERN_FEATURES];
 
   TargetObservation last_valid_observation_;
   uint8_t consecutive_misses_;
