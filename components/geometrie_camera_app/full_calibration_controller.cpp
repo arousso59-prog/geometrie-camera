@@ -102,6 +102,8 @@ FullCalibrationController::FullCalibrationController(
       current_optical_score_(0.0f),
       current_detection_quality_(0.0f),
       current_subpixel_rms_px_(0.0f),
+      current_width_gradient_(0.0f),
+      current_height_gradient_(0.0f),
       current_mean_luma_x100_(0),
       current_dark_percent_x100_(0),
       current_bright_percent_x100_(0),
@@ -472,6 +474,8 @@ int FullCalibrationController::current_gain() const { return this->current_gain_
 float FullCalibrationController::current_optical_score() const { return this->current_optical_score_; }
 float FullCalibrationController::current_detection_quality() const { return this->current_detection_quality_; }
 float FullCalibrationController::current_subpixel_rms_px() const { return this->current_subpixel_rms_px_; }
+float FullCalibrationController::current_width_gradient() const { return this->current_width_gradient_; }
+float FullCalibrationController::current_height_gradient() const { return this->current_height_gradient_; }
 uint32_t FullCalibrationController::current_mean_luma_x100() const { return this->current_mean_luma_x100_; }
 uint32_t FullCalibrationController::current_dark_percent_x100() const { return this->current_dark_percent_x100_; }
 uint32_t FullCalibrationController::current_bright_percent_x100() const { return this->current_bright_percent_x100_; }
@@ -616,6 +620,14 @@ float FullCalibrationController::evaluate_optical_score_(
       target_found && observation.subpixel_refined
           ? observation.subpixel_rms_px
           : 2.0f;
+  this->current_width_gradient_ =
+      target_found && observation.subpixel_refined
+          ? observation.subpixel_width_gradient
+          : 0.0f;
+  this->current_height_gradient_ =
+      target_found && observation.subpixel_refined
+          ? observation.subpixel_height_gradient
+          : 0.0f;
   this->current_mean_luma_x100_ = 0;
   this->current_dark_percent_x100_ = 0;
   this->current_bright_percent_x100_ = 0;
@@ -1179,6 +1191,8 @@ void FullCalibrationController::reset_run_() {
   this->current_optical_score_ = 0.0f;
   this->current_detection_quality_ = 0.0f;
   this->current_subpixel_rms_px_ = 0.0f;
+  this->current_width_gradient_ = 0.0f;
+  this->current_height_gradient_ = 0.0f;
   this->current_mean_luma_x100_ = 0;
   this->current_dark_percent_x100_ = 0;
   this->current_bright_percent_x100_ = 0;
