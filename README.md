@@ -65,7 +65,7 @@ La référence du contrat HTTP est :
 GET /api/wsdl
 ```
 
-Version actuelle : **33**.
+Version actuelle : **34**.
 
 ### Diagnostic lecture seule
 
@@ -80,7 +80,7 @@ GET /target/preview.bmp
 ### Calibration
 
 ```text
-GET /calibration/full/start?distance_mm=<mm>&target_size_mm=<mm>&samples=<3..20>&force=<0|1>
+GET /calibration/full/start?distance_mm=<mm>&samples=<3..20>&force=<0|1>
 GET /calibration/full/status
 GET /calibration/full/preview.bmp
 GET /calibration/full/cancel
@@ -90,7 +90,7 @@ GET /calibration/full/cancel
 
 ```text
 GET /measurement/config
-GET /measurement/config/set?target_size_mm=<mm>
+GET /measurement/config/set    # distorsion uniquement ; géométrie R1 fixe
 GET /measurement/compute
 GET /measurement/status
 ```
@@ -329,3 +329,29 @@ Deux correctifs de fiabilite sont ajoutes :
 2. **Haute precision stricte** : une frame PRECISE sans raffinement subpixel V6.1 n'est plus convertie en mesure par repli sur les coins. Elle est rejetee. Cela evite de polluer robust5 avec des tailles de coins fortement dispersees alors que V5/V6 restent stables.
 
 La Pose V4 directe reste calculee et exposee en diagnostic, mais n'est plus publiee comme pose officielle avec la cible 50x50 mm. La Pose V3 redevient la methode officielle, V4 servant a mesurer la limite logicielle avant passage a une cible plus grande.
+
+
+## Cible définitive R1 V34 — 250 × 100 mm
+
+La cible 50 × 50 mm seule est abandonnée. À partir de V34, le firmware ne mesure et ne calibre qu'avec la cible **R1** :
+
+- plaque physique : **250 × 100 mm** ;
+- cadre de référence métrologique : **240 × 90 mm** ;
+- marqueur A : 40 × 40 mm ;
+- marqueur B : 50 × 50 mm, motif historique conservé au centre ;
+- marqueur C : 40 × 40 mm ;
+- A, B et C possèdent trois codes 7×7 distincts et une position physique fixe.
+
+La détection fonctionne en deux niveaux :
+
+1. chaque carré est décodé comme A, B ou C avec son orientation ;
+2. les correspondances subpixel des marqueurs reconnus sont réunies dans le repère global du cadre 240 × 90 mm ;
+3. une homographie robuste globale fournit le centre, les quatre coins et les dimensions apparentes de la cible R1 ;
+4. deux marqueurs suffisent pour continuer le tracking SEARCH → PRECISE ;
+5. **A+B+C sont obligatoires** pour la calibration et toute mesure haute précision.
+
+La taille de cible n'est plus un paramètre utilisateur. Le seul paramètre géométrique demandé à la calibration est la distance physique caméra → centre de la cible.
+
+Les calculs de distance utilisent désormais séparément **240 mm en largeur** et **90 mm en hauteur**. Les calculs de pose utilisent le même rectangle physique : l'ancien modèle carré 50 × 50 mm n'est plus utilisé comme cible globale.
+
+V34 corrige également le remappage ROI → repère capteur : coins, dimensions V5/V6/V6.1, droites subpixel, homographie et correspondances du motif sont maintenant tous exprimés dans le même repère 2560 × 1920 avant les calculs de pose.
