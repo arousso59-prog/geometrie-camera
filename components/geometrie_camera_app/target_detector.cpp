@@ -127,6 +127,40 @@ TargetObservation TargetDetector::detect(const GrayFrameView &frame) {
                   subpixel_metrics.width_gradient;
               candidate_best.subpixel_height_gradient =
                   subpixel_metrics.height_gradient;
+
+              candidate_best.subpixel_v5_width_px =
+                  subpixel_metrics.v5_width_px;
+              candidate_best.subpixel_v5_height_px =
+                  subpixel_metrics.v5_height_px;
+              candidate_best.subpixel_v5_width_sigma_px =
+                  subpixel_metrics.v5_width_sigma_px;
+              candidate_best.subpixel_v5_height_sigma_px =
+                  subpixel_metrics.v5_height_sigma_px;
+              candidate_best.subpixel_v6_width_px =
+                  subpixel_metrics.v6_width_px;
+              candidate_best.subpixel_v6_height_px =
+                  subpixel_metrics.v6_height_px;
+              candidate_best.subpixel_v6_width_sigma_px =
+                  subpixel_metrics.v6_width_sigma_px;
+              candidate_best.subpixel_v6_height_sigma_px =
+                  subpixel_metrics.v6_height_sigma_px;
+
+              candidate_best.subpixel_top_rms_px =
+                  subpixel_metrics.top_rms_px;
+              candidate_best.subpixel_right_rms_px =
+                  subpixel_metrics.right_rms_px;
+              candidate_best.subpixel_bottom_rms_px =
+                  subpixel_metrics.bottom_rms_px;
+              candidate_best.subpixel_left_rms_px =
+                  subpixel_metrics.left_rms_px;
+              candidate_best.subpixel_top_gradient =
+                  subpixel_metrics.top_gradient;
+              candidate_best.subpixel_right_gradient =
+                  subpixel_metrics.right_gradient;
+              candidate_best.subpixel_bottom_gradient =
+                  subpixel_metrics.bottom_gradient;
+              candidate_best.subpixel_left_gradient =
+                  subpixel_metrics.left_gradient;
             }
           }
         }
