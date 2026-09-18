@@ -424,10 +424,12 @@ void canonical_lines(const TargetObservation &observation,
 
 float pose_edge_weight(float rms_px, float gradient) {
   const float bounded_rms =
-      std::max(0.02f, std::min(0.60f, rms_px));
-  const float rms_weight = 1.0f / (bounded_rms * bounded_rms);
+      std::max(0.0f, std::min(0.60f, rms_px));
+  // Poids volontairement doux : aucun bord ne doit pouvoir ecraser les trois
+  // autres, meme si son RMS instantane est exceptionnellement faible.
+  const float rms_weight = 1.0f / (1.0f + 3.0f * bounded_rms);
   const float gradient_weight =
-      std::max(0.60f, std::min(1.80f, gradient / 25.0f));
+      std::max(0.75f, std::min(1.35f, gradient / 30.0f));
   return rms_weight * gradient_weight;
 }
 
@@ -546,7 +548,8 @@ bool refine_pose_v2(
         PoseBasis best_basis = current;
         PoseV2Score best_score = current_score;
 
-        for (int sign : {-1, 1}) {
+        static const int SIGNS[2] = {-1, 1};
+        for (int sign : SIGNS) {
           PoseBasis candidate = rotate_basis_camera_axis(
               current, axis, static_cast<float>(sign) * step_rad);
           if (candidate.normal.z <= POSE_V2_MIN_NORMAL_Z) continue;
@@ -1174,6 +1177,7 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
   PoseBasis pose_v2_basis;
   PoseV2Score pose_v2_score{};
   if (observation.subpixel_refined &&
+      distortion_is_zero(calibration) &&
       refine_pose_v2(
           pose_v1_basis, fixed_translation,
           this->target_size_mm_, calibration,
