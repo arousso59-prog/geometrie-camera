@@ -225,7 +225,6 @@ void FullCalibrationApiHandler::send_status_(
   json += ",\"current_exposure\":" + std::to_string(this->controller_->current_exposure());
   json += ",\"current_gain\":" + std::to_string(this->controller_->current_gain());
   json += ",\"current_score\":" + std::to_string(this->controller_->current_optical_score());
-  json += ",\"sharpness_x100\":" + std::to_string(this->controller_->current_sharpness_x100());
   json += ",\"detection_quality\":" + std::to_string(this->controller_->current_detection_quality());
   json += ",\"subpixel_rms_px\":" + std::to_string(this->controller_->current_subpixel_rms_px());
   json += ",\"mean_luma_x100\":" + std::to_string(this->controller_->current_mean_luma_x100());
