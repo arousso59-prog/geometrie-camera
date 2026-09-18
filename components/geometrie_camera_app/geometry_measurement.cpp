@@ -12,6 +12,10 @@ constexpr float MIN_VECTOR_NORM = 1.0e-6f;
 constexpr float MAX_POSE_SCALE_ERROR_PCT = 25.0f;
 constexpr float DISTANCE_BLEND_START_RATIO = 0.03f;
 constexpr float DISTANCE_BLEND_FULL_RATIO = 0.15f;
+constexpr float POSE_V2_MAX_LINE_RMS_PX = 1.20f;
+constexpr float POSE_V2_MAX_CORNER_RMS_PX = 2.50f;
+constexpr float POSE_V2_MIN_NORMAL_Z = 0.05f;
+constexpr float POSE_V2_CORNER_COST_WEIGHT = 0.10f;
 
 struct Vec3 {
   float x;
@@ -268,6 +272,351 @@ Vec3 inverse_intrinsics_column(float hx, float hy, float hz,
       (hy - calibration.cy_px * hz) / calibration.fy_px,
       hz,
   };
+}
+
+struct PoseBasis {
+  Vec3 right;
+  Vec3 down;
+  Vec3 normal;
+};
+
+struct PoseV2Score {
+  bool valid;
+  float objective;
+  float line_rms_px;
+  float corner_rms_px;
+};
+
+bool normalize_basis(PoseBasis &basis) {
+  if (!normalize(basis.right)) return false;
+
+  basis.down = subtract(
+      basis.down, scale(basis.right, dot(basis.down, basis.right)));
+  if (!normalize(basis.down)) return false;
+
+  basis.normal = cross(basis.right, basis.down);
+  if (!normalize(basis.normal)) return false;
+
+  // Conserver un repere direct et une normale qui regarde dans le meme
+  // demi-espace que la decomposition homographique d'origine.
+  basis.down = cross(basis.normal, basis.right);
+  return normalize(basis.down);
+}
+
+Vec3 rotate_camera_axis(const Vec3 &value, uint8_t axis, float angle_rad) {
+  const float cs = std::cos(angle_rad);
+  const float sn = std::sin(angle_rad);
+  if (axis == 0) {
+    return {value.x,
+            cs * value.y - sn * value.z,
+            sn * value.y + cs * value.z};
+  }
+  if (axis == 1) {
+    return {cs * value.x + sn * value.z,
+            value.y,
+            -sn * value.x + cs * value.z};
+  }
+  return {cs * value.x - sn * value.y,
+          sn * value.x + cs * value.y,
+          value.z};
+}
+
+PoseBasis rotate_basis_camera_axis(
+    const PoseBasis &basis, uint8_t axis, float angle_rad) {
+  PoseBasis rotated;
+  rotated.right = rotate_camera_axis(basis.right, axis, angle_rad);
+  rotated.down = rotate_camera_axis(basis.down, axis, angle_rad);
+  rotated.normal = rotate_camera_axis(basis.normal, axis, angle_rad);
+  normalize_basis(rotated);
+  return rotated;
+}
+
+bool project_target_point(const Vec3 &local,
+                          const PoseBasis &basis,
+                          const Vec3 &translation,
+                          const CameraCalibration &calibration,
+                          ImagePoint &image) {
+  const Vec3 camera = {
+      translation.x +
+          basis.right.x * local.x +
+          basis.down.x * local.y +
+          basis.normal.x * local.z,
+      translation.y +
+          basis.right.y * local.x +
+          basis.down.y * local.y +
+          basis.normal.y * local.z,
+      translation.z +
+          basis.right.z * local.x +
+          basis.down.z * local.y +
+          basis.normal.z * local.z,
+  };
+
+  if (!std::isfinite(camera.x) || !std::isfinite(camera.y) ||
+      !std::isfinite(camera.z) || camera.z <= 1.0f) {
+    return false;
+  }
+
+  image.x = calibration.fx_px * camera.x / camera.z +
+            calibration.cx_px;
+  image.y = calibration.fy_px * camera.y / camera.z +
+            calibration.cy_px;
+  return std::isfinite(image.x) && std::isfinite(image.y);
+}
+
+float point_line_distance(const ImagePoint &point, const ImageLine &line) {
+  const float norm_dir =
+      std::sqrt(line.dx * line.dx + line.dy * line.dy);
+  if (!line.valid || !std::isfinite(norm_dir) || norm_dir < 1.0e-6f) {
+    return NAN;
+  }
+
+  const float dx = line.dx / norm_dir;
+  const float dy = line.dy / norm_dir;
+  const float nx = -dy;
+  const float ny = dx;
+  return std::fabs(
+      (point.x - line.point.x) * nx +
+      (point.y - line.point.y) * ny);
+}
+
+void canonical_lines(const TargetObservation &observation,
+                     ImageLine (&lines)[4],
+                     float (&rms)[4],
+                     float (&gradient)[4]) {
+  const ImageLine observed_lines[4] = {
+      observation.subpixel_top_line,
+      observation.subpixel_right_line,
+      observation.subpixel_bottom_line,
+      observation.subpixel_left_line,
+  };
+  const float observed_rms[4] = {
+      observation.subpixel_top_rms_px,
+      observation.subpixel_right_rms_px,
+      observation.subpixel_bottom_rms_px,
+      observation.subpixel_left_rms_px,
+  };
+  const float observed_gradient[4] = {
+      observation.subpixel_top_gradient,
+      observation.subpixel_right_gradient,
+      observation.subpixel_bottom_gradient,
+      observation.subpixel_left_gradient,
+  };
+
+  int rotation =
+      static_cast<int>(std::lround(observation.rotation_deg / 90.0f));
+  rotation %= 4;
+  if (rotation < 0) rotation += 4;
+
+  static const uint8_t MAP[4][4] = {
+      {0, 1, 2, 3},
+      {1, 2, 3, 0},
+      {2, 3, 0, 1},
+      {3, 0, 1, 2},
+  };
+
+  for (uint8_t i = 0; i < 4; ++i) {
+    const uint8_t source = MAP[rotation][i];
+    lines[i] = observed_lines[source];
+    rms[i] = observed_rms[source];
+    gradient[i] = observed_gradient[source];
+  }
+}
+
+float pose_edge_weight(float rms_px, float gradient) {
+  const float bounded_rms =
+      std::max(0.02f, std::min(0.60f, rms_px));
+  const float rms_weight = 1.0f / (bounded_rms * bounded_rms);
+  const float gradient_weight =
+      std::max(0.60f, std::min(1.80f, gradient / 25.0f));
+  return rms_weight * gradient_weight;
+}
+
+PoseV2Score evaluate_pose_v2(
+    const PoseBasis &basis,
+    const Vec3 &translation,
+    float target_size_mm,
+    const CameraCalibration &calibration,
+    const ImagePoint (&observed_corners)[4],
+    const ImageLine (&observed_lines)[4],
+    const float (&edge_rms)[4],
+    const float (&edge_gradient)[4]) {
+  PoseV2Score score{};
+  score.valid = false;
+  score.objective = 1.0e30f;
+  score.line_rms_px = 0.0f;
+  score.corner_rms_px = 0.0f;
+
+  if (basis.normal.z <= POSE_V2_MIN_NORMAL_Z) {
+    return score;
+  }
+
+  const float half = 0.5f * target_size_mm;
+  const Vec3 model[4] = {
+      {-half, -half, 0.0f},
+      { half, -half, 0.0f},
+      { half,  half, 0.0f},
+      {-half,  half, 0.0f},
+  };
+
+  ImagePoint projected[4];
+  for (uint8_t i = 0; i < 4; ++i) {
+    if (!project_target_point(
+            model[i], basis, translation, calibration, projected[i])) {
+      return score;
+    }
+  }
+
+  double line_sq = 0.0;
+  double line_weight_sum = 0.0;
+  for (uint8_t edge = 0; edge < 4; ++edge) {
+    if (!observed_lines[edge].valid) return score;
+
+    const uint8_t next = static_cast<uint8_t>((edge + 1U) & 0x03U);
+    const float d0 =
+        point_line_distance(projected[edge], observed_lines[edge]);
+    const float d1 =
+        point_line_distance(projected[next], observed_lines[edge]);
+    if (!std::isfinite(d0) || !std::isfinite(d1)) return score;
+
+    const float weight =
+        pose_edge_weight(edge_rms[edge], edge_gradient[edge]);
+    line_sq += static_cast<double>(weight) *
+               (static_cast<double>(d0) * d0 +
+                static_cast<double>(d1) * d1);
+    line_weight_sum += 2.0 * weight;
+  }
+
+  if (line_weight_sum <= 0.0) return score;
+  score.line_rms_px =
+      static_cast<float>(std::sqrt(line_sq / line_weight_sum));
+
+  double corner_sq = 0.0;
+  for (uint8_t i = 0; i < 4; ++i) {
+    const float dx = projected[i].x - observed_corners[i].x;
+    const float dy = projected[i].y - observed_corners[i].y;
+    corner_sq += static_cast<double>(dx) * dx +
+                 static_cast<double>(dy) * dy;
+  }
+  score.corner_rms_px =
+      static_cast<float>(std::sqrt(corner_sq / 4.0));
+
+  score.objective =
+      score.line_rms_px * score.line_rms_px +
+      POSE_V2_CORNER_COST_WEIGHT *
+          score.corner_rms_px * score.corner_rms_px;
+  score.valid = std::isfinite(score.objective);
+  return score;
+}
+
+bool refine_pose_v2(
+    const PoseBasis &initial_basis,
+    const Vec3 &translation,
+    float target_size_mm,
+    const CameraCalibration &calibration,
+    const ImagePoint (&observed_corners)[4],
+    const TargetObservation &observation,
+    PoseBasis &refined_basis,
+    PoseV2Score &refined_score) {
+  ImageLine lines[4];
+  float edge_rms[4];
+  float edge_gradient[4];
+  canonical_lines(observation, lines, edge_rms, edge_gradient);
+  for (const auto &line : lines) {
+    if (!line.valid) return false;
+  }
+
+  PoseBasis current = initial_basis;
+  if (!normalize_basis(current)) return false;
+  PoseV2Score current_score = evaluate_pose_v2(
+      current, translation, target_size_mm, calibration,
+      observed_corners, lines, edge_rms, edge_gradient);
+  if (!current_score.valid) return false;
+
+  // Recherche multi-echelle sur SO(3). Les pas finaux descendent sous la
+  // minute d'arc ; le calcul reste tres leger face aux ~300 ms de detection.
+  constexpr float STEPS_DEG[] = {
+      3.0f, 0.75f, 0.20f, 0.05f, 0.01f, 0.003f,
+  };
+
+  for (float step_deg : STEPS_DEG) {
+    const float step_rad = step_deg / RAD_TO_DEG_F;
+    for (uint8_t pass = 0; pass < 6; ++pass) {
+      bool improved = false;
+      for (uint8_t axis = 0; axis < 3; ++axis) {
+        PoseBasis best_basis = current;
+        PoseV2Score best_score = current_score;
+
+        for (int sign : {-1, 1}) {
+          PoseBasis candidate = rotate_basis_camera_axis(
+              current, axis, static_cast<float>(sign) * step_rad);
+          if (candidate.normal.z <= POSE_V2_MIN_NORMAL_Z) continue;
+
+          const PoseV2Score candidate_score = evaluate_pose_v2(
+              candidate, translation, target_size_mm, calibration,
+              observed_corners, lines, edge_rms, edge_gradient);
+          if (candidate_score.valid &&
+              candidate_score.objective + 1.0e-8f <
+                  best_score.objective) {
+            best_basis = candidate;
+            best_score = candidate_score;
+          }
+        }
+
+        if (best_score.objective + 1.0e-8f <
+            current_score.objective) {
+          current = best_basis;
+          current_score = best_score;
+          improved = true;
+        }
+      }
+
+      if (!improved) break;
+    }
+  }
+
+  if (!current_score.valid ||
+      current_score.line_rms_px > POSE_V2_MAX_LINE_RMS_PX ||
+      current_score.corner_rms_px > POSE_V2_MAX_CORNER_RMS_PX) {
+    return false;
+  }
+
+  refined_basis = current;
+  refined_score = current_score;
+  return true;
+}
+
+void pose_angles_from_basis(
+    const PoseBasis &basis,
+    float &yaw_deg,
+    float &pitch_deg,
+    float &roll_deg) {
+  yaw_deg =
+      std::atan2(basis.normal.x, basis.normal.z) * RAD_TO_DEG_F;
+  pitch_deg =
+      std::atan2(
+          -basis.normal.y,
+          std::sqrt(
+              basis.normal.x * basis.normal.x +
+              basis.normal.z * basis.normal.z)) *
+      RAD_TO_DEG_F;
+
+  Vec3 reference_right = {
+      basis.normal.z, 0.0f, -basis.normal.x};
+  if (!normalize(reference_right)) {
+    reference_right = {1.0f, 0.0f, 0.0f};
+  }
+
+  Vec3 reference_down =
+      cross(basis.normal, reference_right);
+  if (!normalize(reference_down)) {
+    reference_down = {0.0f, 1.0f, 0.0f};
+  }
+
+  roll_deg = normalize_half_turn(
+      std::atan2(
+          dot(basis.right, reference_down),
+          dot(basis.right, reference_right)) *
+      RAD_TO_DEG_F);
 }
 }
 
