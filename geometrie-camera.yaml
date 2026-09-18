@@ -31,12 +31,25 @@ logger:
   # Au repos : uniquement warnings/erreurs. Les publications periodiques des
   # entites ESPHome restent disponibles via API/web mais sont totalement
   # retirees du journal.
-  level: WARN
+  level: INFO
   logs:
+    # ESPHome interdit qu'un tag INFO soit plus verbeux qu'un global WARN.
+    # On garde donc INFO globalement, puis on coupe explicitement tout ce qui
+    # n'est pas utile au diagnostic de travail.
     sensor: NONE
     text_sensor: NONE
     number: NONE
     button: NONE
+    app: WARN
+    api: WARN
+    wifi: WARN
+    mdns: WARN
+    web_server: WARN
+    captive_portal: WARN
+    ota: WARN
+    i2c: WARN
+    preferences: WARN
+    esp32_camera: WARN
 
     # Details internes tres verbeux : silencieux sauf anomalie.
     jpeg_diag: WARN
