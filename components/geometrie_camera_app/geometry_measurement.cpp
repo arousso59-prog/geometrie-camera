@@ -678,6 +678,23 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
           std::max(0.05f, z_height * sigma_h / diagnostic_height_px);
       diagnostic_width_weight = 1.0f / (sigma_z_w * sigma_z_w);
       diagnostic_height_weight = 1.0f / (sigma_z_h * sigma_z_h);
+
+      if (observation.subpixel_width_gradient > 0.0f &&
+          observation.subpixel_height_gradient > 0.0f) {
+        const float gradient_sum =
+            observation.subpixel_width_gradient +
+            observation.subpixel_height_gradient;
+        const float width_gradient_factor =
+            std::max(0.75f, std::min(
+                1.25f,
+                2.0f * observation.subpixel_width_gradient / gradient_sum));
+        const float height_gradient_factor =
+            std::max(0.75f, std::min(
+                1.25f,
+                2.0f * observation.subpixel_height_gradient / gradient_sum));
+        diagnostic_width_weight *= width_gradient_factor;
+        diagnostic_height_weight *= height_gradient_factor;
+      }
     }
 
     return fuse_size_distance(
