@@ -24,7 +24,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   std::string xml;
   xml.reserve(30000);
   xml += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-  xml += "<api name=\"geometrie-camera\" version=\"30\" style=\"REST-over-HTTP\">\n";
+  xml += "<api name=\"geometrie-camera\" version=\"31\" style=\"REST-over-HTTP\">\n";
   xml += "  <description>API camera OV5640 : capture JPEG, reglages capteur, viewport ROI haute resolution, tracking cible, detection, calibration, mesure geometrique et acquisition continue.</description>\n";
   xml += "  <conventions>\n";
   xml += "    <item>Les routes de commande utilisent encore HTTP GET pendant la phase de mise au point.</item>\n";
@@ -111,7 +111,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
   xml += "  <method name=\"measurement_calibrate\" http=\"GET\" path=\"/measurement/calibrate\"><parameter name=\"distance_mm\" location=\"query\" required=\"true\" type=\"number\" allowed=\"50..20000\"/><parameter name=\"target_size_mm\" location=\"query\" required=\"false\" type=\"number\" allowed=\"1..1000\"/><parameter name=\"force\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0,1\" default=\"0\"/><response code=\"200\" content_type=\"application/json\"/><response code=\"400\" content_type=\"application/json\"/><response code=\"409\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
   xml += "  <method name=\"full_calibration_start\" http=\"GET\" path=\"/calibration/full/start\">\n";
-  xml += "    <comment>Mode autonome ESP : arret du continu, tracking SEARCH vers PRECISE natif 800x600, 10 mesures valides par defaut puis moyenne fx/fy dans le repere 2560x1920.</comment>\n";
+  xml += "    <comment>Mode autonome ESP : arret du continu, tracking SEARCH vers PRECISE natif 800x600, 10 mesures valides par defaut puis moyenne fx/fy dans le repere 2560x1920. Le demarrage repond avec un JSON minimal et est idempotent si une calibration est deja en cours.</comment>\n";
   xml += "    <parameter name=\"distance_mm\" location=\"query\" required=\"true\" type=\"number\" allowed=\"50..20000\"/>\n";
   xml += "    <parameter name=\"target_size_mm\" location=\"query\" required=\"true\" type=\"number\" allowed=\"1..1000\"/>\n";
   xml += "    <parameter name=\"samples\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"3..20\" default=\"10\"/>\n";
