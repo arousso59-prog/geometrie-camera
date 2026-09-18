@@ -11,9 +11,10 @@ namespace geometrie_camera_app {
 namespace {
 static const char *const TAG = "target_subpixel_refiner";
 
-constexpr uint8_t EDGE_SAMPLE_COUNT = 15;
-constexpr uint8_t MIN_EDGE_SAMPLES = 7;
-constexpr float EDGE_MARGIN_RATIO = 0.16f;
+constexpr uint8_t EDGE_SAMPLE_COUNT = 31;
+constexpr uint8_t MIN_EDGE_SAMPLES = 15;
+constexpr float EDGE_MARGIN_RATIO = 0.18f;
+constexpr int TANGENT_AVERAGE_RADIUS_PX = 2;
 constexpr int NORMAL_SEARCH_RADIUS_PX = 3;
 constexpr float GRADIENT_HALF_SPAN_PX = 0.75f;
 constexpr float MIN_EDGE_GRADIENT = 8.0f;
@@ -90,6 +91,8 @@ bool TargetSubpixelRefiner::refine(const GrayFrameView &frame,
     metrics->max_rms_px = 0.0f;
     metrics->mean_gradient = 0.0f;
     metrics->min_edge_samples = 0;
+    metrics->width_px = 0.0f;
+    metrics->height_px = 0.0f;
   }
 
   if (frame.data == nullptr || frame.width < 4 || frame.height < 4 ||
@@ -108,6 +111,14 @@ bool TargetSubpixelRefiner::refine(const GrayFrameView &frame,
       !this->refine_edge_(frame, input.top_right, input.bottom_right, right) ||
       !this->refine_edge_(frame, input.bottom_left, input.bottom_right, bottom) ||
       !this->refine_edge_(frame, input.top_left, input.bottom_left, left)) {
+    return false;
+  }
+
+  const float direct_width_px = this->opposite_edge_separation_(left, right);
+  const float direct_height_px = this->opposite_edge_separation_(top, bottom);
+  if (!std::isfinite(direct_width_px) || !std::isfinite(direct_height_px) ||
+      direct_width_px < MIN_EDGE_LENGTH_PX ||
+      direct_height_px < MIN_EDGE_LENGTH_PX) {
     return false;
   }
 
@@ -139,13 +150,16 @@ bool TargetSubpixelRefiner::refine(const GrayFrameView &frame,
     metrics->min_edge_samples =
         std::min(std::min(top.samples, right.samples),
                  std::min(bottom.samples, left.samples));
+    metrics->width_px = direct_width_px;
+    metrics->height_px = direct_height_px;
   }
 
   ESP_LOGD(
       TAG,
-      "Subpixel OK center=(%.3f,%.3f) size=%.3fx%.3f "
+      "Subpixel V4 OK center=(%.3f,%.3f) corners=%.3fx%.3f edges=%.3fx%.3f "
       "rms=(%.3f,%.3f,%.3f,%.3f) grad=(%.1f,%.1f,%.1f,%.1f)",
       output.center_x, output.center_y, output.width, output.height,
+      direct_width_px, direct_height_px,
       top.rms, right.rms, bottom.rms, left.rms,
       top.mean_gradient, right.mean_gradient,
       bottom.mean_gradient, left.mean_gradient);
@@ -185,6 +199,7 @@ bool TargetSubpixelRefiner::refine_edge_(const GrayFrameView &frame,
     float offset = 0.0f;
     float gradient = 0.0f;
     if (!this->find_edge_offset_(frame, anchor_x, anchor_y,
+                                 tangent_x, tangent_y,
                                  normal_x, normal_y,
                                  offset, gradient)) {
       continue;
@@ -276,6 +291,8 @@ bool TargetSubpixelRefiner::refine_edge_(const GrayFrameView &frame,
 bool TargetSubpixelRefiner::find_edge_offset_(const GrayFrameView &frame,
                                               float anchor_x,
                                               float anchor_y,
+                                              float tangent_x,
+                                              float tangent_y,
                                               float normal_x,
                                               float normal_y,
                                               float &offset,
@@ -289,28 +306,52 @@ bool TargetSubpixelRefiner::find_edge_offset_(const GrayFrameView &frame,
 
   for (int delta = -NORMAL_SEARCH_RADIUS_PX;
        delta <= NORMAL_SEARCH_RADIUS_PX; ++delta) {
-    float before = 0.0f;
-    float after = 0.0f;
+    const float before_offset =
+        static_cast<float>(delta) - GRADIENT_HALF_SPAN_PX;
+    const float after_offset =
+        static_cast<float>(delta) + GRADIENT_HALF_SPAN_PX;
 
-    const float before_offset = static_cast<float>(delta) - GRADIENT_HALF_SPAN_PX;
-    const float after_offset = static_cast<float>(delta) + GRADIENT_HALF_SPAN_PX;
+    // V4 : lisser le profil perpendiculaire en moyennant plusieurs pixels le
+    // long du bord. Le bord externe est continu ; cette moyenne reduit le
+    // bruit JPEG et les variations locales sans deplacer sa position.
+    float before_sum = 0.0f;
+    float after_sum = 0.0f;
+    uint8_t valid_pairs = 0;
+    for (int tangent_offset = -TANGENT_AVERAGE_RADIUS_PX;
+         tangent_offset <= TANGENT_AVERAGE_RADIUS_PX; ++tangent_offset) {
+      const float along = static_cast<float>(tangent_offset);
+      const float base_x = anchor_x + tangent_x * along;
+      const float base_y = anchor_y + tangent_y * along;
 
-    if (!this->bilinear_sample_(
-            frame,
-            anchor_x + normal_x * before_offset,
-            anchor_y + normal_y * before_offset,
-            before) ||
-        !this->bilinear_sample_(
-            frame,
-            anchor_x + normal_x * after_offset,
-            anchor_y + normal_y * after_offset,
-            after)) {
-      strengths[delta + NORMAL_SEARCH_RADIUS_PX] = 0.0f;
+      float before = 0.0f;
+      float after = 0.0f;
+      if (!this->bilinear_sample_(
+              frame,
+              base_x + normal_x * before_offset,
+              base_y + normal_y * before_offset,
+              before) ||
+          !this->bilinear_sample_(
+              frame,
+              base_x + normal_x * after_offset,
+              base_y + normal_y * after_offset,
+              after)) {
+        continue;
+      }
+
+      before_sum += before;
+      after_sum += after;
+      ++valid_pairs;
+    }
+
+    const int index = delta + NORMAL_SEARCH_RADIUS_PX;
+    if (valid_pairs < 3) {
+      strengths[index] = 0.0f;
       continue;
     }
 
-    const float strength = std::fabs(after - before);
-    const int index = delta + NORMAL_SEARCH_RADIUS_PX;
+    const float before_mean = before_sum / valid_pairs;
+    const float after_mean = after_sum / valid_pairs;
+    const float strength = std::fabs(after_mean - before_mean);
     strengths[index] = strength;
     if (strength > best_strength) {
       best_strength = strength;
@@ -413,8 +454,12 @@ bool TargetSubpixelRefiner::fit_edge_line_(const float *s,
   dir_x /= dir_norm;
   dir_y /= dir_norm;
 
-  line.point.x = start.x + normal_x * intercept;
-  line.point.y = start.y + normal_y * intercept;
+  const float mean_s = static_cast<float>(sum_s / sum_w);
+  const float mean_offset = slope * mean_s + intercept;
+  line.point.x =
+      start.x + tangent_x * mean_s + normal_x * mean_offset;
+  line.point.y =
+      start.y + tangent_y * mean_s + normal_y * mean_offset;
   line.dx = dir_x;
   line.dy = dir_y;
   line.rms = rms;
@@ -438,6 +483,27 @@ bool TargetSubpixelRefiner::intersect_(const EdgeLine &a,
   point.x = a.point.x + t * a.dx;
   point.y = a.point.y + t * a.dy;
   return finite_point(point);
+}
+
+float TargetSubpixelRefiner::opposite_edge_separation_(
+    const EdgeLine &a, const EdgeLine &b) const {
+  // Les line.point sont places au milieu pondere de chaque bord. La distance
+  // symetrique entre les deux droites donne une dimension au centre de la
+  // cible et evite l'amplification des petites erreurs par intersection des
+  // coins lorsque les droites convergent legerement en perspective.
+  const float delta_x = b.point.x - a.point.x;
+  const float delta_y = b.point.y - a.point.y;
+
+  const float normal_a_x = -a.dy;
+  const float normal_a_y = a.dx;
+  const float normal_b_x = -b.dy;
+  const float normal_b_y = b.dx;
+
+  const float distance_to_a =
+      std::fabs(delta_x * normal_a_x + delta_y * normal_a_y);
+  const float distance_to_b =
+      std::fabs(delta_x * normal_b_x + delta_y * normal_b_y);
+  return 0.5f * (distance_to_a + distance_to_b);
 }
 
 bool TargetSubpixelRefiner::bilinear_sample_(const GrayFrameView &frame,
