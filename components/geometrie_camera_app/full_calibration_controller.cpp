@@ -529,6 +529,31 @@ bool FullCalibrationController::begin_optical_tuning_(
   this->tuning_attempts_ = 0;
   this->tuning_index_ = 0;
   this->best_optical_score_ = -1.0f;
+
+  // Le frame PRECISE qui vient de verrouiller la cible sert de baseline :
+  // aucun essai futur ne remplacera ce profil s'il est moins bon.
+  const CameraSettingsSnapshot baseline = this->settings_controller_->read();
+  if (baseline.available) {
+    this->current_ae_level_ = baseline.ae_level;
+    this->current_exposure_ = baseline.aec_value;
+    this->current_gain_ = baseline.agc_gain;
+    const float baseline_score =
+        this->evaluate_optical_score_(observation, true);
+    if (baseline_score > 0.0f) {
+      this->best_optical_score_ = baseline_score;
+      this->best_ae_level_ = baseline.ae_level;
+      this->best_exposure_ = baseline.aec_value;
+      this->best_gain_ = baseline.agc_gain;
+      ESP_LOGI(TAG,
+               "Baseline optique PRECISE conservee: AE=%d exp=%d gain=%d score=%.1f P10=%u P90=%u C=%u",
+               this->best_ae_level_, this->best_exposure_, this->best_gain_,
+               this->best_optical_score_,
+               static_cast<unsigned>(this->current_p10_luma_),
+               static_cast<unsigned>(this->current_p90_luma_),
+               static_cast<unsigned>(this->current_contrast_luma_));
+    }
+  }
+
   this->phase_ = CalibrationPhase::TUNE_AUTO_AE;
 
   ESP_LOGI(TAG,
@@ -700,6 +725,11 @@ bool FullCalibrationController::handle_tuning_result_(
     if (this->tuning_index_ < 5) {
       if (!this->prepare_auto_ae_candidate_(this->tuning_index_)) return false;
       return this->request_next_capture_();
+    }
+
+    if (this->best_optical_score_ <= 0.0f) {
+      ESP_LOGE(TAG, "Aucun profil optique valide pendant le balayage AE");
+      return false;
     }
 
     this->phase_ = CalibrationPhase::TUNE_MANUAL_BASELINE;
