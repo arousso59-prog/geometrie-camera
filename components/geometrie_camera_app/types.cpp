@@ -30,6 +30,8 @@ TargetObservation::TargetObservation()
       subpixel_rms_px(0.0f),
       subpixel_max_rms_px(0.0f),
       subpixel_gradient(0.0f),
+      subpixel_width_px(0.0f),
+      subpixel_height_px(0.0f),
       top_left_px(),
       top_right_px(),
       bottom_right_px(),
