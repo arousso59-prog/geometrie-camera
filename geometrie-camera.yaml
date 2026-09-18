@@ -28,13 +28,26 @@ preferences:
   flash_write_interval: 5s
 
 logger:
-  level: DEBUG
+  # Logs d'exploitation : conserver les transitions utiles sans noyer la
+  # console avec tous les etats ESPHome republies chaque seconde.
+  level: INFO
   logs:
-    target_candidate_finder: INFO
-    target_corner_refiner: INFO
-    target_code_decoder: INFO
-    target_detector: INFO
-    image_sharpness: INFO
+    sensor: WARN
+    text_sensor: WARN
+    number: WARN
+    jpeg_diag: WARN
+    jpeg_filter_diag: WARN
+    target_candidate_finder: WARN
+    target_corner_refiner: WARN
+    target_code_decoder: WARN
+    target_detector: WARN
+    image_sharpness: WARN
+
+    # Ces trois blocs restent visibles : ils permettent de suivre une
+    # calibration et le zoom automatique sans remettre le logger en DEBUG.
+    full_calibration: INFO
+    target_tracking: INFO
+    camera_viewport: INFO
 
 api:
 
