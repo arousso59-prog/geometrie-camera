@@ -65,6 +65,15 @@ void FullCalibrationApiHandler::handleRequest(AsyncWebServerRequest *request) {
   }
 
   if (url == "/calibration/full/start") {
+    // Demarrage idempotent : si une calibration est deja en cours, ne pas
+    // renvoyer 409. Le PC peut reprendre le suivi via /status sans relancer
+    // ni interrompre l'operation ESP.
+    if (this->controller_->running()) {
+      request->send(200, "application/json",
+                    "{\"status\":\"already_running\",\"running\":true}");
+      return;
+    }
+
     float distance_mm = 0.0f;
     float target_size_mm = 0.0f;
     int sample_count = FullCalibrationController::DEFAULT_SAMPLE_COUNT;
@@ -113,7 +122,10 @@ void FullCalibrationApiHandler::handleRequest(AsyncWebServerRequest *request) {
       return;
     }
 
-    this->send_status_(request, 202, "accepted");
+    // Reponse volontairement minimale. Ne pas serialiser tout l'etat dans
+    // la requete qui vient elle-meme de lancer capture + tracking.
+    request->send(202, "application/json",
+                  "{\"status\":\"accepted\",\"running\":true}");
     return;
   }
 
