@@ -95,12 +95,14 @@ class FullCalibrationController {
   int best_brightness() const;
   int best_contrast() const;
   float best_optical_score() const;
+  bool using_auto_fallback() const;
   const CameraCalibration &result_calibration() const;
 
  private:
   enum class CalibrationPhase : uint8_t {
     TRACKING,
-    TUNE_MANUAL_BASELINE,
+    TUNE_AUTO_SETTLE,
+    TUNE_MANUAL_VALIDATE,
     TUNE_MANUAL_EXPOSURE,
     TUNE_MANUAL_GAIN,
     TUNE_CONTRAST,
@@ -108,10 +110,13 @@ class FullCalibrationController {
     SAMPLING,
   };
 
-  static constexpr uint8_t OPTICAL_TUNING_MAX_ATTEMPTS = 18;
+  static constexpr uint8_t OPTICAL_TUNING_MAX_ATTEMPTS = 16;
+  static constexpr uint8_t AUTO_SETTLE_FRAMES = 4;
+  static constexpr uint8_t AUTO_RECOVERY_FRAMES = 3;
 
   bool begin_native_tracking_();
   bool begin_optical_tuning_(const TargetObservation &observation);
+  bool enable_auto_controls_();
   bool prepare_manual_candidate_(int exposure, int gain);
   bool prepare_postprocess_candidate_(int brightness, int contrast);
   bool handle_tuning_result_(const TargetObservation &observation, bool target_found);
@@ -122,6 +127,7 @@ class FullCalibrationController {
   bool start_brightness_tuning_();
   bool advance_manual_pair_(bool exposure_axis);
   bool finish_optical_tuning_();
+  bool fallback_to_auto_sampling_(const char *reason);
   bool apply_camera_snapshot_(const CameraSettingsSnapshot &snapshot);
   void restore_previous_camera_settings_();
   bool request_next_capture_();
@@ -199,6 +205,7 @@ class FullCalibrationController {
   int best_brightness_;
   int best_contrast_;
   float best_optical_score_;
+  bool auto_fallback_;
   uint16_t tuning_roi_x_;
   uint16_t tuning_roi_y_;
   uint16_t tuning_roi_width_;
