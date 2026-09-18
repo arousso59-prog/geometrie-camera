@@ -27,7 +27,7 @@ GeometrieCameraApp::GeometrieCameraApp()
       full_calibration_controller_(&this->jpeg_diagnostic_,
                                    &this->jpeg_filtered_diagnostic_, &this->target_detection_service_,
                                    &this->measurement_manager_, &this->continuous_measurement_controller_,
-                                   &this->tracking_controller_),
+                                   &this->tracking_controller_, &this->target_detection_preview_),
       runtime_diagnostics_(),
       api_wsdl_handler_(&this->resolution_controller_),
       settings_api_handler_(&this->settings_controller_, &this->resolution_controller_),
@@ -40,7 +40,8 @@ GeometrieCameraApp::GeometrieCameraApp()
                                &this->jpeg_filtered_diagnostic_),
       continuous_measurement_api_handler_(&this->continuous_measurement_controller_,
                                           &this->tracking_controller_),
-      full_calibration_api_handler_(&this->full_calibration_controller_),
+      full_calibration_api_handler_(&this->full_calibration_controller_,
+                                    &this->target_detection_preview_),
       runtime_diagnostics_api_handler_(&this->runtime_diagnostics_, &this->jpeg_diagnostic_),
       api_registered_(false) {}
 
