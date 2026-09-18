@@ -282,6 +282,10 @@ TargetObservation CameraViewportController::to_reference(const TargetObservation
           observation.subpixel_width_px * this->snapshot_.scale_x;
       result.subpixel_height_px =
           observation.subpixel_height_px * this->snapshot_.scale_y;
+      result.subpixel_width_sigma_px =
+          observation.subpixel_width_sigma_px * this->snapshot_.scale_x;
+      result.subpixel_height_sigma_px =
+          observation.subpixel_height_sigma_px * this->snapshot_.scale_y;
     }
   } else {
     result.width_px = observation.width_px * this->snapshot_.scale_x;
