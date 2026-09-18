@@ -52,6 +52,46 @@ float robust_center(const float *values, uint8_t count) {
   return sum / static_cast<float>(count - 2U);
 }
 
+float normalize_half_turn_local(float angle_deg) {
+  while (angle_deg >= 90.0f) angle_deg -= 180.0f;
+  while (angle_deg < -90.0f) angle_deg += 180.0f;
+  return angle_deg;
+}
+
+float periodic_delta_180(float a_deg, float b_deg) {
+  return normalize_half_turn_local(a_deg - b_deg);
+}
+
+float robust_periodic_center_180(const float *values, uint8_t count) {
+  if (values == nullptr || count == 0) return 0.0f;
+
+  // Choisir comme ancre l'echantillon qui minimise la somme des distances
+  // periodiques. Cela evite qu'un premier point aberrant impose la branche.
+  uint8_t best_anchor = 0;
+  float best_cost = 1.0e30f;
+  for (uint8_t candidate = 0; candidate < count; ++candidate) {
+    float cost = 0.0f;
+    for (uint8_t i = 0; i < count; ++i) {
+      cost += std::fabs(
+          periodic_delta_180(values[i], values[candidate]));
+    }
+    if (cost < best_cost) {
+      best_cost = cost;
+      best_anchor = candidate;
+    }
+  }
+
+  const float anchor = values[best_anchor];
+  float unwrapped[LOCAL_STABILIZATION_WINDOW];
+  for (uint8_t i = 0; i < count; ++i) {
+    unwrapped[i] =
+        anchor + periodic_delta_180(values[i], anchor);
+  }
+
+  return normalize_half_turn_local(
+      robust_center(unwrapped, count));
+}
+
 float standard_deviation(const float *values, uint8_t count) {
   if (values == nullptr || count < 2) {
     return 0.0f;
@@ -204,6 +244,9 @@ void MeasurementManager::compute_stabilized_measurement_() {
   float yaw_values[STABILIZATION_WINDOW];
   float pitch_values[STABILIZATION_WINDOW];
   float roll_values[STABILIZATION_WINDOW];
+  float normal_x_values[STABILIZATION_WINDOW];
+  float normal_y_values[STABILIZATION_WINDOW];
+  float normal_z_values[STABILIZATION_WINDOW];
   float pose_z_values[STABILIZATION_WINDOW];
   float pose_error_values[STABILIZATION_WINDOW];
   uint8_t pose_count = 0;
@@ -224,6 +267,9 @@ void MeasurementManager::compute_stabilized_measurement_() {
       yaw_values[pose_count] = sample.yaw_deg;
       pitch_values[pose_count] = sample.pitch_deg;
       roll_values[pose_count] = sample.roll_deg;
+      normal_x_values[pose_count] = sample.pose_normal_x;
+      normal_y_values[pose_count] = sample.pose_normal_y;
+      normal_z_values[pose_count] = sample.pose_normal_z;
       pose_z_values[pose_count] = sample.pose_z_mm;
       pose_error_values[pose_count] = sample.pose_scale_error_pct;
       pose_count++;
@@ -285,9 +331,38 @@ void MeasurementManager::compute_stabilized_measurement_() {
       static_cast<uint8_t>((this->stabilization_count_ + 1U) / 2U);
   result.pose_valid = pose_count >= required_pose;
   if (result.pose_valid) {
-    result.yaw_deg = robust_center(yaw_values, pose_count);
-    result.pitch_deg = robust_center(pitch_values, pose_count);
-    result.roll_deg = robust_center(roll_values, pose_count);
+    float normal_x = robust_center(normal_x_values, pose_count);
+    float normal_y = robust_center(normal_y_values, pose_count);
+    float normal_z = robust_center(normal_z_values, pose_count);
+    const float normal_norm = std::sqrt(
+        normal_x * normal_x +
+        normal_y * normal_y +
+        normal_z * normal_z);
+
+    if (std::isfinite(normal_norm) && normal_norm > 1.0e-6f) {
+      normal_x /= normal_norm;
+      normal_y /= normal_norm;
+      normal_z /= normal_norm;
+      result.pose_normal_x = normal_x;
+      result.pose_normal_y = normal_y;
+      result.pose_normal_z = normal_z;
+      result.yaw_deg =
+          std::atan2(normal_x, normal_z) * RAD_TO_DEG_F;
+      result.pitch_deg =
+          std::atan2(
+              -normal_y,
+              std::sqrt(normal_x * normal_x +
+                        normal_z * normal_z)) *
+          RAD_TO_DEG_F;
+    } else {
+      result.yaw_deg = robust_center(yaw_values, pose_count);
+      result.pitch_deg = robust_center(pitch_values, pose_count);
+    }
+
+    // Le roll est defini modulo 180 degres. Une moyenne lineaire ferait de
+    // +89 et -89 deux valeurs opposees alors qu'elles sont voisines.
+    result.roll_deg =
+        robust_periodic_center_180(roll_values, pose_count);
     result.pose_z_mm = robust_center(pose_z_values, pose_count);
     result.pose_scale_error_pct =
         robust_center(pose_error_values, pose_count);
