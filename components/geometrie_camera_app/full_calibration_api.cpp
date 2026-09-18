@@ -197,6 +197,7 @@ void FullCalibrationApiHandler::send_status_(
   json += ",\"progress_pct\":" + std::to_string(progress);
   json += ",\"tracking_mode\":\"" + std::string(this->controller_->tracking_mode_text()) + "\"";
   json += ",\"preview_attempt\":" + std::to_string(this->controller_->preview_attempt());
+  json += ",\"preview_mode\":\"" + this->controller_->preview_mode() + "\"";
   json += ",\"last_target_found\":";
   json += this->controller_->last_target_found() ? "true" : "false";
   json += ",\"last_sample_valid\":";
