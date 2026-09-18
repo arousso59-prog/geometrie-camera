@@ -24,7 +24,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   std::string xml;
   xml.reserve(30000);
   xml += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-  xml += "<api name=\"geometrie-camera\" version=\"28\" style=\"REST-over-HTTP\">\n";
+  xml += "<api name=\"geometrie-camera\" version=\"29\" style=\"REST-over-HTTP\">\n";
   xml += "  <description>API camera OV5640 : capture JPEG, reglages capteur, viewport ROI haute resolution, tracking cible, detection, calibration, mesure geometrique et acquisition continue.</description>\n";
   xml += "  <conventions>\n";
   xml += "    <item>Les routes de commande utilisent encore HTTP GET pendant la phase de mise au point.</item>\n";
@@ -118,7 +118,14 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "    <parameter name=\"force\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0,1\" default=\"0\"/>\n";
   xml += "    <response code=\"202\" content_type=\"application/json\"/><response code=\"400\" content_type=\"application/json\"/><response code=\"409\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
-  xml += "  <method name=\"full_calibration_status\" http=\"GET\" path=\"/calibration/full/status\"><response code=\"200\" content_type=\"application/json\"/></method>\n";
+  xml += "  <method name=\"full_calibration_status\" http=\"GET\" path=\"/calibration/full/status\">\n";
+  xml += "    <comment>Expose progression, mode de tracking, tentative courante, cible, dernier echantillon, moyenne et ecart-type en cours.</comment>\n";
+  xml += "    <response code=\"200\" content_type=\"application/json\"/>\n";
+  xml += "  </method>\n";
+  xml += "  <method name=\"full_calibration_preview\" http=\"GET\" path=\"/calibration/full/preview.bmp\">\n";
+  xml += "    <comment>Apercu fige de la derniere tentative de calibration, afin que le PC affiche exactement la capture correspondant a preview_attempt.</comment>\n";
+  xml += "    <response code=\"200\" content_type=\"image/bmp\"/><response code=\"404\" content_type=\"application/json\"/>\n";
+  xml += "  </method>\n";
   xml += "  <method name=\"full_calibration_cancel\" http=\"GET\" path=\"/calibration/full/cancel\"><response code=\"200\" content_type=\"application/json\"/></method>\n";
   xml += "  <method name=\"measurement_compute\" http=\"GET\" path=\"/measurement/compute\"><response code=\"200\" content_type=\"application/json\"/><response code=\"409\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
   xml += "  <method name=\"measurement_status\" http=\"GET\" path=\"/measurement/status\"><response code=\"200\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
