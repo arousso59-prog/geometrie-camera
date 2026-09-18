@@ -349,6 +349,16 @@ void MeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *request, int r
     json += std::to_string(engine.target_size_mm());
     json += "}";
 
+    // Methode operationnelle figee apres comparaison V5/V6/V6.1 :
+    // dimensions V6.1 (droites robustes V5 + incertitude V6) puis
+    // stabilisation robuste sur 5 mesures. V5/V6 restent diagnostics.
+    json += ",\"method\":{";
+    json += "\"name\":\"V6.1-robust5\"";
+    json += ",\"frozen\":true";
+    json += ",\"stabilization_window\":5";
+    json += ",\"diagnostics_only\":[\"V5\",\"V6\"]";
+    json += "}";
+
     json += ",\"calibration\":{\"valid\":";
     json += engine.has_calibration() ? "true" : "false";
     json += ",\"locked\":";
