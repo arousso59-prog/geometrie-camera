@@ -8,13 +8,14 @@ namespace geometrie_camera_app {
 
 namespace {
 constexpr float RAD_TO_DEG_F = 57.29577951308232f;
+constexpr uint8_t LOCAL_STABILIZATION_WINDOW = 5;
 
 float robust_center(const float *values, uint8_t count) {
   if (values == nullptr || count == 0) {
     return 0.0f;
   }
 
-  float sorted[MeasurementManager::STABILIZATION_WINDOW];
+  float sorted[LOCAL_STABILIZATION_WINDOW];
   for (uint8_t i = 0; i < count; ++i) {
     sorted[i] = values[i];
   }
