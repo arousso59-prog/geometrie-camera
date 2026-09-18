@@ -65,7 +65,7 @@ La référence du contrat HTTP est :
 GET /api/wsdl
 ```
 
-Version actuelle : **22**.
+Version actuelle : **23**.
 
 ### Diagnostic lecture seule
 
@@ -102,6 +102,15 @@ GET /continuous/start?interval_ms=<200..10000>
 GET /continuous/status
 GET /continuous/stop
 ```
+
+La V23 ajoute un diagnostic parallèle qui ne modifie pas la mesure officielle V6.1 :
+
+- dimensions par coins ;
+- V5 : séparation directe des droites robustes ;
+- V6 : séparation locale robuste ;
+- V6.1 : valeur officielle ;
+- distance Z diagnostique de chaque méthode ;
+- RMS et gradient de chacun des quatre bords.
 
 Le statut continu expose les temps :
 
