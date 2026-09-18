@@ -17,25 +17,20 @@ GeometrieCameraApp::GeometrieCameraApp()
       viewport_controller_(&this->resolution_controller_),
       tracking_controller_(&this->viewport_controller_),
       jpeg_diagnostic_(),
-      image_sharpness_evaluator_(&this->jpeg_diagnostic_),
       jpeg_filtered_diagnostic_(&this->jpeg_diagnostic_),
       target_detection_service_(&this->jpeg_filtered_diagnostic_, &this->target_detector_),
       target_detection_preview_(),
-      continuous_measurement_controller_(&this->jpeg_diagnostic_, &this->image_sharpness_evaluator_,
+      continuous_measurement_controller_(&this->jpeg_diagnostic_,
                                          &this->jpeg_filtered_diagnostic_, &this->target_detection_service_,
                                          &this->measurement_manager_, &this->tracking_controller_),
       full_calibration_controller_(&this->jpeg_diagnostic_,
-                                   &this->image_sharpness_evaluator_,
                                    &this->settings_controller_,
                                    &this->jpeg_filtered_diagnostic_, &this->target_detection_service_,
                                    &this->measurement_manager_, &this->continuous_measurement_controller_,
                                    &this->tracking_controller_, &this->target_detection_preview_),
       runtime_diagnostics_(),
       api_wsdl_handler_(&this->resolution_controller_),
-      settings_api_handler_(&this->settings_controller_, &this->resolution_controller_),
       tracking_api_handler_(&this->tracking_controller_, &this->viewport_controller_),
-      jpeg_diagnostic_api_handler_(&this->jpeg_diagnostic_, &this->resolution_controller_),
-      jpeg_filtered_diagnostic_api_handler_(&this->jpeg_filtered_diagnostic_),
       target_detection_api_handler_(&this->target_detection_service_, &this->jpeg_filtered_diagnostic_,
                                     &this->target_detection_preview_),
       measurement_api_handler_(&this->measurement_manager_, &this->target_detection_service_,
@@ -70,10 +65,8 @@ void GeometrieCameraApp::dump_config() {
   ESP_LOGCONFIG(TAG, "  API HTTP: %s", this->api_registered_ ? "REGISTERED" : "WAITING");
   ESP_LOGCONFIG(TAG, "  API WSDL: /api/wsdl");
   ESP_LOGCONFIG(TAG, "  Runtime diagnostics API: /api/runtime/status");
-  ESP_LOGCONFIG(TAG, "  Camera settings API: /api/camera/settings*");
   ESP_LOGCONFIG(TAG, "  Tracking API: /tracking/*, /api/camera/viewport");
-  ESP_LOGCONFIG(TAG, "  JPEG capture/filter API: /diagnostic-jpeg/*");
-  ESP_LOGCONFIG(TAG, "  Target detection API: /target/detect, /target/status, /target/preview.bmp");
+  ESP_LOGCONFIG(TAG, "  Target diagnostic API: /target/status, /target/preview.bmp");
   ESP_LOGCONFIG(TAG, "  Measurement API: /measurement/*");
   ESP_LOGCONFIG(TAG, "  Full calibration API: /calibration/full/*");
   ESP_LOGCONFIG(TAG, "  Continuous API: /continuous/start, /continuous/stop, /continuous/status");
@@ -81,14 +74,12 @@ void GeometrieCameraApp::dump_config() {
   ESP_LOGCONFIG(TAG, "  Geometry calibration: %s",
                 this->measurement_manager_.measurement_engine().has_calibration() ? "VALID" : "REQUIRED");
   ESP_LOGCONFIG(TAG, "  Resolution active: %s", this->resolution_controller_.active_resolution().c_str());
-  ESP_LOGCONFIG(TAG, "  Tracking precise ROI: %s, enabled=%s",
-                this->tracking_controller_.supported() ? "SUPPORTED" : "UNSUPPORTED",
-                this->tracking_controller_.enabled() ? "YES" : "NO");
+  ESP_LOGCONFIG(TAG, "  Tracking precise ROI permanent: %s",
+                this->tracking_controller_.supported() ? "SUPPORTED" : "UNSUPPORTED");
   ESP_LOGCONFIG(TAG, "  Continuous interval: %u ms",
                 static_cast<unsigned>(this->continuous_measurement_controller_.interval_ms()));
-  ESP_LOGCONFIG(TAG, "  Sharpness guard: ROI cible, maximum 2 recaptures");
   ESP_LOGCONFIG(TAG, "  JPEG ready: %s", this->jpeg_diagnostic_.ready() ? "YES" : "NO");
-  ESP_LOGCONFIG(TAG, "  JPEG filtered ready: %s", this->jpeg_filtered_diagnostic_.ready() ? "YES" : "NO");
+  ESP_LOGCONFIG(TAG, "  JPEG grayscale ready: %s", this->jpeg_filtered_diagnostic_.ready() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Target detection ready: %s", this->target_detection_service_.ready() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Valid measurements: %u",
                 static_cast<unsigned>(this->measurement_manager_.valid_measurement_count()));
@@ -204,10 +195,7 @@ void GeometrieCameraApp::register_api_if_possible_() {
   }
 
   web_server_base::global_web_server_base->add_handler(&this->api_wsdl_handler_);
-  web_server_base::global_web_server_base->add_handler(&this->settings_api_handler_);
   web_server_base::global_web_server_base->add_handler(&this->tracking_api_handler_);
-  web_server_base::global_web_server_base->add_handler(&this->jpeg_diagnostic_api_handler_);
-  web_server_base::global_web_server_base->add_handler(&this->jpeg_filtered_diagnostic_api_handler_);
   web_server_base::global_web_server_base->add_handler(&this->target_detection_api_handler_);
   web_server_base::global_web_server_base->add_handler(&this->measurement_api_handler_);
   web_server_base::global_web_server_base->add_handler(&this->continuous_measurement_api_handler_);
@@ -216,8 +204,8 @@ void GeometrieCameraApp::register_api_if_possible_() {
   this->api_registered_ = true;
 
   ESP_LOGI(TAG,
-           "API HTTP camera enregistree: /api/wsdl, /api/runtime/status, /api/camera/settings*, "
-           "/api/camera/viewport, /tracking/*, /diagnostic-jpeg/*, /target/*, /measurement/*, "
+           "API HTTP camera enregistree: /api/wsdl, /api/runtime/status, "
+           "/api/camera/viewport, /tracking/status, /target/status, /target/preview.bmp, /measurement/*, "
            "/calibration/full/* et /continuous/*");
 }
 
