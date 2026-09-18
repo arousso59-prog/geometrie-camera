@@ -83,25 +83,40 @@ TargetObservation TargetDetector::detect(const GrayFrameView &frame) {
       // cible deja reconnue par le chemin historique.
       if (refined_observation.valid) {
         TargetCandidate subpixel_candidate = refined_candidate;
+        TargetSubpixelMetrics subpixel_metrics{};
         if (this->subpixel_refiner_.refine(frame, refined_candidate,
-                                           subpixel_candidate)) {
+                                           subpixel_candidate,
+                                           &subpixel_metrics)) {
           const TargetObservation subpixel_observation =
               this->code_decoder_.decode(frame, subpixel_candidate);
 
           ESP_LOGD(TAG,
-                   "V5.7 candidate[%u] subpixel=%.4f valid=%s",
+                   "V5.7 candidate[%u] subpixel=%.4f valid=%s rms=%.3f max=%.3f grad=%.1f",
                    static_cast<unsigned>(index), subpixel_observation.quality,
-                   subpixel_observation.valid ? "YES" : "NO");
+                   subpixel_observation.valid ? "YES" : "NO",
+                   subpixel_metrics.mean_rms_px,
+                   subpixel_metrics.max_rms_px,
+                   subpixel_metrics.mean_gradient);
 
           if (subpixel_observation.valid) {
+            bool subpixel_geometry_used = false;
             if (!candidate_best.valid ||
                 subpixel_observation.quality > candidate_best.quality) {
               candidate_best = subpixel_observation;
+              subpixel_geometry_used = true;
             } else if (candidate_best.rotation_deg ==
                        subpixel_observation.rotation_deg) {
               // Conserver le score/choix du decodeur deja etabli, mais
               // remplacer la geometrie physique par les coins subpixel.
               copy_geometry(subpixel_observation, candidate_best);
+              subpixel_geometry_used = true;
+            }
+
+            if (subpixel_geometry_used) {
+              candidate_best.subpixel_refined = true;
+              candidate_best.subpixel_rms_px = subpixel_metrics.mean_rms_px;
+              candidate_best.subpixel_max_rms_px = subpixel_metrics.max_rms_px;
+              candidate_best.subpixel_gradient = subpixel_metrics.mean_gradient;
             }
           }
         }
