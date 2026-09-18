@@ -250,6 +250,7 @@ void MeasurementManager::compute_stabilized_measurement_() {
   float pose_z_values[STABILIZATION_WINDOW];
   float pose_error_values[STABILIZATION_WINDOW];
   uint8_t pose_count = 0;
+  uint8_t pose_method_values[STABILIZATION_WINDOW] = {0};
   uint8_t pose_v3_count = 0;
   uint8_t pose_v2_count = 0;
   uint8_t pose_v1_count = 0;
@@ -276,10 +277,13 @@ void MeasurementManager::compute_stabilized_measurement_() {
       pose_z_values[pose_count] = sample.pose_z_mm;
       pose_error_values[pose_count] = sample.pose_scale_error_pct;
       if (sample.pose_v3_used) {
+        pose_method_values[pose_count] = 3;
         pose_v3_count++;
       } else if (sample.pose_v2_used) {
+        pose_method_values[pose_count] = 2;
         pose_v2_count++;
       } else if (sample.pose_v1_valid) {
+        pose_method_values[pose_count] = 1;
         pose_v1_count++;
       }
       pose_count++;
@@ -341,12 +345,42 @@ void MeasurementManager::compute_stabilized_measurement_() {
       static_cast<uint8_t>((this->stabilization_count_ + 1U) / 2U);
   result.pose_valid = pose_count >= required_pose;
   if (result.pose_valid) {
-    result.pose_v3_used = pose_v3_count >= required_pose;
+    uint8_t selected_method = 0;
+    if (pose_v3_count >= required_pose) {
+      selected_method = 3;
+    } else if (pose_v2_count >= required_pose) {
+      selected_method = 2;
+    } else if (pose_v1_count >= required_pose) {
+      selected_method = 1;
+    }
+
+    result.pose_v3_used = selected_method == 3;
     result.pose_v3_valid = pose_v3_count > 0;
-    result.pose_v2_used =
-        !result.pose_v3_used && pose_v2_count >= required_pose;
+    result.pose_v2_used = selected_method == 2;
     result.pose_v2_valid = pose_v2_count > 0 || result.pose_v2_valid;
     result.pose_v1_valid = pose_v1_count > 0 || result.pose_v1_valid;
+
+    // Ne jamais melanger les normales de methodes differentes. Un repli V2
+    // ponctuel ne doit pas degrader la moyenne V3, et inversement.
+    if (selected_method != 0) {
+      uint8_t filtered_count = 0;
+      for (uint8_t i = 0; i < pose_count; ++i) {
+        if (pose_method_values[i] != selected_method) continue;
+        yaw_values[filtered_count] = yaw_values[i];
+        pitch_values[filtered_count] = pitch_values[i];
+        roll_values[filtered_count] = roll_values[i];
+        normal_x_values[filtered_count] = normal_x_values[i];
+        normal_y_values[filtered_count] = normal_y_values[i];
+        normal_z_values[filtered_count] = normal_z_values[i];
+        pose_z_values[filtered_count] = pose_z_values[i];
+        pose_error_values[filtered_count] = pose_error_values[i];
+        filtered_count++;
+      }
+      if (filtered_count >= required_pose) {
+        pose_count = filtered_count;
+      }
+    }
+
     float normal_x = robust_center(normal_x_values, pose_count);
     float normal_y = robust_center(normal_y_values, pose_count);
     float normal_z = robust_center(normal_z_values, pose_count);
