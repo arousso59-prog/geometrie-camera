@@ -16,6 +16,10 @@ static const char *const TAG = "continuous_measurement";
 constexpr uint32_t MIN_INTERVAL_MS = 200;
 constexpr uint32_t MAX_INTERVAL_MS = 10000;
 constexpr uint32_t CAPTURE_TIMEOUT_MS = 10000;
+// Au-dela de cet intervalle, on privilegie une image strictement posterieure
+// a la demande pour eviter d'utiliser une frame restee trop longtemps en
+// attente. Le mode normal de geometrie (1000 ms) profite du pipeline.
+constexpr uint32_t MAX_PIPELINED_INTERVAL_MS = 1500;
 }
 
 ContinuousMeasurementController::ContinuousMeasurementController(
@@ -59,7 +63,10 @@ ContinuousMeasurementController::ContinuousMeasurementController(
       last_capture_ms_(0),
       last_decode_ms_(0),
       last_detect_ms_(0),
-      last_compute_ms_(0) {}
+      last_compute_ms_(0),
+      force_fresh_capture_(true),
+      current_capture_pipelined_(false),
+      last_capture_pipelined_(false) {}
 
 bool ContinuousMeasurementController::start(uint32_t interval_ms) {
   if (!this->set_interval_ms(interval_ms)) {
@@ -123,6 +130,9 @@ bool ContinuousMeasurementController::start(uint32_t interval_ms) {
   this->last_decode_ms_ = 0;
   this->last_detect_ms_ = 0;
   this->last_compute_ms_ = 0;
+  this->force_fresh_capture_ = true;
+  this->current_capture_pipelined_ = false;
+  this->last_capture_pipelined_ = false;
   this->last_error_.clear();
 
   this->reset_local_tracking_after_viewport_change_();
@@ -336,6 +346,9 @@ uint32_t ContinuousMeasurementController::last_capture_ms() const { return this-
 uint32_t ContinuousMeasurementController::last_decode_ms() const { return this->last_decode_ms_; }
 uint32_t ContinuousMeasurementController::last_detect_ms() const { return this->last_detect_ms_; }
 uint32_t ContinuousMeasurementController::last_compute_ms() const { return this->last_compute_ms_; }
+bool ContinuousMeasurementController::last_capture_pipelined() const {
+  return this->last_capture_pipelined_;
+}
 
 void ContinuousMeasurementController::begin_cycle_() {
   this->cycle_started_ms_ = millis();
@@ -356,6 +369,7 @@ void ContinuousMeasurementController::begin_cycle_() {
   this->current_decode_ms_ = 0;
   this->current_detect_ms_ = 0;
   this->current_compute_ms_ = 0;
+  this->current_capture_pipelined_ = false;
 }
 
 void ContinuousMeasurementController::publish_cycle_timing_(uint32_t cycle_ms) {
@@ -363,6 +377,7 @@ void ContinuousMeasurementController::publish_cycle_timing_(uint32_t cycle_ms) {
   this->last_decode_ms_ = this->current_decode_ms_;
   this->last_detect_ms_ = this->current_detect_ms_;
   this->last_compute_ms_ = this->current_compute_ms_;
+  this->last_capture_pipelined_ = this->current_capture_pipelined_;
   this->last_cycle_ms_ = cycle_ms;
 }
 
@@ -418,11 +433,30 @@ void ContinuousMeasurementController::stop_with_error_(const char *error) {
 
 bool ContinuousMeasurementController::request_capture_() {
   if (!this->running_ || this->jpeg_source_ == nullptr) return false;
+
   this->capture_count_before_request_ = this->jpeg_source_->capture_count();
-  return this->jpeg_source_->request_capture();
+
+  const bool allow_pipeline =
+      !this->force_fresh_capture_ &&
+      this->interval_ms_ <= MAX_PIPELINED_INTERVAL_MS;
+
+  // force_post_request_frame=true conserve l'ancien comportement totalement
+  // frais. En regime stable, false accepte la prochaine frame sequentielle
+  // deja en cours d'acquisition pendant le traitement precedent.
+  const bool accepted =
+      this->jpeg_source_->request_capture(!allow_pipeline);
+  if (accepted) {
+    this->current_capture_pipelined_ = allow_pipeline;
+    this->force_fresh_capture_ = false;
+  }
+  return accepted;
 }
 
 void ContinuousMeasurementController::reset_local_tracking_after_viewport_change_() {
+  // La frame deja pre-acquise peut encore appartenir a l'ancien viewport.
+  // Le prochain cycle doit donc utiliser la purge historique.
+  this->force_fresh_capture_ = true;
+
   if (this->measurement_manager_ != nullptr) {
     this->measurement_manager_->reset_stabilization();
   }
