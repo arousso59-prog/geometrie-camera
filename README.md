@@ -65,7 +65,7 @@ La référence du contrat HTTP est :
 GET /api/wsdl
 ```
 
-Version actuelle : **29**.
+Version actuelle : **30**.
 
 ### Diagnostic lecture seule
 
@@ -257,3 +257,21 @@ La pose V3 ajoute un raffinement spécifique à l'orientation :
 V3 est rejetée si l'homographie du motif ou la reprojection de pose devient incohérente. Le repli est alors V2, puis V1.
 
 La stabilisation sur 5 mesures ne mélange jamais les méthodes : si V3 est majoritaire, seuls les échantillons V3 participent à la moyenne de normale/roll.
+
+
+## Capture pipelinée V30
+
+La V30 optimise uniquement l'orchestration du mode continu. Aucun paramètre caméra ou algorithme métrologique n'est modifié.
+
+ESPHome pré-acquiert naturellement la frame suivante dans sa tâche caméra. Jusqu'à V29, cette frame était toujours jetée puis une nouvelle capture était demandée. Cette stratégie garantissait une image postérieure à la requête, mais empêchait tout chevauchement entre acquisition et traitement.
+
+En V30 :
+
+- après démarrage ou changement de viewport : comportement historique, frame pré-acquise purgée ;
+- en régime stable avec intervalle <= 1500 ms : la frame séquentielle déjà en cours d'acquisition pendant le décodage/détection du cycle précédent est acceptée ;
+- avec un intervalle > 1500 ms : retour automatique à une capture strictement postérieure à la requête ;
+- calibration : comportement historique inchangé, donc purge systématique après réglages caméra/ROI.
+
+Le but est de chevaucher le temps capteur avec le décodage et la détection sans changer XCLK, JPEG, exposition, gain, contraste, luminosité, V6.1 ou la pose.
+
+`/continuous/status` expose `timing.capture_pipelined` pour vérifier quels cycles utilisent cette optimisation.
