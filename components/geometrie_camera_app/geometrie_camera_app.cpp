@@ -118,7 +118,10 @@ std::string GeometrieCameraApp::status_text() const {
       return "Mesure continue - cible trouvee - mesure valide";
     }
     if (this->continuous_measurement_controller_.last_cycle_target_found()) {
-      return "Mesure continue - cible trouvee - mesure invalide";
+      if (this->continuous_measurement_controller_.last_cycle_viewport_mode() != "precise") {
+        return "Mesure continue - tracking vers PRECISE";
+      }
+      return "Mesure continue - cible trouvee - mesure PRECISE invalide";
     }
     return "Mesure continue - cible non trouvee";
   }
