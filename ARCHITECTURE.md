@@ -182,7 +182,7 @@ cycle_ms
 
 ## API
 
-Contrat : `GET /api/wsdl`, version **29**.
+Contrat : `GET /api/wsdl`, version **30**.
 
 ### Lecture seule
 
@@ -288,3 +288,16 @@ Le raffineur de motif :
 - publie nombre de transitions, nombre d'inliers, RMS et résidu maximal.
 
 La pose V3 utilise ensuite la translation X/Y/Z V6.1 figée et optimise uniquement SO(3). V2 et V1 restent disponibles comme replis et diagnostics.
+
+
+## Capture continue V30
+
+Le mode continu utilise desormais un pipeline d'acquisition sans modifier le capteur :
+
+- la tache ESP32Camera commence naturellement la frame suivante des que le framebuffer precedent est rendu ;
+- apres un changement de viewport, ContinuousMeasurementController force encore une capture fraiche avec purge de la frame pre-acquise ;
+- en viewport stable et pour un intervalle <= 1500 ms, la frame sequentielle pre-acquise est acceptee ;
+- acquisition capteur et decodage/detection du cycle precedent se chevauchent donc partiellement ;
+- la calibration conserve toujours la strategie de frame strictement fraiche.
+
+Cette optimisation ne modifie pas la chaine camera V25, V6.1-robust5 ni Pose V3.
