@@ -24,7 +24,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   std::string xml;
   xml.reserve(30000);
   xml += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-  xml += "<api name=\"geometrie-camera\" version=\"35\" style=\"REST-over-HTTP\">\n";
+  xml += "<api name=\"geometrie-camera\" version=\"36\" style=\"REST-over-HTTP\">\n";
   xml += "  <description>API camera OV5640 : capture JPEG, reglages capteur, viewport ROI haute resolution, tracking cible, detection, calibration, mesure geometrique et acquisition continue.</description>\n";
   xml += "  <conventions>\n";
   xml += "    <item>Les routes de commande utilisent encore HTTP GET pendant la phase de mise au point.</item>\n";
@@ -39,6 +39,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "    <item>La calibration automatique utilise le tracking jusqu au mode PRECISE 800x600 natif sans scaling. Les quatre coins sont ensuite convertis dans le repere canonique 2560x1920 ; on obtient ainsi une calibration plein capteur sans decoder une image 5 MP complete.</item>\n";
   xml += "    <item>Le moteur de geometrie supporte le modele de distorsion Brown-Conrady k1,k2,p1,p2,k3. Les coefficients nuls conservent exactement le comportement sans correction.</item>\n";
   xml += "    <item>Apres la detection et le raffinement pixel historiques, la geometrie de cible peut etre affinee au subpixel par ajustement des quatre bords externes. /target/status expose subpixel_refined et les RMS de l ajustement ; en cas de rejet, le chemin pixel historique est conserve.</item>\n";
+  xml += "    <item>Distance V4 : 31 echantillons par bord, moyenne locale du gradient le long du bord, ajustement robuste des quatre droites puis largeur/hauteur derivees directement des paires de droites opposees. Si V4 est indisponible, le moteur conserve automatiquement le calcul par coins.</item>\n";
   xml += "    <item>La distance fournie a la calibration est interpretee comme la distance physique camera-centre cible. Le moteur resout iterativement la profondeur Z hors axe avant de calculer fx/fy, au lieu d assimiler directement cette distance a Z.</item>\n";
   xml += "    <item>En mode continu PRECISE, MeasurementManager stabilise les mesures sur une fenetre de 5 acquisitions : amorcage brut sur 2 points, puis mediane/moyenne tronquee robuste. Toute transition/recentrage de viewport remet cette fenetre a zero.</item>\n";
   xml += "    <item>/continuous/stop annule immediatement la sequence JPEG en vol, interdit toute nouvelle frame fraiche et ignore tout resultat FILTER/DETECT/COMPUTE qui terminerait apres l ordre d arret. Les dernieres valeurs valides peuvent rester conservees pour affichage mais ne constituent pas de nouvelles mesures.</item>\n";
@@ -100,7 +101,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
 
   xml += "  <method name=\"target_detect\" http=\"GET\" path=\"/target/detect\"><response code=\"200\" content_type=\"application/json\"/><response code=\"409\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
   xml += "  <method name=\"target_status\" http=\"GET\" path=\"/target/status\">\n";
-  xml += "    <comment>Expose la cible detectee et le diagnostic de raffinement subpixel : subpixel_refined, subpixel_rms_px, subpixel_max_rms_px et subpixel_gradient.</comment>\n";
+  xml += "    <comment>Expose la cible detectee et le diagnostic de raffinement subpixel : subpixel_refined, subpixel_rms_px, subpixel_max_rms_px, subpixel_gradient, subpixel_width_px et subpixel_height_px.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
   xml += "  <method name=\"target_preview\" http=\"GET\" path=\"/target/preview.bmp\"><response code=\"200\" content_type=\"image/bmp\"/><response code=\"409\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
@@ -142,7 +143,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  <method name=\"full_calibration_cancel\" http=\"GET\" path=\"/calibration/full/cancel\"><response code=\"200\" content_type=\"application/json\"/></method>\n";
   xml += "  <method name=\"measurement_compute\" http=\"GET\" path=\"/measurement/compute\"><response code=\"200\" content_type=\"application/json\"/><response code=\"409\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
   xml += "  <method name=\"measurement_status\" http=\"GET\" path=\"/measurement/status\">\n";
-  xml += "    <comment>Retourne measurement (valeur publiee), raw_measurement (derniere mesure brute) et stabilization avec sample_count/window_size/distance_stddev_mm/distance_span_mm. La stabilisation est active uniquement sur les acquisitions PRECISE du mode continu.</comment>\n";
+  xml += "    <comment>Retourne measurement (valeur publiee), raw_measurement (derniere mesure brute) et stabilization avec sample_count/window_size/distance_stddev_mm/distance_span_mm. measurement/raw_measurement exposent edge_v4_used et apparent_width_px/apparent_height_px. La stabilisation est active uniquement sur les acquisitions PRECISE du mode continu.</comment>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
 
