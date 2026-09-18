@@ -24,6 +24,8 @@ class CameraSettingsController {
   CameraSettingsController();
 
   CameraSettingsSnapshot read() const;
+  bool read_live_exposure_gain(int &exposure, int &gain,
+                               std::string &error) const;
 
   bool set_monochrome(bool enabled, std::string &error) const;
   bool set_brightness(int value, std::string &error) const;
