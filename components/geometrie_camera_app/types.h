@@ -70,6 +70,9 @@ struct GeometryMeasurement {
   bool valid;
   bool calibrated;
   bool pose_valid;
+  bool edge_v4_used;
+  float apparent_width_px;
+  float apparent_height_px;
   float distance_mm;
   float x_mm;
   float y_mm;
