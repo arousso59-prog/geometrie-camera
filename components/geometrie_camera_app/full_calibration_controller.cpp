@@ -1,5 +1,7 @@
 #include "full_calibration_controller.h"
 
+#include "target_board_model.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -68,7 +70,6 @@ FullCalibrationController::FullCalibrationController(
       phase_(CalibrationPhase::TRACKING),
       last_error_(),
       known_distance_mm_(0.0f),
-      target_size_mm_(0.0f),
       requested_samples_(DEFAULT_SAMPLE_COUNT),
       valid_samples_(0),
       attempts_(0),
@@ -122,14 +123,12 @@ FullCalibrationController::FullCalibrationController(
       tuning_roi_y_(0),
       tuning_roi_width_(0),
       tuning_roi_height_(0),
-      previous_target_size_mm_(0.0f),
       previous_calibration_(),
       previous_config_saved_(false),
       previous_camera_settings_(),
       previous_camera_settings_saved_(false) {}
 
 bool FullCalibrationController::start(float known_distance_mm,
-                                      float target_size_mm,
                                       uint8_t sample_count,
                                       bool force) {
   if (this->running()) {
@@ -153,12 +152,6 @@ bool FullCalibrationController::start(float known_distance_mm,
     this->state_ = FullCalibrationState::ERROR;
     return false;
   }
-  if (!std::isfinite(target_size_mm) || target_size_mm < 1.0f ||
-      target_size_mm > 1000.0f) {
-    this->last_error_ = "target_size_mm_out_of_range";
-    this->state_ = FullCalibrationState::ERROR;
-    return false;
-  }
   if (sample_count < 3 || sample_count > MAX_SAMPLE_COUNT) {
     this->last_error_ = "sample_count_out_of_range";
     this->state_ = FullCalibrationState::ERROR;
@@ -176,7 +169,6 @@ bool FullCalibrationController::start(float known_distance_mm,
     this->continuous_controller_->stop();
   }
 
-  this->previous_target_size_mm_ = engine.target_size_mm();
   this->previous_calibration_ = engine.calibration();
   this->previous_config_saved_ = true;
 
@@ -190,7 +182,6 @@ bool FullCalibrationController::start(float known_distance_mm,
 
   this->reset_run_();
   this->known_distance_mm_ = known_distance_mm;
-  this->target_size_mm_ = target_size_mm;
   this->requested_samples_ = sample_count;
   this->max_attempts_ = std::min<uint8_t>(
       MAX_TOTAL_ATTEMPTS,
@@ -198,17 +189,13 @@ bool FullCalibrationController::start(float known_distance_mm,
           sample_count * 5 + OPTICAL_TUNING_MAX_ATTEMPTS,
           sample_count + 24 + OPTICAL_TUNING_MAX_ATTEMPTS)));
 
-  if (!engine.set_target_size_mm(target_size_mm)) {
-    this->fail_("target_size_apply_failed");
-    return false;
-  }
-
   ESP_LOGI(TAG,
-           "Calibration V5 demandee: PRECISE=%ux%u, distance=%.2f mm cible=%.2f mm "
+           "Calibration R1 demandee: PRECISE=%ux%u, distance=%.2f mm, "
+           "cible fixe=250x100 mm reference=240x90 mm, marqueurs A+B+C, "
            "echantillons=%u, auto-reglage optique <=%u prises",
            static_cast<unsigned>(NATIVE_OUTPUT_WIDTH),
            static_cast<unsigned>(NATIVE_OUTPUT_HEIGHT),
-           known_distance_mm, target_size_mm,
+           known_distance_mm,
            static_cast<unsigned>(sample_count),
            static_cast<unsigned>(OPTICAL_TUNING_MAX_ATTEMPTS));
 
@@ -461,7 +448,6 @@ uint8_t FullCalibrationController::valid_samples() const { return this->valid_sa
 uint8_t FullCalibrationController::attempts() const { return this->attempts_; }
 uint8_t FullCalibrationController::max_attempts() const { return this->max_attempts_; }
 float FullCalibrationController::known_distance_mm() const { return this->known_distance_mm_; }
-float FullCalibrationController::target_size_mm() const { return this->target_size_mm_; }
 float FullCalibrationController::mean_fx_px() const { return this->mean_fx_px_; }
 float FullCalibrationController::mean_fy_px() const { return this->mean_fy_px_; }
 float FullCalibrationController::stddev_fx_px() const { return this->stddev_fx_px_; }
@@ -1313,7 +1299,6 @@ void FullCalibrationController::restore_previous_measurement_config_() {
   if (!this->previous_config_saved_ || this->measurement_manager_ == nullptr) return;
 
   GeometryMeasurementEngine &engine = this->measurement_manager_->measurement_engine();
-  engine.set_target_size_mm(this->previous_target_size_mm_);
   engine.set_calibration(this->previous_calibration_);
   this->measurement_manager_->reset();
   this->previous_config_saved_ = false;
