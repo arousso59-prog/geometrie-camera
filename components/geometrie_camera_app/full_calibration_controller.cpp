@@ -11,6 +11,7 @@
 #include "jpeg_diagnostic.h"
 #include "jpeg_filtered_diagnostic.h"
 #include "measurement_manager.h"
+#include "target_detection_preview.h"
 #include "target_detection_service.h"
 #include "target_tracking_controller.h"
 
@@ -33,13 +34,15 @@ FullCalibrationController::FullCalibrationController(
     TargetDetectionService *detection_service,
     MeasurementManager *measurement_manager,
     ContinuousMeasurementController *continuous_controller,
-    TargetTrackingController *tracking_controller)
+    TargetTrackingController *tracking_controller,
+    TargetDetectionPreview *preview)
     : jpeg_source_(jpeg_source),
       filtered_source_(filtered_source),
       detection_service_(detection_service),
       measurement_manager_(measurement_manager),
       continuous_controller_(continuous_controller),
       tracking_controller_(tracking_controller),
+      preview_(preview),
       state_(FullCalibrationState::IDLE),
       last_error_(),
       known_distance_mm_(0.0f),
@@ -56,6 +59,11 @@ FullCalibrationController::FullCalibrationController(
       mean_fy_px_(0.0f),
       stddev_fx_px_(0.0f),
       stddev_fy_px_(0.0f),
+      preview_attempt_(0),
+      last_target_found_(false),
+      last_sample_valid_(false),
+      last_sample_fx_px_(0.0f),
+      last_sample_fy_px_(0.0f),
       previous_target_size_mm_(0.0f),
       previous_calibration_(),
       previous_config_saved_(false),
@@ -220,6 +228,19 @@ void FullCalibrationController::loop() {
       const TargetObservation local_observation =
           this->detection_service_->last_observation();
 
+      this->last_target_found_ = target_found;
+      this->last_sample_valid_ = false;
+      this->last_sample_fx_px_ = 0.0f;
+      this->last_sample_fy_px_ = 0.0f;
+
+      // Figer l'image correspondant exactement a cette tentative avant de
+      // demander la capture suivante. La console peut ainsi suivre chaque
+      // etape SEARCH/ZOOM/PRECISE sans decalage d'un cycle.
+      if (this->preview_ != nullptr &&
+          this->preview_->render(this->filtered_source_, local_observation)) {
+        this->preview_attempt_ = this->attempts_;
+      }
+
       const CameraViewportMode mode_before =
           this->tracking_controller_->viewport_controller()->snapshot().mode;
 
@@ -260,6 +281,10 @@ void FullCalibrationController::loop() {
         if (this->derive_current_sample_(reference_observation, sample)) {
           this->samples_[this->valid_samples_] = sample;
           this->valid_samples_++;
+          this->last_sample_valid_ = true;
+          this->last_sample_fx_px_ = sample.fx_px;
+          this->last_sample_fy_px_ = sample.fy_px;
+          this->update_running_stats_();
           ESP_LOGI(TAG,
                    "Calibration native PRECISE: echantillon %u/%u fx=%.3f fy=%.3f "
                    "cible=%.1fx%.1f px qualite=%.3f",
@@ -339,6 +364,16 @@ float FullCalibrationController::mean_fx_px() const { return this->mean_fx_px_; 
 float FullCalibrationController::mean_fy_px() const { return this->mean_fy_px_; }
 float FullCalibrationController::stddev_fx_px() const { return this->stddev_fx_px_; }
 float FullCalibrationController::stddev_fy_px() const { return this->stddev_fy_px_; }
+uint8_t FullCalibrationController::preview_attempt() const { return this->preview_attempt_; }
+bool FullCalibrationController::last_target_found() const { return this->last_target_found_; }
+bool FullCalibrationController::last_sample_valid() const { return this->last_sample_valid_; }
+float FullCalibrationController::last_sample_fx_px() const { return this->last_sample_fx_px_; }
+float FullCalibrationController::last_sample_fy_px() const { return this->last_sample_fy_px_; }
+const char *FullCalibrationController::tracking_mode_text() const {
+  return this->tracking_controller_ != nullptr
+             ? this->tracking_controller_->mode_text()
+             : "unavailable";
+}
 const CameraCalibration &FullCalibrationController::result_calibration() const {
   return this->result_calibration_;
 }
@@ -389,9 +424,12 @@ bool FullCalibrationController::derive_current_sample_(
       sample);
 }
 
-void FullCalibrationController::finish_success_() {
+void FullCalibrationController::update_running_stats_() {
   if (this->valid_samples_ == 0) {
-    this->fail_("no_valid_samples");
+    this->mean_fx_px_ = 0.0f;
+    this->mean_fy_px_ = 0.0f;
+    this->stddev_fx_px_ = 0.0f;
+    this->stddev_fy_px_ = 0.0f;
     return;
   }
 
@@ -401,7 +439,6 @@ void FullCalibrationController::finish_success_() {
     sum_fx += this->samples_[i].fx_px;
     sum_fy += this->samples_[i].fy_px;
   }
-
   this->mean_fx_px_ = static_cast<float>(sum_fx / this->valid_samples_);
   this->mean_fy_px_ = static_cast<float>(sum_fy / this->valid_samples_);
 
@@ -417,6 +454,15 @@ void FullCalibrationController::finish_success_() {
   variance_fy /= this->valid_samples_;
   this->stddev_fx_px_ = static_cast<float>(std::sqrt(variance_fx));
   this->stddev_fy_px_ = static_cast<float>(std::sqrt(variance_fy));
+}
+
+void FullCalibrationController::finish_success_() {
+  if (this->valid_samples_ == 0) {
+    this->fail_("no_valid_samples");
+    return;
+  }
+
+  this->update_running_stats_();
 
   this->result_calibration_ = this->samples_[0];
   this->result_calibration_.fx_px = this->mean_fx_px_;
@@ -492,6 +538,11 @@ void FullCalibrationController::reset_run_() {
   this->mean_fy_px_ = 0.0f;
   this->stddev_fx_px_ = 0.0f;
   this->stddev_fy_px_ = 0.0f;
+  this->preview_attempt_ = 0;
+  this->last_target_found_ = false;
+  this->last_sample_valid_ = false;
+  this->last_sample_fx_px_ = 0.0f;
+  this->last_sample_fy_px_ = 0.0f;
   for (auto &sample : this->samples_) {
     sample = CameraCalibration();
   }
