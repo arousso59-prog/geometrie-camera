@@ -19,7 +19,6 @@ class TargetDetectionApiHandler : public AsyncWebHandler {
   void handleRequest(AsyncWebServerRequest *request) override;
 
  private:
-  void handle_detect_(AsyncWebServerRequest *request);
   void handle_status_(AsyncWebServerRequest *request) const;
   void handle_preview_(AsyncWebServerRequest *request);
   void send_status_(AsyncWebServerRequest *request, int response_code, const char *status,
