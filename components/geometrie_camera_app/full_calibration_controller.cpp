@@ -94,6 +94,9 @@ FullCalibrationController::FullCalibrationController(
       current_mean_luma_x100_(0),
       current_dark_percent_x100_(0),
       current_bright_percent_x100_(0),
+      current_p10_luma_(0),
+      current_p90_luma_(0),
+      current_contrast_luma_(0),
       best_ae_level_(0),
       best_exposure_(0),
       best_gain_(0),
@@ -468,6 +471,9 @@ float FullCalibrationController::current_subpixel_rms_px() const { return this->
 uint32_t FullCalibrationController::current_mean_luma_x100() const { return this->current_mean_luma_x100_; }
 uint32_t FullCalibrationController::current_dark_percent_x100() const { return this->current_dark_percent_x100_; }
 uint32_t FullCalibrationController::current_bright_percent_x100() const { return this->current_bright_percent_x100_; }
+uint8_t FullCalibrationController::current_p10_luma() const { return this->current_p10_luma_; }
+uint8_t FullCalibrationController::current_p90_luma() const { return this->current_p90_luma_; }
+uint8_t FullCalibrationController::current_contrast_luma() const { return this->current_contrast_luma_; }
 int FullCalibrationController::best_ae_level() const { return this->best_ae_level_; }
 int FullCalibrationController::best_exposure() const { return this->best_exposure_; }
 int FullCalibrationController::best_gain() const { return this->best_gain_; }
@@ -587,6 +593,9 @@ float FullCalibrationController::evaluate_optical_score_(
   this->current_mean_luma_x100_ = 0;
   this->current_dark_percent_x100_ = 0;
   this->current_bright_percent_x100_ = 0;
+  this->current_p10_luma_ = 0;
+  this->current_p90_luma_ = 0;
+  this->current_contrast_luma_ = 0;
 
   if (!this->sharpness_evaluator_->evaluate_region(
           this->tuning_roi_x_, this->tuning_roi_y_,
@@ -598,6 +607,25 @@ float FullCalibrationController::evaluate_optical_score_(
   this->current_mean_luma_x100_ = this->sharpness_evaluator_->mean_luma_x100();
   this->current_dark_percent_x100_ = this->sharpness_evaluator_->dark_percent_x100();
   this->current_bright_percent_x100_ = this->sharpness_evaluator_->bright_percent_x100();
+  this->current_p10_luma_ = this->sharpness_evaluator_->p10_luma();
+  this->current_p90_luma_ = this->sharpness_evaluator_->p90_luma();
+  this->current_contrast_luma_ = this->sharpness_evaluator_->contrast_luma();
+
+  // Pour la calibration de precision, un candidat sans detection V4 fiable
+  // ne peut pas devenir le meilleur reglage optique.
+  if (!target_found || !observation.subpixel_refined) {
+    return 0.0f;
+  }
+
+  // Eliminer les images franchement sous-exposees ou sans contraste utile.
+  // Le motif noir/blanc doit fournir un blanc haut, un noir bas et une large
+  // dynamique. Ces seuils sont volontairement larges pour rester robustes aux
+  // conditions de lumiere de la piece.
+  if (this->current_p90_luma_ < 140U ||
+      this->current_contrast_luma_ < 80U ||
+      this->current_p10_luma_ > 140U) {
+    return 0.0f;
+  }
 
   const float quality_factor =
       target_found ? (0.55f + 0.45f * std::max(0.0f, std::min(1.0f, observation.quality)))
@@ -608,21 +636,24 @@ float FullCalibrationController::evaluate_optical_score_(
           ? 1.0f / (1.0f + 1.5f * rms)
           : 0.45f;
 
-  const float luma =
-      static_cast<float>(this->current_mean_luma_x100_) / 100.0f;
-  const float luma_factor = std::max(
-      0.35f, 1.0f - std::fabs(luma - 128.0f) / 170.0f);
+  const float white_factor = std::max(
+      0.10f, std::min(1.0f,
+                      (static_cast<float>(this->current_p90_luma_) - 140.0f) / 70.0f));
+  const float black_factor = std::max(
+      0.10f, std::min(1.0f,
+                      (140.0f - static_cast<float>(this->current_p10_luma_)) / 80.0f));
+  const float contrast_factor = std::max(
+      0.10f, std::min(1.0f,
+                      (static_cast<float>(this->current_contrast_luma_) - 80.0f) / 110.0f));
 
-  // Le motif contient volontairement de grandes zones noires et blanches :
-  // le pourcentage de pixels proches des bornes est donc conserve comme
-  // diagnostic mais ne doit pas penaliser directement le score. A resultat
-  // optique comparable, preferer legerement un gain plus faible pour limiter
-  // le bruit capteur.
+  // Le gain peut artificiellement faire monter un score de nettete en
+  // ajoutant du bruit. La penalite est volontairement plus forte qu'avant.
   const float gain_factor =
-      1.0f / (1.0f + 0.012f * static_cast<float>(std::max(0, this->current_gain_)));
+      1.0f / (1.0f + 0.025f * static_cast<float>(std::max(0, this->current_gain_)));
 
   return static_cast<float>(this->current_sharpness_x100_) *
-         quality_factor * rms_factor * luma_factor * gain_factor;
+         quality_factor * rms_factor *
+         white_factor * black_factor * contrast_factor * gain_factor;
 }
 
 bool FullCalibrationController::handle_tuning_result_(
@@ -640,7 +671,7 @@ bool FullCalibrationController::handle_tuning_result_(
 
   ESP_LOGI(TAG,
            "Optique %u/%u phase=%s AE=%d exp=%d gain=%d score=%.1f net=%u "
-           "qual=%.3f rms=%.3f luma=%.1f clip=%.1f%%",
+           "qual=%.3f rms=%.3f P10=%u P90=%u C=%u luma=%.1f clip=%.1f%%",
            static_cast<unsigned>(this->tuning_attempts_),
            static_cast<unsigned>(OPTICAL_TUNING_MAX_ATTEMPTS),
            this->phase_text(), this->current_ae_level_,
@@ -649,6 +680,9 @@ bool FullCalibrationController::handle_tuning_result_(
            static_cast<unsigned>(this->current_sharpness_x100_),
            this->current_detection_quality_,
            this->current_subpixel_rms_px_,
+           static_cast<unsigned>(this->current_p10_luma_),
+           static_cast<unsigned>(this->current_p90_luma_),
+           static_cast<unsigned>(this->current_contrast_luma_),
            static_cast<float>(this->current_mean_luma_x100_) / 100.0f,
            static_cast<float>(this->current_dark_percent_x100_ +
                               this->current_bright_percent_x100_) /
@@ -986,6 +1020,9 @@ void FullCalibrationController::reset_run_() {
   this->current_mean_luma_x100_ = 0;
   this->current_dark_percent_x100_ = 0;
   this->current_bright_percent_x100_ = 0;
+  this->current_p10_luma_ = 0;
+  this->current_p90_luma_ = 0;
+  this->current_contrast_luma_ = 0;
   this->best_ae_level_ = 0;
   this->best_exposure_ = 0;
   this->best_gain_ = 0;
