@@ -231,6 +231,9 @@ void FullCalibrationApiHandler::send_status_(
   json += ",\"mean_luma_x100\":" + std::to_string(this->controller_->current_mean_luma_x100());
   json += ",\"dark_percent_x100\":" + std::to_string(this->controller_->current_dark_percent_x100());
   json += ",\"bright_percent_x100\":" + std::to_string(this->controller_->current_bright_percent_x100());
+  json += ",\"p10_luma\":" + std::to_string(this->controller_->current_p10_luma());
+  json += ",\"p90_luma\":" + std::to_string(this->controller_->current_p90_luma());
+  json += ",\"contrast_luma\":" + std::to_string(this->controller_->current_contrast_luma());
   json += ",\"best_ae_level\":" + std::to_string(this->controller_->best_ae_level());
   json += ",\"best_exposure\":" + std::to_string(this->controller_->best_exposure());
   json += ",\"best_gain\":" + std::to_string(this->controller_->best_gain());
