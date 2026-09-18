@@ -19,13 +19,13 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   std::string xml;
   xml.reserve(7000);
   xml += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-  xml += "<api name=\"geometrie-camera\" version=\"25\">\n";
+  xml += "<api name=\"geometrie-camera\" version=\"26\">\n";
   xml += "  <description>API operationnelle du capteur de geometrie. Le tracking haute precision et les reglages optiques sont automatiques.</description>\n";
   xml += "  <conventions>\n";
   xml += "    <item>Le tracking SEARCH vers PRECISE est permanent et ne possede plus de commande activation/desactivation.</item>\n";
   xml += "    <item>Les reglages camera sont internes a la calibration automatique et ne sont plus exposes en commande manuelle.</item>\n";
   xml += "    <item>Le pipeline image est capture JPEG, decodage gris, detection V6.1 puis mesure. Le controle de nettete et la correction d artefacts ont ete retires.</item>\n";
-  xml += "    <item>V25 stabilise AEC/AGC auto, lit les registres reels OV5640, valide le verrouillage manuel et utilise un fallback auto si le verrouillage degrade l image.</item>\n";
+  xml += "    <item>V26 conserve le verrouillage OV5640 V25 et evalue chaque candidat manuel sur plusieurs images afin de privilegier la repetabilite metrologique.</item>\n";
   xml += "    <item>SEARCH, ZOOM_WIDE, ZOOM_MEDIUM et ZOOM_FINE servent uniquement au tracking. Seul PRECISE natif 800x600 produit une mesure.</item>\n";
   xml += "    <item>La calibration, la prise de mesure et le mode continu restent les trois usages operationnels conserves.</item>\n";
   xml += "  </conventions>\n";
