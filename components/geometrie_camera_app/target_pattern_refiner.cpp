@@ -1,5 +1,7 @@
 #include "target_pattern_refiner.h"
 
+#include "target_board_model.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -12,15 +14,6 @@ namespace geometrie_camera_app {
 namespace {
 static const char *const TAG = "target_pattern_refiner";
 
-constexpr uint8_t TARGET_GRID[7][7] = {
-    {1, 1, 1, 1, 1, 1, 1},
-    {1, 1, 0, 1, 1, 0, 1},
-    {1, 0, 1, 0, 0, 1, 1},
-    {1, 1, 1, 1, 0, 0, 1},
-    {1, 0, 0, 1, 1, 1, 1},
-    {1, 1, 0, 0, 1, 0, 1},
-    {1, 1, 1, 1, 1, 1, 1},
-};
 
 constexpr float SEARCH_RADIUS_PX = 2.50f;
 constexpr float SEARCH_STEP_PX = 0.25f;
@@ -107,6 +100,7 @@ TargetPatternRefiner::TargetPatternRefiner() {}
 bool TargetPatternRefiner::refine(
     const GrayFrameView &frame,
     const TargetCandidate &candidate,
+    TargetMarkerId marker_id,
     uint8_t rotation_quarters,
     TargetPatternMetrics &metrics) const {
   metrics = TargetPatternMetrics();
@@ -124,9 +118,9 @@ bool TargetPatternRefiner::refine(
   for (uint8_t row = 0; row < 7 && feature_count < MAX_FEATURES; ++row) {
     for (uint8_t column = 1; column < 7 && feature_count < MAX_FEATURES; ++column) {
       const uint8_t before = this->expected_cell_(
-          row, static_cast<uint8_t>(column - 1U), rotation_quarters);
+          marker_id, row, static_cast<uint8_t>(column - 1U), rotation_quarters);
       const uint8_t after = this->expected_cell_(
-          row, column, rotation_quarters);
+          marker_id, row, column, rotation_quarters);
       if (before == after) continue;
 
       const int expected_sign =
@@ -139,7 +133,7 @@ bool TargetPatternRefiner::refine(
         PatternFeature feature{};
         if (this->find_transition_(
                 frame, candidate, u, v, true,
-                expected_sign, rotation_quarters, feature)) {
+                expected_sign, marker_id, rotation_quarters, feature)) {
           features[feature_count++] = feature;
         }
       }
@@ -149,9 +143,9 @@ bool TargetPatternRefiner::refine(
   for (uint8_t row = 1; row < 7 && feature_count < MAX_FEATURES; ++row) {
     for (uint8_t column = 0; column < 7 && feature_count < MAX_FEATURES; ++column) {
       const uint8_t before = this->expected_cell_(
-          static_cast<uint8_t>(row - 1U), column, rotation_quarters);
+          marker_id, static_cast<uint8_t>(row - 1U), column, rotation_quarters);
       const uint8_t after = this->expected_cell_(
-          row, column, rotation_quarters);
+          marker_id, row, column, rotation_quarters);
       if (before == after) continue;
 
       const int expected_sign =
@@ -164,7 +158,7 @@ bool TargetPatternRefiner::refine(
         PatternFeature feature{};
         if (this->find_transition_(
                 frame, candidate, u, v, false,
-                expected_sign, rotation_quarters, feature)) {
+                expected_sign, marker_id, rotation_quarters, feature)) {
           features[feature_count++] = feature;
         }
       }
@@ -283,17 +277,18 @@ float TargetPatternRefiner::sample_bilinear_(
 }
 
 uint8_t TargetPatternRefiner::expected_cell_(
-    uint8_t row, uint8_t column, uint8_t rotation_quarters) const {
+    TargetMarkerId marker_id, uint8_t row, uint8_t column,
+    uint8_t rotation_quarters) const {
   rotation_quarters &= 0x03U;
   switch (rotation_quarters) {
     case 1:
-      return TARGET_GRID[6U - column][row];
+      return target_r1_marker_cell(marker_id, 6U - column, row);
     case 2:
-      return TARGET_GRID[6U - row][6U - column];
+      return target_r1_marker_cell(marker_id, 6U - row, 6U - column);
     case 3:
-      return TARGET_GRID[column][6U - row];
+      return target_r1_marker_cell(marker_id, column, 6U - row);
     default:
-      return TARGET_GRID[row][column];
+      return target_r1_marker_cell(marker_id, row, column);
   }
 }
 
@@ -328,6 +323,7 @@ bool TargetPatternRefiner::find_transition_(
     float observed_u, float observed_v,
     bool along_u,
     int expected_sign,
+    TargetMarkerId marker_id,
     uint8_t rotation_quarters,
     PatternFeature &feature) const {
   const TargetPoint base =
