@@ -257,7 +257,12 @@ bool TargetSubpixelRefiner::refine_edge_(const GrayFrameView &frame,
 
   const float point_dx = initial_line.point.x - start.x;
   const float point_dy = initial_line.point.y - start.y;
-  const float initial_intercept = point_dx * normal_x + point_dy * normal_y;
+  const float initial_point_s =
+      point_dx * tangent_x + point_dy * tangent_y;
+  const float initial_point_d =
+      point_dx * normal_x + point_dy * normal_y;
+  const float initial_intercept =
+      initial_point_d - initial_slope * initial_point_s;
 
   float final_s[EDGE_SAMPLE_COUNT];
   float final_offsets[EDGE_SAMPLE_COUNT];
