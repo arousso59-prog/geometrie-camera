@@ -46,7 +46,9 @@ CameraViewportSnapshot::CameraViewportSnapshot()
               CameraViewportController::OUTPUT_HEIGHT) {}
 
 CameraViewportController::CameraViewportController(CameraResolutionController *resolution_controller)
-    : resolution_controller_(resolution_controller), snapshot_() {
+    : resolution_controller_(resolution_controller),
+      snapshot_(),
+      reference_pattern_features_{} {
   this->snapshot_.supported = this->supports_precise_roi();
 }
 
@@ -255,42 +257,140 @@ bool CameraViewportController::apply_zoom_window_(CameraViewportMode mode,
   return true;
 }
 
-TargetObservation CameraViewportController::to_reference(const TargetObservation &observation) const {
+TargetObservation CameraViewportController::to_reference(
+    const TargetObservation &observation) const {
   TargetObservation result = observation;
-  result.center_x_px = this->snapshot_.window_x +
-      (observation.center_x_px + 0.5f) * this->snapshot_.scale_x - 0.5f;
-  result.center_y_px = this->snapshot_.window_y +
-      (observation.center_y_px + 0.5f) * this->snapshot_.scale_y - 0.5f;
+
+  const float sx = this->snapshot_.scale_x;
+  const float sy = this->snapshot_.scale_y;
+  const float pixel_scale = 0.5f * (sx + sy);
+  const float offset_x =
+      static_cast<float>(this->snapshot_.window_x) + 0.5f * sx - 0.5f;
+  const float offset_y =
+      static_cast<float>(this->snapshot_.window_y) + 0.5f * sy - 0.5f;
+
+  result.center_x_px = sx * observation.center_x_px + offset_x;
+  result.center_y_px = sy * observation.center_y_px + offset_y;
   result.top_left_px = this->to_reference_point_(observation.top_left_px);
   result.top_right_px = this->to_reference_point_(observation.top_right_px);
   result.bottom_right_px = this->to_reference_point_(observation.bottom_right_px);
   result.bottom_left_px = this->to_reference_point_(observation.bottom_left_px);
 
-  if (observation.valid) {
-    result.width_px = 0.5f * (point_distance(result.top_left_px, result.top_right_px) +
-                              point_distance(result.bottom_left_px, result.bottom_right_px));
-    result.height_px = 0.5f * (point_distance(result.top_left_px, result.bottom_left_px) +
-                               point_distance(result.top_right_px, result.bottom_right_px));
-
-    if (observation.subpixel_refined &&
-        observation.subpixel_width_px > 0.0f &&
-        observation.subpixel_height_px > 0.0f) {
-      // Les viewports actuels gardent la meme echelle X/Y pour un mode donne.
-      // Conserver neanmoins les deux facteurs explicitement pour documenter
-      // l'axe de chaque dimension V4.
-      result.subpixel_width_px =
-          observation.subpixel_width_px * this->snapshot_.scale_x;
-      result.subpixel_height_px =
-          observation.subpixel_height_px * this->snapshot_.scale_y;
-      result.subpixel_width_sigma_px =
-          observation.subpixel_width_sigma_px * this->snapshot_.scale_x;
-      result.subpixel_height_sigma_px =
-          observation.subpixel_height_sigma_px * this->snapshot_.scale_y;
+  auto transform_line = [&](const ImageLine &source) -> ImageLine {
+    ImageLine line = source;
+    if (!source.valid) return line;
+    line.point = this->to_reference_point_(source.point);
+    line.dx = source.dx * sx;
+    line.dy = source.dy * sy;
+    const float norm = std::sqrt(line.dx * line.dx + line.dy * line.dy);
+    if (!std::isfinite(norm) || norm < 1.0e-7f) {
+      line.valid = false;
+      return line;
     }
+    line.dx /= norm;
+    line.dy /= norm;
+    return line;
+  };
+
+  result.subpixel_top_line =
+      transform_line(observation.subpixel_top_line);
+  result.subpixel_right_line =
+      transform_line(observation.subpixel_right_line);
+  result.subpixel_bottom_line =
+      transform_line(observation.subpixel_bottom_line);
+  result.subpixel_left_line =
+      transform_line(observation.subpixel_left_line);
+
+  if (observation.valid) {
+    result.width_px =
+        0.5f * (point_distance(result.top_left_px, result.top_right_px) +
+                point_distance(result.bottom_left_px, result.bottom_right_px));
+    result.height_px =
+        0.5f * (point_distance(result.top_left_px, result.bottom_left_px) +
+                point_distance(result.top_right_px, result.bottom_right_px));
   } else {
-    result.width_px = observation.width_px * this->snapshot_.scale_x;
-    result.height_px = observation.height_px * this->snapshot_.scale_y;
+    result.width_px = observation.width_px * sx;
+    result.height_px = observation.height_px * sy;
   }
+
+  // Toutes les quantites metrologiques doivent etre dans le MEME repere que
+  // fx/fy. Avant V34, seuls les coins et width/height principaux etaient
+  // remappes : les droites/homographies restaient en coordonnees ROI, ce qui
+  // biaisait surtout la pose angulaire.
+  result.subpixel_width_px = observation.subpixel_width_px * sx;
+  result.subpixel_height_px = observation.subpixel_height_px * sy;
+  result.subpixel_width_sigma_px =
+      observation.subpixel_width_sigma_px * sx;
+  result.subpixel_height_sigma_px =
+      observation.subpixel_height_sigma_px * sy;
+
+  result.subpixel_v5_width_px = observation.subpixel_v5_width_px * sx;
+  result.subpixel_v5_height_px = observation.subpixel_v5_height_px * sy;
+  result.subpixel_v5_width_sigma_px =
+      observation.subpixel_v5_width_sigma_px * sx;
+  result.subpixel_v5_height_sigma_px =
+      observation.subpixel_v5_height_sigma_px * sy;
+
+  result.subpixel_v6_width_px = observation.subpixel_v6_width_px * sx;
+  result.subpixel_v6_height_px = observation.subpixel_v6_height_px * sy;
+  result.subpixel_v6_width_sigma_px =
+      observation.subpixel_v6_width_sigma_px * sx;
+  result.subpixel_v6_height_sigma_px =
+      observation.subpixel_v6_height_sigma_px * sy;
+
+  result.subpixel_rms_px = observation.subpixel_rms_px * pixel_scale;
+  result.subpixel_max_rms_px =
+      observation.subpixel_max_rms_px * pixel_scale;
+  result.subpixel_top_rms_px =
+      observation.subpixel_top_rms_px * pixel_scale;
+  result.subpixel_right_rms_px =
+      observation.subpixel_right_rms_px * pixel_scale;
+  result.subpixel_bottom_rms_px =
+      observation.subpixel_bottom_rms_px * pixel_scale;
+  result.subpixel_left_rms_px =
+      observation.subpixel_left_rms_px * pixel_scale;
+
+  result.pattern_rms_px = observation.pattern_rms_px * pixel_scale;
+  result.pattern_max_residual_px =
+      observation.pattern_max_residual_px * pixel_scale;
+
+  if (observation.pattern_refined) {
+    // H_ref = A_roi->reference * H_local.
+    const float *src = observation.pattern_homography;
+    float *dst = result.pattern_homography;
+    dst[0] = sx * src[0] + offset_x * src[6];
+    dst[1] = sx * src[1] + offset_x * src[7];
+    dst[2] = sx * src[2] + offset_x * src[8];
+    dst[3] = sy * src[3] + offset_y * src[6];
+    dst[4] = sy * src[4] + offset_y * src[7];
+    dst[5] = sy * src[5] + offset_y * src[8];
+    dst[6] = src[6];
+    dst[7] = src[7];
+    dst[8] = src[8];
+  }
+
+  if (observation.pattern_features != nullptr &&
+      observation.pattern_features_count > 0) {
+    const uint16_t count = std::min<uint16_t>(
+        observation.pattern_features_count,
+        MAX_REFERENCE_PATTERN_FEATURES);
+    for (uint16_t i = 0; i < count; ++i) {
+      this->reference_pattern_features_[i] =
+          observation.pattern_features[i];
+      this->reference_pattern_features_[i].x =
+          sx * observation.pattern_features[i].x + offset_x;
+      this->reference_pattern_features_[i].y =
+          sy * observation.pattern_features[i].y + offset_y;
+      this->reference_pattern_features_[i].residual =
+          observation.pattern_features[i].residual * pixel_scale;
+    }
+    result.pattern_features = this->reference_pattern_features_;
+    result.pattern_features_count = count;
+  } else {
+    result.pattern_features = nullptr;
+    result.pattern_features_count = 0;
+  }
+
   return result;
 }
 
