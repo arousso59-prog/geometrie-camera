@@ -117,6 +117,7 @@ FullCalibrationController::FullCalibrationController(
       best_brightness_(0),
       best_contrast_(0),
       best_optical_score_(-1.0f),
+      auto_fallback_(false),
       tuning_roi_x_(0),
       tuning_roi_y_(0),
       tuning_roi_width_(0),
@@ -443,7 +444,8 @@ const char *FullCalibrationController::state_text() const {
 const char *FullCalibrationController::phase_text() const {
   switch (this->phase_) {
     case CalibrationPhase::TRACKING: return "tracking";
-    case CalibrationPhase::TUNE_MANUAL_BASELINE: return "optical_manual_baseline";
+    case CalibrationPhase::TUNE_AUTO_SETTLE: return "optical_auto_settle";
+    case CalibrationPhase::TUNE_MANUAL_VALIDATE: return "optical_manual_validate";
     case CalibrationPhase::TUNE_MANUAL_EXPOSURE: return "optical_exposure";
     case CalibrationPhase::TUNE_MANUAL_GAIN: return "optical_gain";
     case CalibrationPhase::TUNE_CONTRAST: return "optical_contrast";
@@ -494,6 +496,7 @@ int FullCalibrationController::best_gain() const { return this->best_gain_; }
 int FullCalibrationController::best_brightness() const { return this->best_brightness_; }
 int FullCalibrationController::best_contrast() const { return this->best_contrast_; }
 float FullCalibrationController::best_optical_score() const { return this->best_optical_score_; }
+bool FullCalibrationController::using_auto_fallback() const { return this->auto_fallback_; }
 const char *FullCalibrationController::tracking_mode_text() const {
   return this->tracking_controller_ != nullptr
              ? this->tracking_controller_->mode_text()
@@ -1289,6 +1292,7 @@ void FullCalibrationController::reset_run_() {
   this->best_brightness_ = 0;
   this->best_contrast_ = 0;
   this->best_optical_score_ = -1.0f;
+  this->auto_fallback_ = false;
   this->tuning_roi_x_ = 0;
   this->tuning_roi_y_ = 0;
   this->tuning_roi_width_ = 0;
