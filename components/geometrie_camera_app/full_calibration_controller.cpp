@@ -517,8 +517,6 @@ bool FullCalibrationController::begin_native_tracking_() {
 
 bool FullCalibrationController::begin_optical_tuning_(
     const TargetObservation &observation) {
-  // La qualite optique est mesuree directement sur le marqueur et son bord
-  // externe. Une petite marge suffit ; une grande ROI ferait dominer le fond.
   const float margin_x = std::max(4.0f, observation.width_px * 0.08f);
   const float margin_y = std::max(4.0f, observation.height_px * 0.08f);
   const int left = clamp_int(
@@ -548,73 +546,61 @@ bool FullCalibrationController::begin_optical_tuning_(
   this->tuning_side_ = 0;
   this->tuning_index_ = 0;
   this->best_optical_score_ = -1.0f;
-
-  // L'image finale de mesure est toujours AEC=OFF / AGC=OFF. Tester les cinq
-  // niveaux AE automatiques puis les bornes 0/1200 et 0/30 consommait des
-  // captures sans information utile. On part maintenant d'un profil manuel
-  // plausible et on affine localement.
-  //
-  // Une calibration precedente fournit le meilleur centre de recherche.
-  // Lors d'une premiere calibration (ou si la camera etait encore en auto),
-  // les valeurs empiriques 400 / 7 donnent une bonne base sur l'OV5640.
-  const CameraSettingsSnapshot baseline = this->settings_controller_->read();
-  int seed_exposure = 400;
-  int seed_gain = 7;
-  int seed_ae_level = 1;
-
-  if (baseline.available) {
-    seed_ae_level = clamp_int(baseline.ae_level, -2, 2);
-
-    if (!baseline.exposure_ctrl &&
-        baseline.aec_value >= 120 && baseline.aec_value <= 900) {
-      seed_exposure = baseline.aec_value;
-    }
-    if (!baseline.gain_ctrl &&
-        baseline.agc_gain >= 0 && baseline.agc_gain <= 16) {
-      seed_gain = baseline.agc_gain;
-    }
-  }
-
-  this->best_ae_level_ = seed_ae_level;
-  this->best_exposure_ = seed_exposure;
-  this->best_gain_ = seed_gain;
+  this->best_exposure_ = 0;
+  this->best_gain_ = 0;
   this->best_brightness_ = 0;
   this->best_contrast_ = 0;
-  this->current_ae_level_ = seed_ae_level;
-  this->current_exposure_ = seed_exposure;
-  this->current_gain_ = seed_gain;
   this->current_brightness_ = 0;
   this->current_contrast_ = 0;
+  this->auto_fallback_ = false;
 
-  std::string postprocess_error;
-  if (!this->settings_controller_->set_brightness(0, postprocess_error) ||
-      !this->settings_controller_->set_contrast(0, postprocess_error)) {
-    ESP_LOGE(TAG, "Neutralisation image impossible: %s", postprocess_error.c_str());
+  const CameraSettingsSnapshot baseline = this->settings_controller_->read();
+  this->best_ae_level_ =
+      baseline.available ? clamp_int(baseline.ae_level, -2, 2) : 0;
+  this->current_ae_level_ = this->best_ae_level_;
+
+  if (!this->enable_auto_controls_()) {
     return false;
   }
 
-  this->phase_ = CalibrationPhase::TUNE_MANUAL_BASELINE;
+  this->phase_ = CalibrationPhase::TUNE_AUTO_SETTLE;
 
   ESP_LOGI(TAG,
-           "Auto-reglage metrologique: ROI %ux%u @%u,%u, centre exp=%d gain=%d; "
-           "recherche exp +/-80/40/20/10, gain +/-2/1, contraste puis luminosite",
+           "Auto-reglage metrologique: ROI %ux%u @%u,%u; stabilisation AEC/AGC "
+           "auto sur %u images, lecture registres reels OV5640 puis validation "
+           "du verrouillage manuel",
            static_cast<unsigned>(this->tuning_roi_width_),
            static_cast<unsigned>(this->tuning_roi_height_),
            static_cast<unsigned>(this->tuning_roi_x_),
            static_cast<unsigned>(this->tuning_roi_y_),
-           seed_exposure, seed_gain);
+           static_cast<unsigned>(AUTO_SETTLE_FRAMES));
 
-  // Ne pas demander la capture ici : le bloc DETECT qui vient de verrouiller
-  // PRECISE appelle request_next_capture_() juste apres le retour. Garder un
-  // seul proprietaire de la transition evite une double requete et un faux
-  // capture_request_failed lorsque capture_pending_ vient de passer a true.
-  return this->prepare_manual_candidate_(seed_exposure, seed_gain);
+  // La boucle DETECT demandera l'unique capture suivante.
+  return true;
+}
+
+bool FullCalibrationController::enable_auto_controls_() {
+  if (this->settings_controller_ == nullptr) return false;
+
+  std::string error;
+  if (!this->settings_controller_->set_brightness(0, error) ||
+      !this->settings_controller_->set_contrast(0, error) ||
+      !this->settings_controller_->set_ae_level(this->best_ae_level_, error) ||
+      !this->settings_controller_->set_exposure_ctrl(true, error) ||
+      !this->settings_controller_->set_gain_ctrl(true, error)) {
+    ESP_LOGE(TAG, "Activation AEC/AGC auto impossible: %s", error.c_str());
+    return false;
+  }
+
+  this->current_brightness_ = 0;
+  this->current_contrast_ = 0;
+  return true;
 }
 
 bool FullCalibrationController::prepare_manual_candidate_(int exposure, int gain) {
   std::string error;
-  const int bounded_exposure = clamp_int(exposure, 0, 1200);
-  const int bounded_gain = clamp_int(gain, 0, 30);
+  const int bounded_exposure = clamp_int(exposure, 0, 65535);
+  const int bounded_gain = clamp_int(gain, 0, 64);
 
   if (!this->settings_controller_->set_exposure_ctrl(false, error) ||
       !this->settings_controller_->set_gain_ctrl(false, error) ||
