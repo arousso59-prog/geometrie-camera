@@ -81,8 +81,13 @@ class CameraViewportController {
   ImagePoint to_reference_point_(const ImagePoint &point) const;
   void set_search_snapshot_();
 
+  static constexpr uint16_t MAX_REFERENCE_PATTERN_FEATURES = 384;
+
   CameraResolutionController *resolution_controller_;
   CameraViewportSnapshot snapshot_;
+  // Scratch persistant pour remapper les correspondances subpixel vers le
+  // repere capteur 2560x1920 sans modifier le buffer du detecteur.
+  mutable PatternFeature reference_pattern_features_[MAX_REFERENCE_PATTERN_FEATURES];
 };
 
 }  // namespace geometrie_camera_app
