@@ -13,16 +13,13 @@ namespace esphome {
 namespace geometrie_camera_app {
 
 namespace {
-static const char *const TAG = "jpeg_filter_diag";
+static const char *const TAG = "jpeg_decode";
 constexpr size_t BMP_FILE_HEADER_SIZE = 14;
 constexpr size_t BMP_DIB_HEADER_SIZE = 40;
 constexpr size_t BMP_PALETTE_SIZE = 256 * 4;
-constexpr size_t BMP_PIXEL_OFFSET = BMP_FILE_HEADER_SIZE + BMP_DIB_HEADER_SIZE + BMP_PALETTE_SIZE;
+constexpr size_t BMP_PIXEL_OFFSET =
+    BMP_FILE_HEADER_SIZE + BMP_DIB_HEADER_SIZE + BMP_PALETTE_SIZE;
 constexpr size_t JPEG_WORK_BUFFER_SIZE = 4096;
-
-constexpr uint8_t GREEN_MIN_VALUE = 48;
-constexpr uint8_t GREEN_DOMINANCE_DELTA = 28;
-constexpr uint8_t GREEN_MEAN_DELTA = 22;
 
 struct JpegDecodeContext {
   const uint8_t *jpeg;
@@ -30,24 +27,9 @@ struct JpegDecodeContext {
   size_t offset;
   uint8_t *pixels;
   size_t row_stride;
-  uint8_t *green_mask;
   uint16_t width;
   uint16_t height;
-  uint32_t green_seed_count;
-  bool detect_green_seeds;
 };
-
-inline bool is_green_seed_rgb(uint8_t red, uint8_t green, uint8_t blue) {
-  const int max_other = std::max<int>(red, blue);
-  const int mean_other = (static_cast<int>(red) + static_cast<int>(blue)) >> 1;
-  return green >= GREEN_MIN_VALUE &&
-         static_cast<int>(green) - max_other >= GREEN_DOMINANCE_DELTA &&
-         static_cast<int>(green) - mean_other >= GREEN_MEAN_DELTA;
-}
-
-inline void mask_set_linear(uint8_t *mask, size_t index) {
-  mask[index >> 3] |= static_cast<uint8_t>(1U << (index & 7U));
-}
 
 void write_u16(uint8_t *buffer, size_t offset, uint16_t value) {
   buffer[offset] = static_cast<uint8_t>(value & 0xFFU);
@@ -62,17 +44,13 @@ void write_u32(uint8_t *buffer, size_t offset, uint32_t value) {
 }
 
 UINT jpeg_input_callback(JDEC *decoder, BYTE *buffer, UINT requested) {
-  if (decoder == nullptr || decoder->device == nullptr) {
-    return 0;
-  }
-
+  if (decoder == nullptr || decoder->device == nullptr) return 0;
   auto *context = static_cast<JpegDecodeContext *>(decoder->device);
-  if (context->jpeg == nullptr || context->offset >= context->jpeg_size) {
-    return 0;
-  }
+  if (context->jpeg == nullptr || context->offset >= context->jpeg_size) return 0;
 
   const size_t remaining = context->jpeg_size - context->offset;
-  const UINT available = static_cast<UINT>(std::min<size_t>(remaining, requested));
+  const UINT available =
+      static_cast<UINT>(std::min<size_t>(remaining, requested));
   if (buffer != nullptr && available > 0) {
     std::memcpy(buffer, context->jpeg + context->offset, available);
   }
@@ -81,83 +59,71 @@ UINT jpeg_input_callback(JDEC *decoder, BYTE *buffer, UINT requested) {
 }
 
 UINT jpeg_output_callback(JDEC *decoder, void *bitmap, JRECT *rect) {
-  if (decoder == nullptr || decoder->device == nullptr || bitmap == nullptr || rect == nullptr) {
+  if (decoder == nullptr || decoder->device == nullptr ||
+      bitmap == nullptr || rect == nullptr) {
     return 0;
   }
 
   auto *context = static_cast<JpegDecodeContext *>(decoder->device);
-  if (context->pixels == nullptr) {
-    return 0;
-  }
-  if (context->detect_green_seeds && context->green_mask == nullptr) {
-    return 0;
-  }
-
-  if (rect->right >= context->width || rect->bottom >= context->height) {
+  if (context->pixels == nullptr ||
+      rect->right >= context->width || rect->bottom >= context->height) {
     return 0;
   }
 
-  const uint16_t block_width = static_cast<uint16_t>(rect->right - rect->left + 1U);
-  const uint16_t block_height = static_cast<uint16_t>(rect->bottom - rect->top + 1U);
+  const uint16_t block_width =
+      static_cast<uint16_t>(rect->right - rect->left + 1U);
+  const uint16_t block_height =
+      static_cast<uint16_t>(rect->bottom - rect->top + 1U);
   const uint8_t *rgb = static_cast<const uint8_t *>(bitmap);
 
   for (uint16_t local_y = 0; local_y < block_height; ++local_y) {
     const uint16_t y = static_cast<uint16_t>(rect->top + local_y);
-    uint8_t *destination = context->pixels + static_cast<size_t>(y) * context->row_stride + rect->left;
-    size_t pixel_index = static_cast<size_t>(y) * context->width + rect->left;
+    uint8_t *destination =
+        context->pixels + static_cast<size_t>(y) * context->row_stride +
+        rect->left;
 
-    for (uint16_t local_x = 0; local_x < block_width; ++local_x, ++pixel_index) {
+    for (uint16_t local_x = 0; local_x < block_width; ++local_x) {
       const uint8_t red = *rgb++;
       const uint8_t green = *rgb++;
       const uint8_t blue = *rgb++;
-
-      const uint32_t luminance = 77U * red + 150U * green + 29U * blue + 128U;
+      const uint32_t luminance =
+          77U * red + 150U * green + 29U * blue + 128U;
       destination[local_x] = static_cast<uint8_t>(luminance >> 8);
-
-      if (context->detect_green_seeds && is_green_seed_rgb(red, green, blue)) {
-        mask_set_linear(context->green_mask, pixel_index);
-        context->green_seed_count++;
-      }
     }
   }
 
   return 1;
 }
-}
+}  // namespace
 
 JpegFilteredDiagnostic::JpegFilteredDiagnostic(JpegDiagnostic *source)
     : source_(source),
-      corrector_(),
       bmp_buffer_(nullptr),
       bmp_size_(0),
       bmp_capacity_(0),
-      green_mask_(nullptr),
-      green_mask_capacity_(0),
       jpeg_work_buffer_(nullptr),
       width_(0),
       height_(0),
       process_count_(0),
       source_capture_count_(0),
       ready_(false),
-      artifact_correction_applied_(false),
       decode_result_(-1),
       decode_ms_(0),
-      correction_ms_(0),
       total_ms_(0) {}
 
 JpegFilteredDiagnostic::~JpegFilteredDiagnostic() { this->clear_buffers_(); }
 
-bool JpegFilteredDiagnostic::process(bool apply_artifact_correction) {
+bool JpegFilteredDiagnostic::process() {
   this->ready_ = false;
-  this->artifact_correction_applied_ = false;
   this->decode_result_ = -1;
   this->decode_ms_ = 0;
-  this->correction_ms_ = 0;
   this->total_ms_ = 0;
 
-  if (this->source_ == nullptr || !this->source_->ready() || this->source_->jpeg_data() == nullptr ||
-      this->source_->jpeg_size() == 0 || !this->source_->has_soi() || !this->source_->has_eoi()) {
-    ESP_LOGW(TAG, "Aucun JPEG valide disponible pour le traitement");
+  if (this->source_ == nullptr || !this->source_->ready() ||
+      this->source_->jpeg_data() == nullptr ||
+      this->source_->jpeg_size() == 0 ||
+      !this->source_->has_soi() || !this->source_->has_eoi()) {
+    ESP_LOGW(TAG, "Aucun JPEG valide disponible pour le decodage");
     return false;
   }
 
@@ -168,23 +134,17 @@ bool JpegFilteredDiagnostic::process(bool apply_artifact_correction) {
     return false;
   }
 
-  if (!this->ensure_buffers_(width, height, apply_artifact_correction)) {
-    ESP_LOGE(TAG, "PSRAM insuffisante pour le diagnostic JPEG %ux%u",
-             static_cast<unsigned>(width), static_cast<unsigned>(height));
-    return false;
-  }
-
-  if (!this->ensure_jpeg_work_buffer_()) {
-    ESP_LOGE(TAG, "Allocation du buffer de travail JPEG impossible");
+  if (!this->ensure_buffers_(width, height) ||
+      !this->ensure_jpeg_work_buffer_()) {
+    ESP_LOGE(TAG, "Allocation impossible pour le decodage JPEG %ux%u",
+             static_cast<unsigned>(width),
+             static_cast<unsigned>(height));
     return false;
   }
 
   const uint32_t total_started = millis();
-  const size_t row_stride = (static_cast<size_t>(width) + 3U) & ~static_cast<size_t>(3U);
-  const size_t mask_size = (static_cast<size_t>(width) * height + 7U) / 8U;
-  if (apply_artifact_correction) {
-    std::memset(this->green_mask_, 0, mask_size);
-  }
+  const size_t row_stride =
+      (static_cast<size_t>(width) + 3U) & ~static_cast<size_t>(3U);
   this->build_bmp_header_(width, height, row_stride);
 
   JpegDecodeContext context{};
@@ -193,42 +153,32 @@ bool JpegFilteredDiagnostic::process(bool apply_artifact_correction) {
   context.offset = 0;
   context.pixels = this->bmp_buffer_ + BMP_PIXEL_OFFSET;
   context.row_stride = row_stride;
-  context.green_mask = this->green_mask_;
   context.width = width;
   context.height = height;
-  context.green_seed_count = 0;
-  context.detect_green_seeds = apply_artifact_correction;
 
   JDEC decoder{};
   const uint32_t decode_started = millis();
-  JRESULT result = jd_prepare(&decoder, jpeg_input_callback, this->jpeg_work_buffer_,
-                              static_cast<UINT>(JPEG_WORK_BUFFER_SIZE), &context);
-  if (result == JDR_OK && (decoder.width != width || decoder.height != height)) {
+  JRESULT result =
+      jd_prepare(&decoder, jpeg_input_callback, this->jpeg_work_buffer_,
+                 static_cast<UINT>(JPEG_WORK_BUFFER_SIZE), &context);
+  if (result == JDR_OK &&
+      (decoder.width != width || decoder.height != height)) {
     ESP_LOGE(TAG, "Dimensions decodees inattendues: %ux%u au lieu de %ux%u",
-             static_cast<unsigned>(decoder.width), static_cast<unsigned>(decoder.height),
-             static_cast<unsigned>(width), static_cast<unsigned>(height));
+             static_cast<unsigned>(decoder.width),
+             static_cast<unsigned>(decoder.height),
+             static_cast<unsigned>(width),
+             static_cast<unsigned>(height));
     result = JDR_PAR;
   }
   if (result == JDR_OK) {
     result = jd_decomp(&decoder, jpeg_output_callback, 0);
   }
+
   this->decode_ms_ = millis() - decode_started;
   this->decode_result_ = static_cast<int>(result);
-
   if (result != JDR_OK) {
-    ESP_LOGE(TAG, "Decodage JPEG par blocs en echec: %d", static_cast<int>(result));
+    ESP_LOGE(TAG, "Decodage JPEG en echec: %d", static_cast<int>(result));
     return false;
-  }
-
-  if (apply_artifact_correction) {
-    const uint32_t correction_started = millis();
-    if (!this->corrector_.correct(this->bmp_buffer_ + BMP_PIXEL_OFFSET, row_stride,
-                                  this->green_mask_, width, height, context.green_seed_count)) {
-      ESP_LOGE(TAG, "Correction des artefacts JPEG en echec");
-      return false;
-    }
-    this->correction_ms_ = millis() - correction_started;
-    this->artifact_correction_applied_ = true;
   }
 
   this->width_ = width;
@@ -238,20 +188,11 @@ bool JpegFilteredDiagnostic::process(bool apply_artifact_correction) {
   this->total_ms_ = millis() - total_started;
   this->ready_ = true;
 
-  if (apply_artifact_correction) {
-    const auto &stats = this->corrector_.stats();
-    ESP_LOGI(TAG,
-             "JPEG gris pret: %ux%u, decode=%u ms correction=%u ms total=%u ms, lignes=%u, pixels corriges=%u",
-             static_cast<unsigned>(this->width_), static_cast<unsigned>(this->height_),
-             static_cast<unsigned>(this->decode_ms_), static_cast<unsigned>(this->correction_ms_),
-             static_cast<unsigned>(this->total_ms_), static_cast<unsigned>(stats.affected_rows),
-             static_cast<unsigned>(stats.corrected_total_pixels));
-  } else {
-    ESP_LOGI(TAG,
-             "JPEG gris pret SANS correction artefacts: %ux%u, decode=%u ms total=%u ms",
-             static_cast<unsigned>(this->width_), static_cast<unsigned>(this->height_),
-             static_cast<unsigned>(this->decode_ms_), static_cast<unsigned>(this->total_ms_));
-  }
+  ESP_LOGD(TAG, "JPEG gris pret: %ux%u, decode=%u ms total=%u ms",
+           static_cast<unsigned>(this->width_),
+           static_cast<unsigned>(this->height_),
+           static_cast<unsigned>(this->decode_ms_),
+           static_cast<unsigned>(this->total_ms_));
   return true;
 }
 
@@ -260,7 +201,6 @@ void JpegFilteredDiagnostic::release_buffers() {
   this->width_ = 0;
   this->height_ = 0;
   this->ready_ = false;
-  this->artifact_correction_applied_ = false;
   this->bmp_size_ = 0;
 }
 
@@ -269,56 +209,40 @@ uint32_t JpegFilteredDiagnostic::process_count() const { return this->process_co
 uint32_t JpegFilteredDiagnostic::source_capture_count() const { return this->source_capture_count_; }
 uint16_t JpegFilteredDiagnostic::width() const { return this->width_; }
 uint16_t JpegFilteredDiagnostic::height() const { return this->height_; }
+
 const uint8_t *JpegFilteredDiagnostic::grayscale_data() const {
-  if (!this->ready_ || this->bmp_buffer_ == nullptr) {
-    return nullptr;
-  }
+  if (!this->ready_ || this->bmp_buffer_ == nullptr) return nullptr;
   return this->bmp_buffer_ + BMP_PIXEL_OFFSET;
 }
+
 size_t JpegFilteredDiagnostic::grayscale_stride() const {
-  return (static_cast<size_t>(this->width_) + 3U) & ~static_cast<size_t>(3U);
+  return (static_cast<size_t>(this->width_) + 3U) &
+         ~static_cast<size_t>(3U);
 }
-const uint8_t *JpegFilteredDiagnostic::bmp_data() const { return this->bmp_buffer_; }
+
+const uint8_t *JpegFilteredDiagnostic::bmp_data() const {
+  return this->bmp_buffer_;
+}
 size_t JpegFilteredDiagnostic::bmp_size() const { return this->bmp_size_; }
 int JpegFilteredDiagnostic::decode_result() const { return this->decode_result_; }
 uint32_t JpegFilteredDiagnostic::decode_ms() const { return this->decode_ms_; }
-uint32_t JpegFilteredDiagnostic::correction_ms() const { return this->correction_ms_; }
 uint32_t JpegFilteredDiagnostic::total_ms() const { return this->total_ms_; }
-bool JpegFilteredDiagnostic::artifact_correction_applied() const { return this->artifact_correction_applied_; }
-const JpegArtifactCorrectionStats &JpegFilteredDiagnostic::correction_stats() const {
-  return this->corrector_.stats();
-}
 
-bool JpegFilteredDiagnostic::ensure_buffers_(uint16_t width, uint16_t height, bool need_green_mask) {
-  const size_t row_stride = (static_cast<size_t>(width) + 3U) & ~static_cast<size_t>(3U);
-  const size_t required_bmp = BMP_PIXEL_OFFSET + row_stride * height;
-  const size_t required_mask = (static_cast<size_t>(width) * height + 7U) / 8U;
+bool JpegFilteredDiagnostic::ensure_buffers_(uint16_t width, uint16_t height) {
+  const size_t row_stride =
+      (static_cast<size_t>(width) + 3U) & ~static_cast<size_t>(3U);
+  const size_t required_bmp =
+      BMP_PIXEL_OFFSET + row_stride * height;
 
-  if (this->bmp_buffer_ == nullptr || this->bmp_capacity_ < required_bmp) {
+  if (this->bmp_buffer_ == nullptr ||
+      this->bmp_capacity_ < required_bmp) {
     auto *new_bmp = static_cast<uint8_t *>(
-        heap_caps_malloc(required_bmp, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    if (new_bmp == nullptr) {
-      return false;
-    }
-    if (this->bmp_buffer_ != nullptr) {
-      heap_caps_free(this->bmp_buffer_);
-    }
+        heap_caps_malloc(required_bmp,
+                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (new_bmp == nullptr) return false;
+    if (this->bmp_buffer_ != nullptr) heap_caps_free(this->bmp_buffer_);
     this->bmp_buffer_ = new_bmp;
     this->bmp_capacity_ = required_bmp;
-  }
-
-  if (need_green_mask &&
-      (this->green_mask_ == nullptr || this->green_mask_capacity_ < required_mask)) {
-    auto *new_mask = static_cast<uint8_t *>(
-        heap_caps_malloc(required_mask, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    if (new_mask == nullptr) {
-      return false;
-    }
-    if (this->green_mask_ != nullptr) {
-      heap_caps_free(this->green_mask_);
-    }
-    this->green_mask_ = new_mask;
-    this->green_mask_capacity_ = required_mask;
   }
 
   this->bmp_size_ = required_bmp;
@@ -326,12 +250,11 @@ bool JpegFilteredDiagnostic::ensure_buffers_(uint16_t width, uint16_t height, bo
 }
 
 bool JpegFilteredDiagnostic::ensure_jpeg_work_buffer_() {
-  if (this->jpeg_work_buffer_ != nullptr) {
-    return true;
-  }
+  if (this->jpeg_work_buffer_ != nullptr) return true;
 
   this->jpeg_work_buffer_ = static_cast<uint8_t *>(
-      heap_caps_malloc(JPEG_WORK_BUFFER_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+      heap_caps_malloc(JPEG_WORK_BUFFER_SIZE,
+                       MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
   if (this->jpeg_work_buffer_ == nullptr) {
     this->jpeg_work_buffer_ = static_cast<uint8_t *>(
         heap_caps_malloc(JPEG_WORK_BUFFER_SIZE, MALLOC_CAP_8BIT));
@@ -340,24 +263,16 @@ bool JpegFilteredDiagnostic::ensure_jpeg_work_buffer_() {
 }
 
 void JpegFilteredDiagnostic::clear_buffers_() {
-  if (this->bmp_buffer_ != nullptr) {
-    heap_caps_free(this->bmp_buffer_);
-  }
-  if (this->green_mask_ != nullptr) {
-    heap_caps_free(this->green_mask_);
-  }
-  if (this->jpeg_work_buffer_ != nullptr) {
-    heap_caps_free(this->jpeg_work_buffer_);
-  }
+  if (this->bmp_buffer_ != nullptr) heap_caps_free(this->bmp_buffer_);
+  if (this->jpeg_work_buffer_ != nullptr) heap_caps_free(this->jpeg_work_buffer_);
   this->bmp_buffer_ = nullptr;
   this->bmp_size_ = 0;
   this->bmp_capacity_ = 0;
-  this->green_mask_ = nullptr;
-  this->green_mask_capacity_ = 0;
   this->jpeg_work_buffer_ = nullptr;
 }
 
-void JpegFilteredDiagnostic::build_bmp_header_(uint16_t width, uint16_t height, size_t row_stride) {
+void JpegFilteredDiagnostic::build_bmp_header_(
+    uint16_t width, uint16_t height, size_t row_stride) {
   std::memset(this->bmp_buffer_, 0, BMP_PIXEL_OFFSET);
   this->bmp_buffer_[0] = 'B';
   this->bmp_buffer_[1] = 'M';
@@ -371,13 +286,15 @@ void JpegFilteredDiagnostic::build_bmp_header_(uint16_t width, uint16_t height, 
   write_u16(this->bmp_buffer_, 26, 1);
   write_u16(this->bmp_buffer_, 28, 8);
   write_u32(this->bmp_buffer_, 30, 0);
-  write_u32(this->bmp_buffer_, 34, static_cast<uint32_t>(row_stride * height));
+  write_u32(this->bmp_buffer_, 34,
+            static_cast<uint32_t>(row_stride * height));
   write_u32(this->bmp_buffer_, 38, 2835);
   write_u32(this->bmp_buffer_, 42, 2835);
   write_u32(this->bmp_buffer_, 46, 256);
   write_u32(this->bmp_buffer_, 50, 256);
 
-  uint8_t *palette = this->bmp_buffer_ + BMP_FILE_HEADER_SIZE + BMP_DIB_HEADER_SIZE;
+  uint8_t *palette =
+      this->bmp_buffer_ + BMP_FILE_HEADER_SIZE + BMP_DIB_HEADER_SIZE;
   for (uint16_t value = 0; value < 256; ++value) {
     *palette++ = static_cast<uint8_t>(value);
     *palette++ = static_cast<uint8_t>(value);
@@ -389,7 +306,8 @@ void JpegFilteredDiagnostic::build_bmp_header_(uint16_t width, uint16_t height, 
     const size_t padding = row_stride - width;
     uint8_t *pixels = this->bmp_buffer_ + BMP_PIXEL_OFFSET;
     for (uint16_t y = 0; y < height; ++y) {
-      std::memset(pixels + static_cast<size_t>(y) * row_stride + width, 0, padding);
+      std::memset(pixels + static_cast<size_t>(y) * row_stride + width,
+                  0, padding);
     }
   }
 }
