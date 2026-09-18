@@ -110,7 +110,7 @@ class FullCalibrationController {
     SAMPLING,
   };
 
-  static constexpr uint8_t OPTICAL_TUNING_MAX_ATTEMPTS = 16;
+  static constexpr uint8_t OPTICAL_TUNING_MAX_ATTEMPTS = 19;
   static constexpr uint8_t AUTO_SETTLE_FRAMES = 4;
   static constexpr uint8_t AUTO_RECOVERY_FRAMES = 3;
 
