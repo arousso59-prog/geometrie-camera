@@ -160,7 +160,8 @@ void FullCalibrationApiHandler::send_status_(
   json += ",\"state\":\"" + std::string(this->controller_->state_text()) + "\"";
   json += ",\"running\":";
   json += this->controller_->running() ? "true" : "false";
-  json += ",\"resolution\":\"2560x1920\"";
+  json += ",\"acquisition_mode\":\"precise_native_800x600\"";
+  json += ",\"reference_resolution\":\"2560x1920\"";
   json += ",\"requested_samples\":" + std::to_string(this->controller_->requested_samples());
   json += ",\"valid_samples\":" + std::to_string(this->controller_->valid_samples());
   json += ",\"attempts\":" + std::to_string(this->controller_->attempts());
