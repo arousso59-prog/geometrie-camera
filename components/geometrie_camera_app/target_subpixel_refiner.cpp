@@ -128,25 +128,46 @@ bool TargetSubpixelRefiner::refine(const GrayFrameView &frame,
     return false;
   }
 
-  float direct_width_sigma_px = 0.0f;
-  float direct_height_sigma_px = 0.0f;
-  float direct_width_px =
-      this->robust_local_separation_(left, right, direct_width_sigma_px);
-  float direct_height_px =
-      this->robust_local_separation_(top, bottom, direct_height_sigma_px);
+  // V6.1 : la dimension principale reste la separation des deux droites
+  // robustes, qui a donne la meilleure repetabilite empirique en V5.
+  // Les separations locales V6 ne remplacent plus la taille : elles servent
+  // uniquement de controle independant et augmentent l'incertitude lorsqu'elles
+  // divergent. Cela evite qu'une moyenne locale deplace la taille moyenne de la
+  // cible de quelques dixiemes de pixel et cree un biais en millimetres.
+  const float direct_width_px =
+      this->opposite_edge_separation_(left, right);
+  const float direct_height_px =
+      this->opposite_edge_separation_(top, bottom);
 
-  if (!std::isfinite(direct_width_px) || direct_width_px <= 0.0f) {
-    direct_width_px = this->opposite_edge_separation_(left, right);
-    direct_width_sigma_px =
-        std::sqrt(left.position_sigma * left.position_sigma +
-                  right.position_sigma * right.position_sigma);
+  float direct_width_sigma_px =
+      std::sqrt(left.position_sigma * left.position_sigma +
+                right.position_sigma * right.position_sigma);
+  float direct_height_sigma_px =
+      std::sqrt(top.position_sigma * top.position_sigma +
+                bottom.position_sigma * bottom.position_sigma);
+
+  float local_width_sigma_px = 0.0f;
+  float local_height_sigma_px = 0.0f;
+  const float local_width_px =
+      this->robust_local_separation_(left, right, local_width_sigma_px);
+  const float local_height_px =
+      this->robust_local_separation_(top, bottom, local_height_sigma_px);
+
+  if (std::isfinite(local_width_px) && local_width_px > 0.0f) {
+    const float disagreement =
+        std::fabs(local_width_px - direct_width_px);
+    direct_width_sigma_px = std::max(
+        direct_width_sigma_px,
+        std::max(local_width_sigma_px, 0.5f * disagreement));
   }
-  if (!std::isfinite(direct_height_px) || direct_height_px <= 0.0f) {
-    direct_height_px = this->opposite_edge_separation_(top, bottom);
-    direct_height_sigma_px =
-        std::sqrt(top.position_sigma * top.position_sigma +
-                  bottom.position_sigma * bottom.position_sigma);
+  if (std::isfinite(local_height_px) && local_height_px > 0.0f) {
+    const float disagreement =
+        std::fabs(local_height_px - direct_height_px);
+    direct_height_sigma_px = std::max(
+        direct_height_sigma_px,
+        std::max(local_height_sigma_px, 0.5f * disagreement));
   }
+
   if (!std::isfinite(direct_width_px) || !std::isfinite(direct_height_px) ||
       direct_width_px < MIN_EDGE_LENGTH_PX ||
       direct_height_px < MIN_EDGE_LENGTH_PX) {
@@ -193,10 +214,13 @@ bool TargetSubpixelRefiner::refine(const GrayFrameView &frame,
 
   ESP_LOGD(
       TAG,
-      "Subpixel V6 OK center=(%.3f,%.3f) corners=%.3fx%.3f edges=%.3fx%.3f "
+      "Subpixel V6.1 OK center=(%.3f,%.3f) corners=%.3fx%.3f edges=%.3fx%.3f "
+      "local=(%.3f,%.3f) sigma=(%.3f,%.3f) "
       "rms=(%.3f,%.3f,%.3f,%.3f) grad=(%.1f,%.1f,%.1f,%.1f)",
       output.center_x, output.center_y, output.width, output.height,
       direct_width_px, direct_height_px,
+      local_width_px, local_height_px,
+      direct_width_sigma_px, direct_height_sigma_px,
       top.rms, right.rms, bottom.rms, left.rms,
       top.mean_gradient, right.mean_gradient,
       bottom.mean_gradient, left.mean_gradient);
