@@ -85,6 +85,9 @@ class FullCalibrationController {
   uint32_t current_mean_luma_x100() const;
   uint32_t current_dark_percent_x100() const;
   uint32_t current_bright_percent_x100() const;
+  uint8_t current_p10_luma() const;
+  uint8_t current_p90_luma() const;
+  uint8_t current_contrast_luma() const;
   int best_ae_level() const;
   int best_exposure() const;
   int best_gain() const;
@@ -179,6 +182,9 @@ class FullCalibrationController {
   uint32_t current_mean_luma_x100_;
   uint32_t current_dark_percent_x100_;
   uint32_t current_bright_percent_x100_;
+  uint8_t current_p10_luma_;
+  uint8_t current_p90_luma_;
+  uint8_t current_contrast_luma_;
   int best_ae_level_;
   int best_exposure_;
   int best_gain_;
