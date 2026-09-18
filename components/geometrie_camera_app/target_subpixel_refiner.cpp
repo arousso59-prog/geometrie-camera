@@ -81,8 +81,16 @@ TargetSubpixelRefiner::TargetSubpixelRefiner() {}
 
 bool TargetSubpixelRefiner::refine(const GrayFrameView &frame,
                                    const TargetCandidate &input,
-                                   TargetCandidate &output) const {
+                                   TargetCandidate &output,
+                                   TargetSubpixelMetrics *metrics) const {
   output = input;
+  if (metrics != nullptr) {
+    metrics->valid = false;
+    metrics->mean_rms_px = 0.0f;
+    metrics->max_rms_px = 0.0f;
+    metrics->mean_gradient = 0.0f;
+    metrics->min_edge_samples = 0;
+  }
 
   if (frame.data == nullptr || frame.width < 4 || frame.height < 4 ||
       frame.stride < frame.width ||
@@ -117,6 +125,21 @@ bool TargetSubpixelRefiner::refine(const GrayFrameView &frame,
   }
 
   output = refined;
+
+  if (metrics != nullptr) {
+    metrics->valid = true;
+    metrics->mean_rms_px =
+        0.25f * (top.rms + right.rms + bottom.rms + left.rms);
+    metrics->max_rms_px =
+        std::max(std::max(top.rms, right.rms),
+                 std::max(bottom.rms, left.rms));
+    metrics->mean_gradient =
+        0.25f * (top.mean_gradient + right.mean_gradient +
+                 bottom.mean_gradient + left.mean_gradient);
+    metrics->min_edge_samples =
+        std::min(std::min(top.samples, right.samples),
+                 std::min(bottom.samples, left.samples));
+  }
 
   ESP_LOGD(
       TAG,
