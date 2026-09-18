@@ -8,10 +8,12 @@ namespace esphome {
 namespace geometrie_camera_app {
 
 class FullCalibrationController;
+class TargetDetectionPreview;
 
 class FullCalibrationApiHandler : public AsyncWebHandler {
  public:
-  explicit FullCalibrationApiHandler(FullCalibrationController *controller);
+  FullCalibrationApiHandler(FullCalibrationController *controller,
+                            TargetDetectionPreview *preview);
 
   bool canHandle(AsyncWebServerRequest *request) const override;
   void handleRequest(AsyncWebServerRequest *request) override;
@@ -25,6 +27,7 @@ class FullCalibrationApiHandler : public AsyncWebHandler {
                     const char *status) const;
 
   FullCalibrationController *controller_;
+  TargetDetectionPreview *preview_;
 };
 
 }  // namespace geometrie_camera_app
