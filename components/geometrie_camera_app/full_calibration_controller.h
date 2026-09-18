@@ -76,6 +76,8 @@ class FullCalibrationController {
   int current_ae_level() const;
   int current_exposure() const;
   int current_gain() const;
+  int current_brightness() const;
+  int current_contrast() const;
   float current_optical_score() const;
   float current_detection_quality() const;
   float current_subpixel_rms_px() const;
@@ -90,6 +92,8 @@ class FullCalibrationController {
   int best_ae_level() const;
   int best_exposure() const;
   int best_gain() const;
+  int best_brightness() const;
+  int best_contrast() const;
   float best_optical_score() const;
   const CameraCalibration &result_calibration() const;
 
@@ -99,18 +103,23 @@ class FullCalibrationController {
     TUNE_MANUAL_BASELINE,
     TUNE_MANUAL_EXPOSURE,
     TUNE_MANUAL_GAIN,
+    TUNE_CONTRAST,
+    TUNE_BRIGHTNESS,
     SAMPLING,
   };
 
-  static constexpr uint8_t OPTICAL_TUNING_MAX_ATTEMPTS = 15;
+  static constexpr uint8_t OPTICAL_TUNING_MAX_ATTEMPTS = 20;
 
   bool begin_native_tracking_();
   bool begin_optical_tuning_(const TargetObservation &observation);
   bool prepare_manual_candidate_(int exposure, int gain);
+  bool prepare_postprocess_candidate_(int brightness, int contrast);
   bool handle_tuning_result_(const TargetObservation &observation, bool target_found);
   float evaluate_optical_score_(const TargetObservation &observation, bool target_found);
   bool start_manual_exposure_round_();
   bool start_manual_gain_round_();
+  bool start_contrast_tuning_();
+  bool start_brightness_tuning_();
   bool advance_manual_pair_(bool exposure_axis);
   bool finish_optical_tuning_();
   bool apply_camera_snapshot_(const CameraSettingsSnapshot &snapshot);
@@ -163,6 +172,7 @@ class FullCalibrationController {
   uint8_t tuning_attempts_;
   uint8_t tuning_round_;
   uint8_t tuning_side_;
+  uint8_t tuning_index_;
   int tuning_pair_base_;
   int tuning_step_;
   int tuning_pair_best_value_;
@@ -170,6 +180,8 @@ class FullCalibrationController {
   int current_ae_level_;
   int current_exposure_;
   int current_gain_;
+  int current_brightness_;
+  int current_contrast_;
   float current_optical_score_;
   float current_detection_quality_;
   float current_subpixel_rms_px_;
@@ -184,6 +196,8 @@ class FullCalibrationController {
   int best_ae_level_;
   int best_exposure_;
   int best_gain_;
+  int best_brightness_;
+  int best_contrast_;
   float best_optical_score_;
   uint16_t tuning_roi_x_;
   uint16_t tuning_roi_y_;
