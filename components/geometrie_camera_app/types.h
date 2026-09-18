@@ -64,6 +64,9 @@ struct TargetObservation {
   float subpixel_height_sigma_px;
   float subpixel_width_gradient;
   float subpixel_height_gradient;
+  bool subpixel_local_pair_v6;
+  uint8_t subpixel_width_pair_count;
+  uint8_t subpixel_height_pair_count;
 
   ImagePoint top_left_px;
   ImagePoint top_right_px;
