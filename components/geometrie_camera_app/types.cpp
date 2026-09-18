@@ -47,6 +47,7 @@ GeometryMeasurement::GeometryMeasurement()
       pose_valid(false),
       edge_v4_used(false),
       edge_v5_used(false),
+      edge_v6_used(false),
       apparent_width_px(0.0f),
       apparent_height_px(0.0f),
       apparent_width_sigma_px(0.0f),
