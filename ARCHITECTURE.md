@@ -182,7 +182,7 @@ cycle_ms
 
 ## API
 
-Contrat : `GET /api/wsdl`, version **27**.
+Contrat : `GET /api/wsdl`, version **28**.
 
 ### Lecture seule
 
@@ -247,3 +247,23 @@ La sortie de travail 800×600 protège la marge PSRAM tout en permettant la plei
 - la tentative V26 de sélection sur deux images par candidat est abandonnée ;
 - la méthode de distance officielle est V6.1 avec stabilisation robuste sur 5 mesures ;
 - toute évolution future doit cibler séparément la pose et les angles sans modifier ces deux références, sauf nouvelle campagne de validation explicite.
+
+
+## Pose V2 V28
+
+Le calcul de distance reste figé sur V6.1-robust5.
+
+La pose V2 est isolée de cette chaîne :
+
+- entrée : quatre droites subpixel ajustées sur les bords de la cible ;
+- initialisation : ancienne décomposition homographique V1 ;
+- translation : X/Y/Z V6.1 figés ;
+- variable optimisée : rotation uniquement ;
+- coût principal : distance des bords 3D projetés aux droites subpixel ;
+- régularisation faible : coins subpixel ;
+- pondération douce selon RMS/gradient des quatre bords ;
+- recherche multi-échelle jusqu'à 0,003 degré ;
+- rejet si RMS lignes > 1,20 px ou RMS coins > 2,50 px ;
+- repli V1 si V2 n'est pas valide.
+
+La stabilisation temporelle utilise la normale 3D pour yaw/pitch et une statistique périodique modulo 180 degrés pour roll.
