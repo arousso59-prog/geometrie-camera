@@ -243,6 +243,8 @@ void FullCalibrationApiHandler::send_status_(
   json += ",\"best_brightness\":" + std::to_string(this->controller_->best_brightness());
   json += ",\"best_contrast\":" + std::to_string(this->controller_->best_contrast());
   json += ",\"best_score\":" + std::to_string(this->controller_->best_optical_score());
+  json += ",\"auto_fallback\":";
+  json += this->controller_->using_auto_fallback() ? "true" : "false";
   json += "}";
 
   json += ",\"preview\":\"/calibration/full/preview.bmp\"";
