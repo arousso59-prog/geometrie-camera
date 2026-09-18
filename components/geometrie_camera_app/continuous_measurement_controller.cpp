@@ -344,8 +344,11 @@ void ContinuousMeasurementController::loop() {
         measurement_height = this->tracking_controller_->reference_height();
       }
 
+      const bool stabilize_measurement =
+          this->current_cycle_viewport_mode_ == "precise";
       const bool measured = this->measurement_manager_->process(
-          measurement_observation, measurement_width, measurement_height, millis());
+          measurement_observation, measurement_width, measurement_height, millis(),
+          stabilize_measurement);
       this->current_compute_ms_ = millis() - compute_started_ms;
       if (!measured) {
         this->fail_cycle_("measurement_failed");
@@ -630,6 +633,9 @@ void ContinuousMeasurementController::update_sharpness_roi_from_target_() {
 }
 
 void ContinuousMeasurementController::reset_local_tracking_after_viewport_change_() {
+  if (this->measurement_manager_ != nullptr) {
+    this->measurement_manager_->reset_stabilization();
+  }
   this->sharpness_roi_valid_ = false;
   this->sharpness_roi_x_ = 0;
   this->sharpness_roi_y_ = 0;
