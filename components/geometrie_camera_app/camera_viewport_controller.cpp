@@ -271,6 +271,18 @@ TargetObservation CameraViewportController::to_reference(const TargetObservation
                               point_distance(result.bottom_left_px, result.bottom_right_px));
     result.height_px = 0.5f * (point_distance(result.top_left_px, result.bottom_left_px) +
                                point_distance(result.top_right_px, result.bottom_right_px));
+
+    if (observation.subpixel_refined &&
+        observation.subpixel_width_px > 0.0f &&
+        observation.subpixel_height_px > 0.0f) {
+      // Les viewports actuels gardent la meme echelle X/Y pour un mode donne.
+      // Conserver neanmoins les deux facteurs explicitement pour documenter
+      // l'axe de chaque dimension V4.
+      result.subpixel_width_px =
+          observation.subpixel_width_px * this->snapshot_.scale_x;
+      result.subpixel_height_px =
+          observation.subpixel_height_px * this->snapshot_.scale_y;
+    }
   } else {
     result.width_px = observation.width_px * this->snapshot_.scale_x;
     result.height_px = observation.height_px * this->snapshot_.scale_y;
