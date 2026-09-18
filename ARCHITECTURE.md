@@ -110,6 +110,8 @@ Pour préserver la répétabilité observée en V5 :
 
 Les valeurs d'incertitude servent ensuite à pondérer les estimations de distance.
 
+En V23, les dimensions V5, V6 et V6.1 sont conservées simultanément dans le diagnostic. Les quatre RMS et gradients de bords sont également publiés afin de distinguer une régression de calcul d'une régression de qualité image. La sortie officielle reste V6.1.
+
 ## Calibration automatique
 
 La calibration est un workflow autonome :
@@ -130,6 +132,7 @@ Le score optique est basé sur :
 - qualité du décodage de cible ;
 - RMS subpixel ;
 - incertitude largeur/hauteur ;
+- gradient horizontal/vertical des bords et leur équilibre ;
 - P10/P90 ;
 - contraste ;
 - pixels écrêtés noirs/blancs ;
@@ -166,7 +169,7 @@ cycle_ms
 
 ## API
 
-Contrat : `GET /api/wsdl`, version **22**.
+Contrat : `GET /api/wsdl`, version **23**.
 
 ### Lecture seule
 
