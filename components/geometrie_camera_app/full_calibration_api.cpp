@@ -7,6 +7,7 @@
 
 #include "full_calibration_controller.h"
 #include "target_detection_preview.h"
+#include "target_board_model.h"
 
 namespace esphome {
 namespace geometrie_camera_app {
@@ -75,17 +76,14 @@ void FullCalibrationApiHandler::handleRequest(AsyncWebServerRequest *request) {
     }
 
     float distance_mm = 0.0f;
-    float target_size_mm = 0.0f;
     int sample_count = FullCalibrationController::DEFAULT_SAMPLE_COUNT;
     int force_value = 0;
     bool has_distance = false;
-    bool has_target_size = false;
     bool has_sample_count = false;
     bool has_force = false;
     std::string error;
 
     if (!this->parse_float_param_(request, "distance_mm", distance_mm, has_distance, error) ||
-        !this->parse_float_param_(request, "target_size_mm", target_size_mm, has_target_size, error) ||
         !this->parse_int_param_(request, "samples", sample_count, has_sample_count, error) ||
         !this->parse_int_param_(request, "force", force_value, has_force, error)) {
       const std::string body =
@@ -94,10 +92,10 @@ void FullCalibrationApiHandler::handleRequest(AsyncWebServerRequest *request) {
       return;
     }
 
-    if (!has_distance || !has_target_size) {
+    if (!has_distance) {
       request->send(
           400, "application/json",
-          "{\"status\":\"error\",\"error\":\"distance_mm_and_target_size_mm_required\"}");
+          "{\"status\":\"error\",\"error\":\"distance_mm_required\"}");
       return;
     }
     if (has_force && force_value != 0 && force_value != 1) {
@@ -115,7 +113,6 @@ void FullCalibrationApiHandler::handleRequest(AsyncWebServerRequest *request) {
 
     if (!this->controller_->start(
             distance_mm,
-            target_size_mm,
             static_cast<uint8_t>(sample_count),
             has_force && force_value == 1)) {
       this->send_status_(request, 409, "error");
@@ -200,7 +197,11 @@ void FullCalibrationApiHandler::send_status_(
   json += ",\"attempts\":" + std::to_string(this->controller_->attempts());
   json += ",\"max_attempts\":" + std::to_string(this->controller_->max_attempts());
   json += ",\"known_distance_mm\":" + std::to_string(this->controller_->known_distance_mm());
-  json += ",\"target_size_mm\":" + std::to_string(this->controller_->target_size_mm());
+  json += ",\"target_model\":\"R1_250x100\"";
+  json += ",\"target_board_width_mm\":" + std::to_string(TARGET_R1_BOARD_WIDTH_MM);
+  json += ",\"target_board_height_mm\":" + std::to_string(TARGET_R1_BOARD_HEIGHT_MM);
+  json += ",\"target_reference_width_mm\":" + std::to_string(TARGET_R1_REFERENCE_WIDTH_MM);
+  json += ",\"target_reference_height_mm\":" + std::to_string(TARGET_R1_REFERENCE_HEIGHT_MM);
 
   const uint8_t requested = this->controller_->requested_samples();
   const uint8_t valid = this->controller_->valid_samples();
