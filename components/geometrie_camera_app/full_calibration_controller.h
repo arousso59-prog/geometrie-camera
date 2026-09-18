@@ -63,7 +63,8 @@ class FullCalibrationController {
  private:
   bool begin_native_tracking_();
   bool request_next_capture_();
-  bool derive_current_sample_(CameraCalibration &sample);
+  bool derive_current_sample_(const TargetObservation &reference_observation,
+                              CameraCalibration &sample);
   void finish_success_();
   void fail_(const char *error);
   void restore_nominal_camera_();
