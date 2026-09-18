@@ -24,7 +24,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   std::string xml;
   xml.reserve(30000);
   xml += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-  xml += "<api name=\"geometrie-camera\" version=\"34\" style=\"REST-over-HTTP\">\n";
+  xml += "<api name=\"geometrie-camera\" version=\"35\" style=\"REST-over-HTTP\">\n";
   xml += "  <description>API camera OV5640 : capture JPEG, reglages capteur, viewport ROI haute resolution, tracking cible, detection, calibration, mesure geometrique et acquisition continue.</description>\n";
   xml += "  <conventions>\n";
   xml += "    <item>Les routes de commande utilisent encore HTTP GET pendant la phase de mise au point.</item>\n";
@@ -41,6 +41,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "    <item>Apres la detection et le raffinement pixel historiques, la geometrie de cible peut etre affinee au subpixel par ajustement des quatre bords externes. /target/status expose subpixel_refined et les RMS de l ajustement ; en cas de rejet, le chemin pixel historique est conserve.</item>\n";
   xml += "    <item>La distance fournie a la calibration est interpretee comme la distance physique camera-centre cible. Le moteur resout iterativement la profondeur Z hors axe avant de calculer fx/fy, au lieu d assimiler directement cette distance a Z.</item>\n";
   xml += "    <item>En mode continu PRECISE, MeasurementManager stabilise les mesures sur une fenetre de 5 acquisitions : amorcage brut sur 2 points, puis mediane/moyenne tronquee robuste. Toute transition/recentrage de viewport remet cette fenetre a zero.</item>\n";
+  xml += "    <item>/continuous/stop annule immediatement la sequence JPEG en vol, interdit toute nouvelle frame fraiche et ignore tout resultat FILTER/DETECT/COMPUTE qui terminerait apres l ordre d arret. Les dernieres valeurs valides peuvent rester conservees pour affichage mais ne constituent pas de nouvelles mesures.</item>\n";
   xml += "    <item>Le mode continu exige une calibration valide et n empile jamais les cycles. sharpness=0 saute le controle de nettete et les recaptures pour flou.</item>\n";
   xml += "    <item>Dans timing, processing_ms est la somme capture+nettete+filtre+detection+calcul et orchestration_ms le temps mural restant entre les etapes. filter_decode_ms et filter_correction_ms detaillent filter_ms.</item>\n";
   xml += "  </conventions>\n";
