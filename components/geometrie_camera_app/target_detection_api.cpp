@@ -22,17 +22,13 @@ bool TargetDetectionApiHandler::canHandle(AsyncWebServerRequest *request) const 
 
   char url_buf[AsyncWebServerRequest::URL_BUF_SIZE];
   const auto url = request->url_to(url_buf);
-  return url == "/target/detect" || url == "/target/status" || url == "/target/preview.bmp";
+  return url == "/target/status" || url == "/target/preview.bmp";
 }
 
 void TargetDetectionApiHandler::handleRequest(AsyncWebServerRequest *request) {
   char url_buf[AsyncWebServerRequest::URL_BUF_SIZE];
   const auto url = request->url_to(url_buf);
 
-  if (url == "/target/detect") {
-    this->handle_detect_(request);
-    return;
-  }
   if (url == "/target/status") {
     this->handle_status_(request);
     return;
@@ -43,20 +39,6 @@ void TargetDetectionApiHandler::handleRequest(AsyncWebServerRequest *request) {
   }
 
   request->send(404, "application/json", "{\"error\":\"not_found\"}");
-}
-
-void TargetDetectionApiHandler::handle_detect_(AsyncWebServerRequest *request) {
-  if (this->service_ == nullptr) {
-    this->send_status_(request, 500, "error", "target_detection_unavailable");
-    return;
-  }
-
-  if (!this->service_->detect()) {
-    this->send_status_(request, 409, "error", "filtered_image_unavailable");
-    return;
-  }
-
-  this->send_status_(request, 200, "ok");
 }
 
 void TargetDetectionApiHandler::handle_status_(AsyncWebServerRequest *request) const {
