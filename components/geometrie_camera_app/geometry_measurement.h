@@ -12,10 +12,6 @@ class GeometryMeasurementEngine {
   GeometryMeasurementEngine();
 
   // Cible R1 fixe : cadre metrologique noir 240 x 90 mm.
-  // Les anciennes API taille-cible sont conservees en lecture/compatibilite,
-  // mais la geometrie n'est plus configurable.
-  bool set_target_size_mm(float target_size_mm);
-  float target_size_mm() const;
   float target_width_mm() const;
   float target_height_mm() const;
 
