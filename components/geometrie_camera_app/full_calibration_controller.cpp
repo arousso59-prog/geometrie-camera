@@ -90,6 +90,7 @@ FullCalibrationController::FullCalibrationController(
       tuning_attempts_(0),
       tuning_round_(0),
       tuning_side_(0),
+      tuning_index_(0),
       tuning_pair_base_(0),
       tuning_step_(0),
       tuning_pair_best_value_(0),
@@ -97,6 +98,8 @@ FullCalibrationController::FullCalibrationController(
       current_ae_level_(0),
       current_exposure_(0),
       current_gain_(0),
+      current_brightness_(0),
+      current_contrast_(0),
       current_optical_score_(0.0f),
       current_detection_quality_(0.0f),
       current_subpixel_rms_px_(0.0f),
@@ -111,6 +114,8 @@ FullCalibrationController::FullCalibrationController(
       best_ae_level_(0),
       best_exposure_(0),
       best_gain_(0),
+      best_brightness_(0),
+      best_contrast_(0),
       best_optical_score_(-1.0f),
       tuning_roi_x_(0),
       tuning_roi_y_(0),
@@ -441,6 +446,8 @@ const char *FullCalibrationController::phase_text() const {
     case CalibrationPhase::TUNE_MANUAL_BASELINE: return "optical_manual_baseline";
     case CalibrationPhase::TUNE_MANUAL_EXPOSURE: return "optical_exposure";
     case CalibrationPhase::TUNE_MANUAL_GAIN: return "optical_gain";
+    case CalibrationPhase::TUNE_CONTRAST: return "optical_contrast";
+    case CalibrationPhase::TUNE_BRIGHTNESS: return "optical_brightness";
     case CalibrationPhase::SAMPLING: return "calibration_samples";
     default: return "unknown";
   }
@@ -468,6 +475,8 @@ uint8_t FullCalibrationController::tuning_max_attempts() const { return OPTICAL_
 int FullCalibrationController::current_ae_level() const { return this->current_ae_level_; }
 int FullCalibrationController::current_exposure() const { return this->current_exposure_; }
 int FullCalibrationController::current_gain() const { return this->current_gain_; }
+int FullCalibrationController::current_brightness() const { return this->current_brightness_; }
+int FullCalibrationController::current_contrast() const { return this->current_contrast_; }
 float FullCalibrationController::current_optical_score() const { return this->current_optical_score_; }
 float FullCalibrationController::current_detection_quality() const { return this->current_detection_quality_; }
 float FullCalibrationController::current_subpixel_rms_px() const { return this->current_subpixel_rms_px_; }
@@ -482,6 +491,8 @@ uint8_t FullCalibrationController::current_contrast_luma() const { return this->
 int FullCalibrationController::best_ae_level() const { return this->best_ae_level_; }
 int FullCalibrationController::best_exposure() const { return this->best_exposure_; }
 int FullCalibrationController::best_gain() const { return this->best_gain_; }
+int FullCalibrationController::best_brightness() const { return this->best_brightness_; }
+int FullCalibrationController::best_contrast() const { return this->best_contrast_; }
 float FullCalibrationController::best_optical_score() const { return this->best_optical_score_; }
 const char *FullCalibrationController::tracking_mode_text() const {
   return this->tracking_controller_ != nullptr
@@ -532,6 +543,7 @@ bool FullCalibrationController::begin_optical_tuning_(
   this->tuning_attempts_ = 0;
   this->tuning_round_ = 0;
   this->tuning_side_ = 0;
+  this->tuning_index_ = 0;
   this->best_optical_score_ = -1.0f;
 
   // L'image finale de mesure est toujours AEC=OFF / AGC=OFF. Tester les cinq
@@ -563,9 +575,20 @@ bool FullCalibrationController::begin_optical_tuning_(
   this->best_ae_level_ = seed_ae_level;
   this->best_exposure_ = seed_exposure;
   this->best_gain_ = seed_gain;
+  this->best_brightness_ = 0;
+  this->best_contrast_ = 0;
   this->current_ae_level_ = seed_ae_level;
   this->current_exposure_ = seed_exposure;
   this->current_gain_ = seed_gain;
+  this->current_brightness_ = 0;
+  this->current_contrast_ = 0;
+
+  std::string postprocess_error;
+  if (!this->settings_controller_->set_brightness(0, postprocess_error) ||
+      !this->settings_controller_->set_contrast(0, postprocess_error)) {
+    ESP_LOGE(TAG, "Neutralisation image impossible: %s", postprocess_error.c_str());
+    return false;
+  }
 
   this->phase_ = CalibrationPhase::TUNE_MANUAL_BASELINE;
 
@@ -602,6 +625,24 @@ bool FullCalibrationController::prepare_manual_candidate_(int exposure, int gain
   this->current_ae_level_ = this->best_ae_level_;
   this->current_exposure_ = bounded_exposure;
   this->current_gain_ = bounded_gain;
+  return true;
+}
+
+bool FullCalibrationController::prepare_postprocess_candidate_(
+    int brightness, int contrast) {
+  if (this->settings_controller_ == nullptr) return false;
+
+  const int bounded_brightness = clamp_int(brightness, -2, 2);
+  const int bounded_contrast = clamp_int(contrast, -2, 2);
+  std::string error;
+  if (!this->settings_controller_->set_brightness(bounded_brightness, error) ||
+      !this->settings_controller_->set_contrast(bounded_contrast, error)) {
+    ESP_LOGE(TAG, "Reglage post-traitement camera impossible: %s", error.c_str());
+    return false;
+  }
+
+  this->current_brightness_ = bounded_brightness;
+  this->current_contrast_ = bounded_contrast;
   return true;
 }
 
@@ -776,12 +817,13 @@ bool FullCalibrationController::handle_tuning_result_(
       this->evaluate_optical_score_(observation, target_found);
 
   ESP_LOGI(TAG,
-           "Optique %u/%u phase=%s AE=%d exp=%d gain=%d score=%.1f "
+           "Optique %u/%u phase=%s AE=%d exp=%d gain=%d lum=%d ctr=%d score=%.1f "
            "qual=%.3f rms=%.3f sigmaW=%.3f sigmaH=%.3f gradW=%.1f gradH=%.1f P10=%u P90=%u C=%u luma=%.1f clip=%.1f%%",
            static_cast<unsigned>(this->tuning_attempts_),
            static_cast<unsigned>(OPTICAL_TUNING_MAX_ATTEMPTS),
            this->phase_text(), this->current_ae_level_,
            this->current_exposure_, this->current_gain_,
+           this->current_brightness_, this->current_contrast_,
            this->current_optical_score_,
            this->current_detection_quality_,
            this->current_subpixel_rms_px_,
@@ -812,6 +854,42 @@ bool FullCalibrationController::handle_tuning_result_(
 
   if (this->phase_ == CalibrationPhase::TUNE_MANUAL_GAIN) {
     return this->advance_manual_pair_(false);
+  }
+
+  if (this->phase_ == CalibrationPhase::TUNE_CONTRAST) {
+    if (this->current_optical_score_ > this->best_optical_score_) {
+      this->best_optical_score_ = this->current_optical_score_;
+      this->best_contrast_ = this->current_contrast_;
+    }
+
+    if (this->tuning_index_ == 0) {
+      this->tuning_index_ = 1;
+      if (!this->prepare_postprocess_candidate_(0, -1)) return false;
+      return this->request_next_capture_();
+    }
+
+    if (this->tuning_index_ == 1 && this->best_contrast_ == 1) {
+      this->tuning_index_ = 2;
+      if (!this->prepare_postprocess_candidate_(0, 2)) return false;
+      return this->request_next_capture_();
+    }
+
+    return this->start_brightness_tuning_();
+  }
+
+  if (this->phase_ == CalibrationPhase::TUNE_BRIGHTNESS) {
+    if (this->current_optical_score_ > this->best_optical_score_) {
+      this->best_optical_score_ = this->current_optical_score_;
+      this->best_brightness_ = this->current_brightness_;
+    }
+
+    if (this->tuning_index_ == 0) {
+      this->tuning_index_ = 1;
+      if (!this->prepare_postprocess_candidate_(1, this->best_contrast_)) return false;
+      return this->request_next_capture_();
+    }
+
+    return this->finish_optical_tuning_();
   }
 
   return false;
@@ -889,12 +967,37 @@ bool FullCalibrationController::advance_manual_pair_(bool exposure_axis) {
     return this->start_manual_gain_round_();
   }
 
-  return this->finish_optical_tuning_();
+  return this->start_contrast_tuning_();
+}
+
+bool FullCalibrationController::start_contrast_tuning_() {
+  this->phase_ = CalibrationPhase::TUNE_CONTRAST;
+  this->tuning_index_ = 0;
+  this->best_brightness_ = 0;
+  this->best_contrast_ = 0;
+
+  // Baseline = contraste 0 / luminosite 0 avec exp/gain deja optimises.
+  // Tester +1, puis -1. +2 n'est teste que si +1 a effectivement gagne.
+  if (!this->prepare_postprocess_candidate_(0, 1)) return false;
+  return this->request_next_capture_();
+}
+
+bool FullCalibrationController::start_brightness_tuning_() {
+  this->phase_ = CalibrationPhase::TUNE_BRIGHTNESS;
+  this->tuning_index_ = 0;
+  this->best_brightness_ = 0;
+
+  // Le meilleur contraste est fixe ; comparer luminosite -1 puis +1 a la
+  // baseline neutre 0 deja evaluee pendant la recherche precedente.
+  if (!this->prepare_postprocess_candidate_(-1, this->best_contrast_)) return false;
+  return this->request_next_capture_();
 }
 
 bool FullCalibrationController::finish_optical_tuning_() {
   if (!this->prepare_manual_candidate_(
-          this->best_exposure_, this->best_gain_)) {
+          this->best_exposure_, this->best_gain_) ||
+      !this->prepare_postprocess_candidate_(
+          this->best_brightness_, this->best_contrast_)) {
     return false;
   }
 
@@ -902,9 +1005,10 @@ bool FullCalibrationController::finish_optical_tuning_() {
   this->current_optical_score_ = this->best_optical_score_;
 
   ESP_LOGI(TAG,
-           "Optique verrouillee: AE=%d exposition=%d gain=%d score=%.1f "
+           "Optique verrouillee: AE=%d exposition=%d gain=%d lum=%d ctr=%d score=%.1f "
            "AEC=OFF AGC=OFF; debut des %u mesures calibration",
            this->best_ae_level_, this->best_exposure_, this->best_gain_,
+           this->best_brightness_, this->best_contrast_,
            this->best_optical_score_,
            static_cast<unsigned>(this->requested_samples_));
 
@@ -1080,11 +1184,12 @@ void FullCalibrationController::finish_success_() {
 
   ESP_LOGI(TAG,
            "Calibration terminee: n=%u fx=%.3f +/- %.3f fy=%.3f +/- %.3f; "
-           "camera verrouillee AE=%d exp=%d gain=%d",
+           "camera verrouillee AE=%d exp=%d gain=%d lum=%d ctr=%d",
            static_cast<unsigned>(this->valid_samples_),
            this->mean_fx_px_, this->stddev_fx_px_,
            this->mean_fy_px_, this->stddev_fy_px_,
-           this->best_ae_level_, this->best_exposure_, this->best_gain_);
+           this->best_ae_level_, this->best_exposure_, this->best_gain_,
+           this->best_brightness_, this->best_contrast_);
 }
 
 void FullCalibrationController::fail_(const char *error) {
@@ -1146,6 +1251,8 @@ void FullCalibrationController::reset_run_() {
   this->current_ae_level_ = 0;
   this->current_exposure_ = 0;
   this->current_gain_ = 0;
+  this->current_brightness_ = 0;
+  this->current_contrast_ = 0;
   this->current_optical_score_ = 0.0f;
   this->current_detection_quality_ = 0.0f;
   this->current_subpixel_rms_px_ = 0.0f;
@@ -1160,6 +1267,8 @@ void FullCalibrationController::reset_run_() {
   this->best_ae_level_ = 0;
   this->best_exposure_ = 0;
   this->best_gain_ = 0;
+  this->best_brightness_ = 0;
+  this->best_contrast_ = 0;
   this->best_optical_score_ = -1.0f;
   this->tuning_roi_x_ = 0;
   this->tuning_roi_y_ = 0;
