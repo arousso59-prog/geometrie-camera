@@ -65,6 +65,9 @@ class FullCalibrationController {
   uint8_t preview_attempt() const;
   const std::string &preview_mode() const;
   bool last_target_found() const;
+  uint8_t last_marker_count() const;
+  uint8_t last_marker_mask() const;
+  bool last_board_complete() const;
   bool last_sample_valid() const;
   float last_sample_fx_px() const;
   float last_sample_fy_px() const;
@@ -169,6 +172,9 @@ class FullCalibrationController {
   uint8_t preview_attempt_;
   std::string preview_mode_;
   bool last_target_found_;
+  uint8_t last_marker_count_;
+  uint8_t last_marker_mask_;
+  bool last_board_complete_;
   bool last_sample_valid_;
   float last_sample_fx_px_;
   float last_sample_fy_px_;
