@@ -65,7 +65,7 @@ La référence du contrat HTTP est :
 GET /api/wsdl
 ```
 
-Version actuelle : **27**.
+Version actuelle : **28**.
 
 ### Diagnostic lecture seule
 
@@ -207,3 +207,27 @@ La méthode de mesure opérationnelle est également figée :
 - la pose/homographie ne pilote jamais la distance principale.
 
 Cette combinaison constitue désormais la référence avant le travail spécifique sur yaw/pitch/roll.
+
+
+## Pose V2 V28
+
+La distance et le réglage caméra restent strictement figés :
+
+- caméra : stratégie V25 validée ;
+- distance : V6.1-robust5 ;
+- V5/V6 : diagnostics uniquement.
+
+La V28 modifie uniquement l'orientation de la cible.
+
+L'ancienne pose V1 par homographie est conservée comme diagnostic. La nouvelle pose V2 :
+
+1. récupère les quatre droites subpixel ajustées directement sur les profils haut/droite/bas/gauche ;
+2. prend la pose homographique V1 comme initialisation ;
+3. fixe la translation sur X/Y/Z déjà produits par V6.1-robust5 ;
+4. optimise uniquement la rotation du carré 3D ;
+5. minimise prioritairement la distance entre les bords projetés et les quatre droites mesurées ;
+6. utilise les coins seulement comme faible régularisation ;
+7. rejette V2 si l'erreur de reprojection devient excessive ;
+8. conserve V1 en repli sans jamais modifier la distance.
+
+Le roll est stabilisé avec une périodicité de 180 degrés. Yaw/pitch sont stabilisés via la normale 3D moyenne plutôt qu'en moyennant directement les angles.
