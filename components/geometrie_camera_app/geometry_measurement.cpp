@@ -1131,11 +1131,8 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
 
   result.pose_z_mm = translation.z;
   result.pose_scale_error_pct =
-      std::fabs(result.pose_z_mm - result.z_mm) * 100.0f / std::max(result.z_mm, 1.0f);
-  if (!std::isfinite(result.pose_scale_error_pct) ||
-      result.pose_scale_error_pct > MAX_POSE_SCALE_ERROR_PCT) {
-    return result;
-  }
+      std::fabs(result.pose_z_mm - result.z_mm) * 100.0f /
+      std::max(result.z_mm, 1.0f);
 
   Vec3 r1 = v1;
   if (!normalize(r1)) {
@@ -1152,22 +1149,70 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
     return result;
   }
 
-  result.yaw_deg = std::atan2(normal.x, normal.z) * RAD_TO_DEG_F;
-  result.pitch_deg = std::atan2(-normal.y,
-                                std::sqrt(normal.x * normal.x + normal.z * normal.z)) * RAD_TO_DEG_F;
-
-  Vec3 reference_right = {normal.z, 0.0f, -normal.x};
-  if (!normalize(reference_right)) {
-    reference_right = {1.0f, 0.0f, 0.0f};
-  }
-  Vec3 reference_down = cross(normal, reference_right);
-  if (!normalize(reference_down)) {
+  PoseBasis pose_v1_basis{r1, r2, normal};
+  if (!normalize_basis(pose_v1_basis)) {
     return result;
   }
 
-  result.roll_deg = normalize_half_turn(
-      std::atan2(dot(r1, reference_down), dot(r1, reference_right)) * RAD_TO_DEG_F);
-  result.pose_valid = true;
+  pose_angles_from_basis(
+      pose_v1_basis,
+      result.pose_v1_yaw_deg,
+      result.pose_v1_pitch_deg,
+      result.pose_v1_roll_deg);
+
+  result.pose_v1_valid =
+      std::isfinite(result.pose_scale_error_pct) &&
+      result.pose_scale_error_pct <= MAX_POSE_SCALE_ERROR_PCT;
+
+  // Pose V2 : seule l'orientation est optimisee. La translation provient
+  // EXCLUSIVEMENT de V6.1-robust5 deja calculee ci-dessus et n'est jamais
+  // reinjectee dans la distance. Le cout s'appuie principalement sur les
+  // quatre droites subpixel, les coins ne servant que de faible regularisation.
+  const Vec3 fixed_translation = {
+      result.x_mm, result.y_mm, result.z_mm};
+
+  PoseBasis pose_v2_basis;
+  PoseV2Score pose_v2_score{};
+  if (observation.subpixel_refined &&
+      refine_pose_v2(
+          pose_v1_basis, fixed_translation,
+          this->target_size_mm_, calibration,
+          points, observation,
+          pose_v2_basis, pose_v2_score)) {
+    result.pose_v2_valid = true;
+    result.pose_v2_used = true;
+    result.pose_v2_line_rms_px = pose_v2_score.line_rms_px;
+    result.pose_v2_corner_rms_px = pose_v2_score.corner_rms_px;
+
+    pose_angles_from_basis(
+        pose_v2_basis,
+        result.pose_v2_yaw_deg,
+        result.pose_v2_pitch_deg,
+        result.pose_v2_roll_deg);
+
+    result.yaw_deg = result.pose_v2_yaw_deg;
+    result.pitch_deg = result.pose_v2_pitch_deg;
+    result.roll_deg = result.pose_v2_roll_deg;
+    result.pose_normal_x = pose_v2_basis.normal.x;
+    result.pose_normal_y = pose_v2_basis.normal.y;
+    result.pose_normal_z = pose_v2_basis.normal.z;
+    result.pose_valid = true;
+    return result;
+  }
+
+  // Repli conservateur : l'ancienne pose reste disponible uniquement si sa
+  // coherence d'echelle historique est acceptable. La distance principale
+  // reste dans tous les cas celle de V6.1-robust5.
+  if (result.pose_v1_valid) {
+    result.yaw_deg = result.pose_v1_yaw_deg;
+    result.pitch_deg = result.pose_v1_pitch_deg;
+    result.roll_deg = result.pose_v1_roll_deg;
+    result.pose_normal_x = pose_v1_basis.normal.x;
+    result.pose_normal_y = pose_v1_basis.normal.y;
+    result.pose_normal_z = pose_v1_basis.normal.z;
+    result.pose_valid = true;
+  }
+
   return result;
 }
 
