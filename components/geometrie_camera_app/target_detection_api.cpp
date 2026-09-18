@@ -92,7 +92,7 @@ void TargetDetectionApiHandler::handle_preview_(AsyncWebServerRequest *request) 
 void TargetDetectionApiHandler::send_status_(AsyncWebServerRequest *request, int response_code,
                                              const char *status, const char *error) const {
   std::string json;
-  json.reserve(640);
+  json.reserve(820);
   json += "{\"status\":\"";
   json += status;
   json += "\"";
@@ -127,6 +127,14 @@ void TargetDetectionApiHandler::send_status_(AsyncWebServerRequest *request, int
     json += std::to_string(observation.rotation_deg);
     json += ",\"quality\":";
     json += std::to_string(observation.quality);
+    json += ",\"subpixel_refined\":";
+    json += observation.subpixel_refined ? "true" : "false";
+    json += ",\"subpixel_rms_px\":";
+    json += std::to_string(observation.subpixel_rms_px);
+    json += ",\"subpixel_max_rms_px\":";
+    json += std::to_string(observation.subpixel_max_rms_px);
+    json += ",\"subpixel_gradient\":";
+    json += std::to_string(observation.subpixel_gradient);
     json += "},\"preview\":\"/target/preview.bmp\"";
   }
 
