@@ -119,6 +119,18 @@ bool TargetSubpixelRefiner::refine(const GrayFrameView &frame,
     metrics->right_gradient = 0.0f;
     metrics->bottom_gradient = 0.0f;
     metrics->left_gradient = 0.0f;
+    metrics->top_line_point = TargetPoint{};
+    metrics->right_line_point = TargetPoint{};
+    metrics->bottom_line_point = TargetPoint{};
+    metrics->left_line_point = TargetPoint{};
+    metrics->top_line_dx = 0.0f;
+    metrics->top_line_dy = 0.0f;
+    metrics->right_line_dx = 0.0f;
+    metrics->right_line_dy = 0.0f;
+    metrics->bottom_line_dx = 0.0f;
+    metrics->bottom_line_dy = 0.0f;
+    metrics->left_line_dx = 0.0f;
+    metrics->left_line_dy = 0.0f;
   }
 
   if (frame.data == nullptr || frame.width < 4 || frame.height < 4 ||
@@ -250,6 +262,19 @@ bool TargetSubpixelRefiner::refine(const GrayFrameView &frame,
     metrics->right_gradient = right.mean_gradient;
     metrics->bottom_gradient = bottom.mean_gradient;
     metrics->left_gradient = left.mean_gradient;
+
+    metrics->top_line_point = top.point;
+    metrics->right_line_point = right.point;
+    metrics->bottom_line_point = bottom.point;
+    metrics->left_line_point = left.point;
+    metrics->top_line_dx = top.dx;
+    metrics->top_line_dy = top.dy;
+    metrics->right_line_dx = right.dx;
+    metrics->right_line_dy = right.dy;
+    metrics->bottom_line_dx = bottom.dx;
+    metrics->bottom_line_dy = bottom.dy;
+    metrics->left_line_dx = left.dx;
+    metrics->left_line_dy = left.dy;
   }
 
   ESP_LOGD(
