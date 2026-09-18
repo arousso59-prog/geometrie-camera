@@ -144,32 +144,45 @@ ImagePoint quadrilateral_center(const ImagePoint (&points)[4]) {
   return center;
 }
 
-float fuse_size_distance(float z_from_width, float z_from_height) {
+float fuse_size_distance(float z_from_width, float z_from_height,
+                         float width_weight, float height_weight) {
   const float lower = std::min(z_from_width, z_from_height);
   const float upper = std::max(z_from_width, z_from_height);
-  const float sum = z_from_width + z_from_height;
-  if (!std::isfinite(sum) || sum <= 0.0f || lower <= 0.0f) {
+  if (!std::isfinite(z_from_width) || !std::isfinite(z_from_height) ||
+      z_from_width <= 0.0f || z_from_height <= 0.0f || lower <= 0.0f) {
     return lower;
   }
 
-  // Moyenne harmonique = moyenne des deux tailles apparentes normalisees.
-  // Elle est continue et beaucoup moins sensible au basculement largeur/hauteur
-  // que le min() historique lorsque les deux estimations sont proches.
-  const float harmonic = 2.0f * z_from_width * z_from_height / sum;
+  float w_width = std::isfinite(width_weight) && width_weight > 0.0f
+                      ? width_weight
+                      : 1.0f;
+  float w_height = std::isfinite(height_weight) && height_weight > 0.0f
+                       ? height_weight
+                       : 1.0f;
+
+  // Ne jamais laisser un axe ecraser totalement l'autre : la seconde
+  // dimension reste un controle geometrique utile. Le rapport max 16:1 donne
+  // toutefois un avantage net a l'axe dont l'incertitude subpixel est faible.
+  if (w_width > w_height * 16.0f) w_width = w_height * 16.0f;
+  if (w_height > w_width * 16.0f) w_height = w_width * 16.0f;
+
+  const float weight_sum = w_width + w_height;
+  const float weighted =
+      (w_width * z_from_width + w_height * z_from_height) / weight_sum;
   const float disagreement = (upper - lower) / lower;
 
   if (disagreement <= DISTANCE_BLEND_START_RATIO) {
-    return harmonic;
+    return weighted;
   }
   if (disagreement >= DISTANCE_BLEND_FULL_RATIO) {
     return lower;
   }
 
-  // Quand les deux axes divergent progressivement (inclinaison de la cible),
-  // revenir sans discontinuite vers la dimension la moins raccourcie.
+  // En cas d'inclinaison importante, l'estimation la plus basse reste la moins
+  // affectee par le raccourcissement projectif. La transition reste continue.
   const float blend = (disagreement - DISTANCE_BLEND_START_RATIO) /
                       (DISTANCE_BLEND_FULL_RATIO - DISTANCE_BLEND_START_RATIO);
-  return harmonic + (lower - harmonic) * blend;
+  return weighted + (lower - weighted) * blend;
 }
 
 float normalize_half_turn(float angle_deg) {
@@ -505,7 +518,7 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
   float height_px = 0.5f * (point_distance(points[0], points[3]) +
                             point_distance(points[1], points[2]));
 
-  // Distance V4 : quand le raffinement des bords a reussi et qu'aucune
+  // Distance V5 : quand le raffinement des bords a reussi et qu'aucune
   // correction de distorsion n'est necessaire, utiliser directement la
   // separation des paires de droites opposees. On evite ainsi de convertir
   // quatre droites stables en quatre intersections plus bruitees, puis de
@@ -526,13 +539,20 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
   }
 
   result.edge_v4_used = use_v4_edges;
+  result.edge_v5_used =
+      use_v4_edges &&
+      observation.subpixel_width_sigma_px > 0.0f &&
+      observation.subpixel_height_sigma_px > 0.0f;
   result.apparent_width_px = width_px;
   result.apparent_height_px = height_px;
+  result.apparent_width_sigma_px =
+      result.edge_v5_used ? observation.subpixel_width_sigma_px : 0.0f;
+  result.apparent_height_sigma_px =
+      result.edge_v5_used ? observation.subpixel_height_sigma_px : 0.0f;
 
-  // Distance V4 : fusionner les deux dimensions apparentes. Quand les deux
-  // axes sont coherents, leurs estimations sont combinees. En cas d'inclinaison
-  // marquee, la fusion revient progressivement vers la dimension la moins
-  // affectee par le raccourcissement.
+  // Distance V5 : convertir l'incertitude en pixels de chaque paire de droites
+  // en incertitude attendue sur Z. Cela donne un poids physique directement
+  // comparable entre largeur et hauteur.
   result.z_from_width_mm = calibration.fx_px * this->target_size_mm_ / width_px;
   result.z_from_height_mm = calibration.fy_px * this->target_size_mm_ / height_px;
   if (!std::isfinite(result.z_from_width_mm) || !std::isfinite(result.z_from_height_mm) ||
@@ -540,7 +560,50 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
     return result;
   }
 
-  result.z_mm = fuse_size_distance(result.z_from_width_mm, result.z_from_height_mm);
+  float width_weight = 1.0f;
+  float height_weight = 1.0f;
+  if (result.edge_v5_used) {
+    const float width_sigma_px =
+        std::max(0.015f, result.apparent_width_sigma_px);
+    const float height_sigma_px =
+        std::max(0.015f, result.apparent_height_sigma_px);
+
+    const float width_sigma_z =
+        std::max(0.05f,
+                 result.z_from_width_mm * width_sigma_px / width_px);
+    const float height_sigma_z =
+        std::max(0.05f,
+                 result.z_from_height_mm * height_sigma_px / height_px);
+
+    width_weight = 1.0f / (width_sigma_z * width_sigma_z);
+    height_weight = 1.0f / (height_sigma_z * height_sigma_z);
+
+    // A incertitude equivalente, un bord avec davantage de contraste est un
+    // peu plus fiable. Le facteur est volontairement borne pour ne jamais
+    // remplacer l'information geometrique par le seul contraste.
+    if (observation.subpixel_width_gradient > 0.0f &&
+        observation.subpixel_height_gradient > 0.0f) {
+      const float gradient_sum =
+          observation.subpixel_width_gradient +
+          observation.subpixel_height_gradient;
+      const float width_gradient_factor =
+          std::max(0.75f, std::min(1.25f,
+              2.0f * observation.subpixel_width_gradient / gradient_sum));
+      const float height_gradient_factor =
+          std::max(0.75f, std::min(1.25f,
+              2.0f * observation.subpixel_height_gradient / gradient_sum));
+      width_weight *= width_gradient_factor;
+      height_weight *= height_gradient_factor;
+    }
+  }
+
+  const float weight_sum = width_weight + height_weight;
+  result.width_distance_weight = width_weight / weight_sum;
+  result.height_distance_weight = height_weight / weight_sum;
+
+  result.z_mm = fuse_size_distance(
+      result.z_from_width_mm, result.z_from_height_mm,
+      width_weight, height_weight);
   if (!std::isfinite(result.z_mm) || result.z_mm <= 0.0f) {
     return result;
   }
@@ -563,7 +626,7 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
 
   // La decomposition projective n'est pas autorisee a piloter directement la
   // distance principale. Elle sert a l'orientation du plan et fournit pose_z
-  // comme controle independant de coherence avec la distance V4.
+  // comme controle independant de coherence avec la distance V5.
   float unit_h[9];
   if (!build_unit_square_homography(points, unit_h)) {
     return result;
