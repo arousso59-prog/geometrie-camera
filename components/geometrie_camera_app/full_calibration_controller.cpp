@@ -105,6 +105,8 @@ FullCalibrationController::FullCalibrationController(
       current_subpixel_rms_px_(0.0f),
       current_width_gradient_(0.0f),
       current_height_gradient_(0.0f),
+      current_repeat_width_sigma_px_(0.0f),
+      current_repeat_height_sigma_px_(0.0f),
       current_mean_luma_x100_(0),
       current_dark_percent_x100_(0),
       current_bright_percent_x100_(0),
@@ -118,6 +120,13 @@ FullCalibrationController::FullCalibrationController(
       best_contrast_(0),
       best_optical_score_(-1.0f),
       auto_fallback_(false),
+      candidate_repeat_count_(0),
+      candidate_valid_count_(0),
+      candidate_score_sum_(0.0f),
+      candidate_width_sum_(0.0f),
+      candidate_height_sum_(0.0f),
+      candidate_width_sq_sum_(0.0f),
+      candidate_height_sq_sum_(0.0f),
       tuning_roi_x_(0),
       tuning_roi_y_(0),
       tuning_roi_width_(0),
@@ -484,6 +493,8 @@ float FullCalibrationController::current_detection_quality() const { return this
 float FullCalibrationController::current_subpixel_rms_px() const { return this->current_subpixel_rms_px_; }
 float FullCalibrationController::current_width_gradient() const { return this->current_width_gradient_; }
 float FullCalibrationController::current_height_gradient() const { return this->current_height_gradient_; }
+float FullCalibrationController::current_repeat_width_sigma_px() const { return this->current_repeat_width_sigma_px_; }
+float FullCalibrationController::current_repeat_height_sigma_px() const { return this->current_repeat_height_sigma_px_; }
 uint32_t FullCalibrationController::current_mean_luma_x100() const { return this->current_mean_luma_x100_; }
 uint32_t FullCalibrationController::current_dark_percent_x100() const { return this->current_dark_percent_x100_; }
 uint32_t FullCalibrationController::current_bright_percent_x100() const { return this->current_bright_percent_x100_; }
@@ -598,6 +609,7 @@ bool FullCalibrationController::enable_auto_controls_() {
 }
 
 bool FullCalibrationController::prepare_manual_candidate_(int exposure, int gain) {
+  this->reset_candidate_accumulator_();
   std::string error;
   const int bounded_exposure = clamp_int(exposure, 0, 65535);
   const int bounded_gain = clamp_int(gain, 0, 64);
@@ -620,6 +632,7 @@ bool FullCalibrationController::prepare_manual_candidate_(int exposure, int gain
 bool FullCalibrationController::prepare_postprocess_candidate_(
     int brightness, int contrast) {
   if (this->settings_controller_ == nullptr) return false;
+  this->reset_candidate_accumulator_();
 
   const int bounded_brightness = clamp_int(brightness, -2, 2);
   const int bounded_contrast = clamp_int(contrast, -2, 2);
@@ -803,6 +816,78 @@ float FullCalibrationController::evaluate_optical_score_(
          contrast_factor * clipping_factor * gain_factor;
 }
 
+void FullCalibrationController::reset_candidate_accumulator_() {
+  this->candidate_repeat_count_ = 0;
+  this->candidate_valid_count_ = 0;
+  this->candidate_score_sum_ = 0.0f;
+  this->candidate_width_sum_ = 0.0f;
+  this->candidate_height_sum_ = 0.0f;
+  this->candidate_width_sq_sum_ = 0.0f;
+  this->candidate_height_sq_sum_ = 0.0f;
+  this->current_repeat_width_sigma_px_ = 0.0f;
+  this->current_repeat_height_sigma_px_ = 0.0f;
+}
+
+bool FullCalibrationController::accumulate_candidate_result_(
+    const TargetObservation &observation,
+    bool target_found,
+    float raw_score) {
+  this->candidate_repeat_count_++;
+
+  const bool valid =
+      raw_score > 0.0f && target_found && observation.subpixel_refined &&
+      observation.subpixel_width_px > 0.0f &&
+      observation.subpixel_height_px > 0.0f;
+
+  if (valid) {
+    this->candidate_valid_count_++;
+    this->candidate_score_sum_ += raw_score;
+    this->candidate_width_sum_ += observation.subpixel_width_px;
+    this->candidate_height_sum_ += observation.subpixel_height_px;
+    this->candidate_width_sq_sum_ +=
+        observation.subpixel_width_px * observation.subpixel_width_px;
+    this->candidate_height_sq_sum_ +=
+        observation.subpixel_height_px * observation.subpixel_height_px;
+  }
+
+  if (this->candidate_repeat_count_ < CANDIDATE_REPEAT_FRAMES) {
+    return false;
+  }
+
+  if (this->candidate_valid_count_ != CANDIDATE_REPEAT_FRAMES) {
+    this->current_optical_score_ = 0.0f;
+    this->current_repeat_width_sigma_px_ = 0.0f;
+    this->current_repeat_height_sigma_px_ = 0.0f;
+    return true;
+  }
+
+  const float inv_n = 1.0f / static_cast<float>(CANDIDATE_REPEAT_FRAMES);
+  const float mean_score = this->candidate_score_sum_ * inv_n;
+  const float mean_width = this->candidate_width_sum_ * inv_n;
+  const float mean_height = this->candidate_height_sum_ * inv_n;
+  const float var_width = std::max(
+      0.0f, this->candidate_width_sq_sum_ * inv_n -
+                mean_width * mean_width);
+  const float var_height = std::max(
+      0.0f, this->candidate_height_sq_sum_ * inv_n -
+                mean_height * mean_height);
+
+  this->current_repeat_width_sigma_px_ = std::sqrt(var_width);
+  this->current_repeat_height_sigma_px_ = std::sqrt(var_height);
+
+  // Le plus mauvais axe pilote la penalite : un profil tres bon en largeur
+  // mais instable en hauteur n'est pas retenu. A sigma=0.05 px la penalite
+  // reste faible ; elle devient significative au-dela de ~0.15-0.20 px.
+  const float worst_repeat_sigma =
+      std::max(this->current_repeat_width_sigma_px_,
+               this->current_repeat_height_sigma_px_);
+  const float repeatability_factor =
+      1.0f / (1.0f + 2.5f * worst_repeat_sigma);
+
+  this->current_optical_score_ = mean_score * repeatability_factor;
+  return true;
+}
+
 bool FullCalibrationController::handle_tuning_result_(
     const TargetObservation &observation, bool target_found) {
   this->tuning_attempts_++;
@@ -828,13 +913,35 @@ bool FullCalibrationController::handle_tuning_result_(
     }
   }
 
-  this->current_optical_score_ =
+  const float raw_optical_score =
       this->evaluate_optical_score_(observation, target_found);
+  this->current_optical_score_ = raw_optical_score;
+
+  const bool repeated_candidate =
+      this->phase_ == CalibrationPhase::TUNE_MANUAL_VALIDATE ||
+      this->phase_ == CalibrationPhase::TUNE_MANUAL_EXPOSURE ||
+      this->phase_ == CalibrationPhase::TUNE_MANUAL_GAIN ||
+      this->phase_ == CalibrationPhase::TUNE_CONTRAST ||
+      this->phase_ == CalibrationPhase::TUNE_BRIGHTNESS;
+
+  if (repeated_candidate &&
+      !this->accumulate_candidate_result_(
+          observation, target_found, raw_optical_score)) {
+    ESP_LOGI(TAG,
+             "Optique %u/%u phase=%s candidat repetition %u/%u raw=%.1f",
+             static_cast<unsigned>(this->tuning_attempts_),
+             static_cast<unsigned>(OPTICAL_TUNING_MAX_ATTEMPTS),
+             this->phase_text(),
+             static_cast<unsigned>(this->candidate_repeat_count_),
+             static_cast<unsigned>(CANDIDATE_REPEAT_FRAMES),
+             raw_optical_score);
+    return this->request_next_capture_();
+  }
 
   ESP_LOGI(TAG,
            "Optique %u/%u phase=%s AE=%d exp=%d gain=%d lum=%d ctr=%d score=%.1f "
-           "qual=%.3f rms=%.3f sigmaW=%.3f sigmaH=%.3f gradW=%.1f gradH=%.1f "
-           "P10=%u P90=%u C=%u luma=%.1f clip=%.1f%%",
+           "qual=%.3f rms=%.3f sigmaW=%.3f sigmaH=%.3f repW=%.3f repH=%.3f "
+           "gradW=%.1f gradH=%.1f P10=%u P90=%u C=%u luma=%.1f clip=%.1f%%",
            static_cast<unsigned>(this->tuning_attempts_),
            static_cast<unsigned>(OPTICAL_TUNING_MAX_ATTEMPTS),
            this->phase_text(), this->current_ae_level_,
@@ -845,6 +952,8 @@ bool FullCalibrationController::handle_tuning_result_(
            this->current_subpixel_rms_px_,
            observation.subpixel_width_sigma_px,
            observation.subpixel_height_sigma_px,
+           this->current_repeat_width_sigma_px_,
+           this->current_repeat_height_sigma_px_,
            observation.subpixel_width_gradient,
            observation.subpixel_height_gradient,
            static_cast<unsigned>(this->current_p10_luma_),
@@ -914,7 +1023,7 @@ bool FullCalibrationController::handle_tuning_result_(
     this->best_brightness_ = 0;
     this->best_contrast_ = 0;
     this->tuning_round_ = 0;
-    this->tuning_step_ = 20;
+    this->tuning_step_ = 10;
     return this->start_manual_exposure_round_();
   }
 
@@ -1026,10 +1135,6 @@ bool FullCalibrationController::advance_manual_pair_(bool exposure_axis) {
 
   this->tuning_round_++;
   if (exposure_axis) {
-    if (this->tuning_round_ < 2) {
-      this->tuning_step_ = 10;
-      return this->start_manual_exposure_round_();
-    }
     this->tuning_round_ = 0;
     this->tuning_step_ = 1;
     return this->start_manual_gain_round_();
@@ -1356,6 +1461,8 @@ void FullCalibrationController::reset_run_() {
   this->current_subpixel_rms_px_ = 0.0f;
   this->current_width_gradient_ = 0.0f;
   this->current_height_gradient_ = 0.0f;
+  this->current_repeat_width_sigma_px_ = 0.0f;
+  this->current_repeat_height_sigma_px_ = 0.0f;
   this->current_mean_luma_x100_ = 0;
   this->current_dark_percent_x100_ = 0;
   this->current_bright_percent_x100_ = 0;
@@ -1369,6 +1476,13 @@ void FullCalibrationController::reset_run_() {
   this->best_contrast_ = 0;
   this->best_optical_score_ = -1.0f;
   this->auto_fallback_ = false;
+  this->candidate_repeat_count_ = 0;
+  this->candidate_valid_count_ = 0;
+  this->candidate_score_sum_ = 0.0f;
+  this->candidate_width_sum_ = 0.0f;
+  this->candidate_height_sum_ = 0.0f;
+  this->candidate_width_sq_sum_ = 0.0f;
+  this->candidate_height_sq_sum_ = 0.0f;
   this->tuning_roi_x_ = 0;
   this->tuning_roi_y_ = 0;
   this->tuning_roi_width_ = 0;
