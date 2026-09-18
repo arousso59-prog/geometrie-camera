@@ -185,7 +185,7 @@ void FullCalibrationApiHandler::send_status_(
   const CameraCalibration &calibration = this->controller_->result_calibration();
 
   std::string json;
-  json.reserve(2600);
+  json.reserve(3000);
   json += "{\"status\":\"";
   json += status;
   json += "\"";
@@ -224,6 +224,8 @@ void FullCalibrationApiHandler::send_status_(
   json += ",\"current_ae_level\":" + std::to_string(this->controller_->current_ae_level());
   json += ",\"current_exposure\":" + std::to_string(this->controller_->current_exposure());
   json += ",\"current_gain\":" + std::to_string(this->controller_->current_gain());
+  json += ",\"current_brightness\":" + std::to_string(this->controller_->current_brightness());
+  json += ",\"current_contrast\":" + std::to_string(this->controller_->current_contrast());
   json += ",\"current_score\":" + std::to_string(this->controller_->current_optical_score());
   json += ",\"detection_quality\":" + std::to_string(this->controller_->current_detection_quality());
   json += ",\"subpixel_rms_px\":" + std::to_string(this->controller_->current_subpixel_rms_px());
@@ -238,6 +240,8 @@ void FullCalibrationApiHandler::send_status_(
   json += ",\"best_ae_level\":" + std::to_string(this->controller_->best_ae_level());
   json += ",\"best_exposure\":" + std::to_string(this->controller_->best_exposure());
   json += ",\"best_gain\":" + std::to_string(this->controller_->best_gain());
+  json += ",\"best_brightness\":" + std::to_string(this->controller_->best_brightness());
+  json += ",\"best_contrast\":" + std::to_string(this->controller_->best_contrast());
   json += ",\"best_score\":" + std::to_string(this->controller_->best_optical_score());
   json += "}";
 
