@@ -3,8 +3,6 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "jpeg_artifact_corrector.h"
-
 namespace esphome {
 namespace geometrie_camera_app {
 
@@ -15,10 +13,9 @@ class JpegFilteredDiagnostic {
   explicit JpegFilteredDiagnostic(JpegDiagnostic *source);
   ~JpegFilteredDiagnostic();
 
-  // Decodes the JPEG to the grayscale working buffer. Artifact correction can
-  // be skipped for monochrome camera tests while keeping the grayscale decode
-  // required by the target detector.
-  bool process(bool apply_artifact_correction = true);
+  // Decode le JPEG courant dans le buffer de travail 8 bits utilise par le
+  // detecteur. Il n'y a plus de filtre/correction d'artefacts dans le pipeline.
+  bool process();
   void release_buffers();
 
   bool ready() const;
@@ -32,34 +29,26 @@ class JpegFilteredDiagnostic {
   size_t bmp_size() const;
   int decode_result() const;
   uint32_t decode_ms() const;
-  uint32_t correction_ms() const;
   uint32_t total_ms() const;
-  bool artifact_correction_applied() const;
-  const JpegArtifactCorrectionStats &correction_stats() const;
 
  private:
-  bool ensure_buffers_(uint16_t width, uint16_t height, bool need_green_mask);
+  bool ensure_buffers_(uint16_t width, uint16_t height);
   bool ensure_jpeg_work_buffer_();
   void clear_buffers_();
   void build_bmp_header_(uint16_t width, uint16_t height, size_t row_stride);
 
   JpegDiagnostic *source_;
-  JpegArtifactCorrector corrector_;
   uint8_t *bmp_buffer_;
   size_t bmp_size_;
   size_t bmp_capacity_;
-  uint8_t *green_mask_;
-  size_t green_mask_capacity_;
   uint8_t *jpeg_work_buffer_;
   uint16_t width_;
   uint16_t height_;
   uint32_t process_count_;
   uint32_t source_capture_count_;
   bool ready_;
-  bool artifact_correction_applied_;
   int decode_result_;
   uint32_t decode_ms_;
-  uint32_t correction_ms_;
   uint32_t total_ms_;
 };
 
