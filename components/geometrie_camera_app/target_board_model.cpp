@@ -125,8 +125,10 @@ bool fit_homography(PatternFeature *features, uint16_t count,
                     float &rms, float &max_residual) {
   if (features == nullptr || count < 8) return false;
 
-  float weights[MAX_COMPOSITE_FEATURES];
-  float residuals[MAX_COMPOSITE_FEATURES];
+  // Buffers persistants : eviter ~5 Ko de tableaux temporaires sur la pile
+  // FreeRTOS pendant la detection multi-marqueurs.
+  static float weights[MAX_COMPOSITE_FEATURES];
+  static float residuals[MAX_COMPOSITE_FEATURES];
   if (count > MAX_COMPOSITE_FEATURES) return false;
   for (uint16_t i = 0; i < count; ++i) {
     weights[i] = features[i].inlier ? 1.0f : 0.0f;
@@ -134,7 +136,7 @@ bool fit_homography(PatternFeature *features, uint16_t count,
   }
 
   for (uint8_t iteration = 0; iteration < 3; ++iteration) {
-    float normal[8][9];
+    static float normal[8][9];
     std::memset(normal, 0, sizeof(normal));
     uint16_t active = 0;
 
@@ -188,7 +190,7 @@ bool fit_homography(PatternFeature *features, uint16_t count,
     }
   }
 
-  float sorted[MAX_COMPOSITE_FEATURES];
+  static float sorted[MAX_COMPOSITE_FEATURES];
   uint16_t sorted_count = 0;
   for (uint16_t i = 0; i < count; ++i) {
     ImagePoint projected;
