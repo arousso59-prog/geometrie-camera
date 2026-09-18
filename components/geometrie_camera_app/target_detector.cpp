@@ -224,6 +224,10 @@ TargetObservation TargetDetector::detect(const GrayFrameView &frame) {
                     pattern_metrics.rms_px;
                 candidate_best.pattern_max_residual_px =
                     pattern_metrics.max_residual_px;
+                candidate_best.pattern_features =
+                    pattern_metrics.features;
+                candidate_best.pattern_features_count =
+                    pattern_metrics.features_count;
                 for (uint8_t h = 0; h < 9; ++h) {
                   candidate_best.pattern_homography[h] =
                       pattern_metrics.homography[h];
