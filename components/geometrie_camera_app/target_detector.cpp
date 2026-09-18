@@ -1,5 +1,7 @@
 #include "target_detector.h"
 
+#include <cstring>
+
 #include <algorithm>
 #include <cmath>
 
@@ -37,6 +39,10 @@ TargetDetector::TargetDetector()
       subpixel_refiner_(),
       code_decoder_(),
       candidates_(),
+      marker_best_{},
+      marker_features_{},
+      marker_feature_counts_{0, 0, 0},
+      board_features_{},
       last_valid_observation_(),
       consecutive_misses_(0) {}
 
@@ -50,6 +56,10 @@ TargetObservation TargetDetector::detect(const GrayFrameView &frame) {
   TargetObservation best;
   float best_selection_score = -1000.0f;
   this->candidates_.count = 0;
+  for (uint8_t m = 0; m < 3; ++m) {
+    this->marker_best_[m] = TargetObservation();
+    this->marker_feature_counts_[m] = 0;
+  }
 
   if (!this->candidate_finder_.find(frame, this->candidates_)) {
     this->update_tracking_(best);
@@ -213,8 +223,8 @@ TargetObservation TargetDetector::detect(const GrayFrameView &frame) {
                       std::lround(candidate_best.rotation_deg / 90.0f)) &
                   0x03);
               if (this->pattern_refiner_.refine(
-                      frame, subpixel_candidate, rotation_quarters,
-                      pattern_metrics)) {
+                      frame, subpixel_candidate, candidate_best.marker_id,
+                      rotation_quarters, pattern_metrics)) {
                 candidate_best.pattern_refined = true;
                 candidate_best.pattern_feature_count =
                     pattern_metrics.feature_count;
@@ -239,17 +249,67 @@ TargetObservation TargetDetector::detect(const GrayFrameView &frame) {
       }
     }
 
-    const float selection_score = this->selection_score_(candidate_best);
+    const int marker_index =
+        target_r1_marker_index(candidate_best.marker_id);
     ESP_LOGD(TAG,
-             "V5.7 candidate[%u] quality=%.4f valid=%s continuity=%.3f selection=%.4f",
-             static_cast<unsigned>(index), candidate_best.quality,
+             "R1 candidate[%u] marker=%d quality=%.4f valid=%s subpixel=%s",
+             static_cast<unsigned>(index), marker_index,
+             candidate_best.quality,
              candidate_best.valid ? "YES" : "NO",
-             this->continuity_score_(candidate_best), selection_score);
+             candidate_best.subpixel_refined ? "YES" : "NO");
 
+    if (candidate_best.valid && marker_index >= 0 &&
+        (this->marker_best_[marker_index].valid == false ||
+         candidate_best.quality > this->marker_best_[marker_index].quality)) {
+      this->marker_best_[marker_index] = candidate_best;
+
+      // PatternRefiner reutilise son buffer au candidat suivant : copier
+      // immediatement les points de ce marqueur dans le stockage persistant
+      // du detecteur.
+      this->marker_feature_counts_[marker_index] = 0;
+      if (candidate_best.pattern_refined &&
+          candidate_best.pattern_features != nullptr) {
+        const uint16_t count = std::min<uint16_t>(
+            candidate_best.pattern_features_count,
+            MAX_MARKER_PATTERN_FEATURES);
+        for (uint16_t i = 0; i < count; ++i) {
+          this->marker_features_[marker_index][i] =
+              candidate_best.pattern_features[i];
+        }
+        this->marker_feature_counts_[marker_index] = count;
+        this->marker_best_[marker_index].pattern_features =
+            this->marker_features_[marker_index];
+        this->marker_best_[marker_index].pattern_features_count = count;
+      }
+    }
+
+    const float selection_score = this->selection_score_(candidate_best);
     if (selection_score > best_selection_score) {
       best = candidate_best;
       best_selection_score = selection_score;
     }
+  }
+
+  TargetObservation board;
+  if (build_target_r1_observation(
+          this->marker_best_,
+          this->board_features_,
+          MAX_BOARD_PATTERN_FEATURES,
+          board)) {
+    ESP_LOGI(TAG,
+             "R1 board detectee: markers=%u mask=0x%02X complete=%s size=%.1fx%.1f px rms=%.3f",
+             static_cast<unsigned>(board.board_marker_count),
+             static_cast<unsigned>(board.board_marker_mask),
+             board.board_complete ? "YES" : "NO",
+             board.width_px, board.height_px,
+             board.pattern_rms_px);
+    best = board;
+  } else if (best.valid) {
+    // Un marqueur R1 isole ne constitue plus une cible valide. On conserve
+    // sa geometrie comme information de recuperation, mais l'ancienne cible
+    // 50x50 seule ne peut plus verrouiller le systeme.
+    best.valid = false;
+    best.board_complete = false;
   }
 
   if (best.width_px <= 0.0f && this->candidates_.count > 0) {
