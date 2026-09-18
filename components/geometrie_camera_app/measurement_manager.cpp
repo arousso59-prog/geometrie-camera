@@ -251,6 +251,7 @@ void MeasurementManager::compute_stabilized_measurement_() {
   float pose_error_values[STABILIZATION_WINDOW];
   uint8_t pose_count = 0;
   uint8_t pose_method_values[STABILIZATION_WINDOW] = {0};
+  uint8_t pose_v4_count = 0;
   uint8_t pose_v3_count = 0;
   uint8_t pose_v2_count = 0;
   uint8_t pose_v1_count = 0;
@@ -276,7 +277,10 @@ void MeasurementManager::compute_stabilized_measurement_() {
       normal_z_values[pose_count] = sample.pose_normal_z;
       pose_z_values[pose_count] = sample.pose_z_mm;
       pose_error_values[pose_count] = sample.pose_scale_error_pct;
-      if (sample.pose_v3_used) {
+      if (sample.pose_v4_used) {
+        pose_method_values[pose_count] = 4;
+        pose_v4_count++;
+      } else if (sample.pose_v3_used) {
         pose_method_values[pose_count] = 3;
         pose_v3_count++;
       } else if (sample.pose_v2_used) {
@@ -346,7 +350,9 @@ void MeasurementManager::compute_stabilized_measurement_() {
   result.pose_valid = pose_count >= required_pose;
   if (result.pose_valid) {
     uint8_t selected_method = 0;
-    if (pose_v3_count >= required_pose) {
+    if (pose_v4_count >= required_pose) {
+      selected_method = 4;
+    } else if (pose_v3_count >= required_pose) {
       selected_method = 3;
     } else if (pose_v2_count >= required_pose) {
       selected_method = 2;
@@ -354,8 +360,10 @@ void MeasurementManager::compute_stabilized_measurement_() {
       selected_method = 1;
     }
 
+    result.pose_v4_used = selected_method == 4;
+    result.pose_v4_valid = pose_v4_count > 0;
     result.pose_v3_used = selected_method == 3;
-    result.pose_v3_valid = pose_v3_count > 0;
+    result.pose_v3_valid = pose_v3_count > 0 || result.pose_v3_valid;
     result.pose_v2_used = selected_method == 2;
     result.pose_v2_valid = pose_v2_count > 0 || result.pose_v2_valid;
     result.pose_v1_valid = pose_v1_count > 0 || result.pose_v1_valid;
