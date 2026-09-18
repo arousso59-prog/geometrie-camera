@@ -13,6 +13,15 @@ struct ImagePoint {
   float y;
 };
 
+struct ImageLine {
+  ImageLine();
+
+  bool valid;
+  ImagePoint point;
+  float dx;
+  float dy;
+};
+
 struct CameraCalibration {
   CameraCalibration();
 
@@ -88,6 +97,13 @@ struct TargetObservation {
   float subpixel_bottom_gradient;
   float subpixel_left_gradient;
 
+  // Droites subpixel directement ajustees sur les profils des quatre bords.
+  // Elles sont plus stables pour la pose que les intersections de coins.
+  ImageLine subpixel_top_line;
+  ImageLine subpixel_right_line;
+  ImageLine subpixel_bottom_line;
+  ImageLine subpixel_left_line;
+
   ImagePoint top_left_px;
   ImagePoint top_right_px;
   ImagePoint bottom_right_px;
@@ -100,6 +116,9 @@ struct GeometryMeasurement {
   bool valid;
   bool calibrated;
   bool pose_valid;
+  bool pose_v1_valid;
+  bool pose_v2_valid;
+  bool pose_v2_used;
   bool edge_v4_used;
   bool edge_v5_used;
   bool edge_v6_used;
@@ -145,6 +164,21 @@ struct GeometryMeasurement {
   float yaw_deg;
   float pitch_deg;
   float roll_deg;
+
+  // Pose V1 = decomposition homographie historique. Pose V2 = optimisation
+  // robuste des quatre droites subpixel avec translation V6.1 figee.
+  float pose_v1_yaw_deg;
+  float pose_v1_pitch_deg;
+  float pose_v1_roll_deg;
+  float pose_v2_yaw_deg;
+  float pose_v2_pitch_deg;
+  float pose_v2_roll_deg;
+  float pose_v2_line_rms_px;
+  float pose_v2_corner_rms_px;
+  float pose_normal_x;
+  float pose_normal_y;
+  float pose_normal_z;
+
   float pose_z_mm;
   float pose_scale_error_pct;
   float quality;
