@@ -668,6 +668,18 @@ float FullCalibrationController::evaluate_optical_score_(
           ? 1.0f / (1.0f + 1.5f * rms)
           : 0.45f;
 
+  // V5 : favoriser explicitement les reglages qui positionnent les deux paires
+  // de bords avec une faible incertitude. Le pire axe est volontairement pris
+  // en compte afin de ne plus choisir une image tres bonne horizontalement
+  // mais instable verticalement (ou inversement).
+  const float worst_axis_sigma =
+      std::max(observation.subpixel_width_sigma_px,
+               observation.subpixel_height_sigma_px);
+  const float axis_precision_factor =
+      observation.subpixel_refined && worst_axis_sigma > 0.0f
+          ? 1.0f / (1.0f + 8.0f * worst_axis_sigma)
+          : 0.55f;
+
   // Score continu : une image sombre doit pouvoir etre comparee avec une
   // image plus claire afin que la recherche manuelle puisse sortir d'un mauvais
   // point de depart. Pas de seuil binaire ici.
@@ -687,7 +699,7 @@ float FullCalibrationController::evaluate_optical_score_(
       1.0f / (1.0f + 0.025f * static_cast<float>(std::max(0, this->current_gain_)));
 
   return static_cast<float>(this->current_sharpness_x100_) *
-         quality_factor * rms_factor *
+         quality_factor * rms_factor * axis_precision_factor *
          white_factor * black_factor * contrast_factor * gain_factor;
 }
 
@@ -706,7 +718,7 @@ bool FullCalibrationController::handle_tuning_result_(
 
   ESP_LOGI(TAG,
            "Optique %u/%u phase=%s AE=%d exp=%d gain=%d score=%.1f net=%u "
-           "qual=%.3f rms=%.3f P10=%u P90=%u C=%u luma=%.1f clip=%.1f%%",
+           "qual=%.3f rms=%.3f sigmaW=%.3f sigmaH=%.3f P10=%u P90=%u C=%u luma=%.1f clip=%.1f%%",
            static_cast<unsigned>(this->tuning_attempts_),
            static_cast<unsigned>(OPTICAL_TUNING_MAX_ATTEMPTS),
            this->phase_text(), this->current_ae_level_,
@@ -715,6 +727,8 @@ bool FullCalibrationController::handle_tuning_result_(
            static_cast<unsigned>(this->current_sharpness_x100_),
            this->current_detection_quality_,
            this->current_subpixel_rms_px_,
+           observation.subpixel_width_sigma_px,
+           observation.subpixel_height_sigma_px,
            static_cast<unsigned>(this->current_p10_luma_),
            static_cast<unsigned>(this->current_p90_luma_),
            static_cast<unsigned>(this->current_contrast_luma_),
