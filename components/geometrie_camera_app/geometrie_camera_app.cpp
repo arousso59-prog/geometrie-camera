@@ -1,5 +1,7 @@
 #include "geometrie_camera_app.h"
 
+#include "target_board_model.h"
+
 #include "esphome/components/esp32_camera/esp32_camera.h"
 #include "esphome/components/web_server_base/web_server_base.h"
 #include "esphome/core/log.h"
@@ -70,7 +72,10 @@ void GeometrieCameraApp::dump_config() {
   ESP_LOGCONFIG(TAG, "  Measurement API: /measurement/*");
   ESP_LOGCONFIG(TAG, "  Full calibration API: /calibration/full/*");
   ESP_LOGCONFIG(TAG, "  Continuous API: /continuous/start, /continuous/stop, /continuous/status");
-  ESP_LOGCONFIG(TAG, "  Target physical size: %.2f mm", this->measurement_manager_.measurement_engine().target_size_mm());
+  ESP_LOGCONFIG(TAG,
+                "  Target model: R1 fixed board %.0fx%.0f mm, reference %.0fx%.0f mm, markers A+B+C",
+                TARGET_R1_BOARD_WIDTH_MM, TARGET_R1_BOARD_HEIGHT_MM,
+                TARGET_R1_REFERENCE_WIDTH_MM, TARGET_R1_REFERENCE_HEIGHT_MM);
   ESP_LOGCONFIG(TAG, "  Geometry calibration: %s",
                 this->measurement_manager_.measurement_engine().has_calibration() ? "VALID" : "REQUIRED");
   ESP_LOGCONFIG(TAG, "  Resolution active: %s", this->resolution_controller_.active_resolution().c_str());
