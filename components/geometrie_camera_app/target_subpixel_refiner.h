@@ -20,6 +20,10 @@ struct TargetSubpixelMetrics {
   uint8_t min_edge_samples;
   float width_px;
   float height_px;
+  float width_sigma_px;
+  float height_sigma_px;
+  float width_gradient;
+  float height_gradient;
 };
 
 class TargetSubpixelRefiner {
@@ -37,6 +41,7 @@ class TargetSubpixelRefiner {
     float dx;
     float dy;
     float rms;
+    float position_sigma;
     float mean_gradient;
     uint8_t samples;
   };
