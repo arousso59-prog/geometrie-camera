@@ -315,7 +315,7 @@ void MeasurementApiHandler::handle_calibrate_(AsyncWebServerRequest *request) {
 void MeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *request, int response_code,
                                            const char *status, const char *error) const {
   std::string json;
-  json.reserve(6800);
+  json.reserve(9000);
   json += "{\"status\":\"";
   json += status;
   json += "\"";
@@ -415,6 +415,23 @@ void MeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *request, int r
     json += ",\"target_roll_deg\":" + std::to_string(measurement.roll_deg);
     json += ",\"pose_z_mm\":" + std::to_string(measurement.pose_z_mm);
     json += ",\"pose_scale_error_pct\":" + std::to_string(measurement.pose_scale_error_pct);
+    json += ",\"pose_method\":\"";
+    json += measurement.pose_v2_used ? "line_v2" : (measurement.pose_v1_valid ? "homography_v1" : "none");
+    json += "\"";
+    json += ",\"pose_v1_valid\":";
+    json += measurement.pose_v1_valid ? "true" : "false";
+    json += ",\"pose_v2_valid\":";
+    json += measurement.pose_v2_valid ? "true" : "false";
+    json += ",\"pose_v2_used\":";
+    json += measurement.pose_v2_used ? "true" : "false";
+    json += ",\"pose_v1_yaw_deg\":" + std::to_string(measurement.pose_v1_yaw_deg);
+    json += ",\"pose_v1_pitch_deg\":" + std::to_string(measurement.pose_v1_pitch_deg);
+    json += ",\"pose_v1_roll_deg\":" + std::to_string(measurement.pose_v1_roll_deg);
+    json += ",\"pose_v2_yaw_deg\":" + std::to_string(measurement.pose_v2_yaw_deg);
+    json += ",\"pose_v2_pitch_deg\":" + std::to_string(measurement.pose_v2_pitch_deg);
+    json += ",\"pose_v2_roll_deg\":" + std::to_string(measurement.pose_v2_roll_deg);
+    json += ",\"pose_v2_line_rms_px\":" + std::to_string(measurement.pose_v2_line_rms_px);
+    json += ",\"pose_v2_corner_rms_px\":" + std::to_string(measurement.pose_v2_corner_rms_px);
     json += ",\"quality\":" + std::to_string(measurement.quality);
     json += ",\"timestamp_ms\":" + std::to_string(measurement.timestamp_ms);
     json += "}";
@@ -483,6 +500,23 @@ void MeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *request, int r
     json += ",\"target_pitch_deg\":" + std::to_string(raw_measurement.pitch_deg);
     json += ",\"target_roll_deg\":" + std::to_string(raw_measurement.roll_deg);
     json += ",\"pose_z_mm\":" + std::to_string(raw_measurement.pose_z_mm);
+    json += ",\"pose_method\":\"";
+    json += raw_measurement.pose_v2_used ? "line_v2" : (raw_measurement.pose_v1_valid ? "homography_v1" : "none");
+    json += "\"";
+    json += ",\"pose_v1_valid\":";
+    json += raw_measurement.pose_v1_valid ? "true" : "false";
+    json += ",\"pose_v2_valid\":";
+    json += raw_measurement.pose_v2_valid ? "true" : "false";
+    json += ",\"pose_v2_used\":";
+    json += raw_measurement.pose_v2_used ? "true" : "false";
+    json += ",\"pose_v1_yaw_deg\":" + std::to_string(raw_measurement.pose_v1_yaw_deg);
+    json += ",\"pose_v1_pitch_deg\":" + std::to_string(raw_measurement.pose_v1_pitch_deg);
+    json += ",\"pose_v1_roll_deg\":" + std::to_string(raw_measurement.pose_v1_roll_deg);
+    json += ",\"pose_v2_yaw_deg\":" + std::to_string(raw_measurement.pose_v2_yaw_deg);
+    json += ",\"pose_v2_pitch_deg\":" + std::to_string(raw_measurement.pose_v2_pitch_deg);
+    json += ",\"pose_v2_roll_deg\":" + std::to_string(raw_measurement.pose_v2_roll_deg);
+    json += ",\"pose_v2_line_rms_px\":" + std::to_string(raw_measurement.pose_v2_line_rms_px);
+    json += ",\"pose_v2_corner_rms_px\":" + std::to_string(raw_measurement.pose_v2_corner_rms_px);
     json += ",\"quality\":" + std::to_string(raw_measurement.quality);
     json += ",\"timestamp_ms\":" + std::to_string(raw_measurement.timestamp_ms);
     json += "}";
