@@ -353,6 +353,31 @@ void ContinuousMeasurementController::loop() {
       if (this->sharpness_enabled_) {
         this->update_sharpness_roi_from_target_();
       }
+
+      // Les modes SEARCH/WIDE/MEDIUM/FINE servent uniquement a localiser et
+      // recentrer la cible. Aucune mesure geometrique n'est publiee depuis une
+      // image redimensionnee. Seule une image capturee en PRECISE natif
+      // 800x600 peut alimenter MeasurementManager et l'historique.
+      if (this->current_cycle_viewport_mode_ != "precise") {
+        if (this->tracking_controller_ != nullptr &&
+            this->tracking_controller_->enabled()) {
+          const TrackingUpdateResult tracking_result =
+              this->tracking_controller_->update_after_detection(
+                  true, this->detection_service_->last_observation());
+          if (tracking_result == TrackingUpdateResult::ERROR) {
+            this->fail_cycle_("tracking_update_failed");
+            return;
+          }
+          if (tracking_result == TrackingUpdateResult::VIEWPORT_CHANGED) {
+            this->reset_local_tracking_after_viewport_change_();
+          }
+        }
+
+        this->current_compute_ms_ = 0;
+        this->finish_cycle_(true, false);
+        return;
+      }
+
       this->state_ = ContinuousMeasurementState::COMPUTE;
       return;
     }
@@ -369,11 +394,9 @@ void ContinuousMeasurementController::loop() {
         measurement_height = this->tracking_controller_->reference_height();
       }
 
-      const bool stabilize_measurement =
-          this->current_cycle_viewport_mode_ == "precise";
       const bool measured = this->measurement_manager_->process(
           measurement_observation, measurement_width, measurement_height, millis(),
-          stabilize_measurement);
+          true);
       if (!this->running_) {
         return;
       }
