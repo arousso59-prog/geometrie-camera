@@ -88,6 +88,9 @@ ImageSharpnessEvaluator::ImageSharpnessEvaluator(JpegDiagnostic *source)
       height_(0),
       score_x100_(0),
       evaluation_ms_(0),
+      mean_luma_x100_(0),
+      dark_percent_x100_(0),
+      bright_percent_x100_(0),
       ready_(false) {}
 
 ImageSharpnessEvaluator::~ImageSharpnessEvaluator() { this->clear_buffers_(); }
@@ -96,6 +99,9 @@ bool ImageSharpnessEvaluator::evaluate_region(uint16_t x, uint16_t y, uint16_t w
   this->ready_ = false;
   this->score_x100_ = 0;
   this->evaluation_ms_ = 0;
+  this->mean_luma_x100_ = 0;
+  this->dark_percent_x100_ = 0;
+  this->bright_percent_x100_ = 0;
 
   if (this->source_ == nullptr || !this->source_->ready() || this->source_->jpeg_data() == nullptr ||
       this->source_->jpeg_size() == 0 || !this->source_->has_soi() || !this->source_->has_eoi()) {
@@ -164,6 +170,30 @@ bool ImageSharpnessEvaluator::evaluate_region(uint16_t x, uint16_t y, uint16_t w
     return false;
   }
 
+  uint64_t luminance_sum = 0;
+  uint32_t luminance_count = 0;
+  uint32_t dark_count = 0;
+  uint32_t bright_count = 0;
+  for (uint16_t py = roi_y; py < roi_bottom; ++py) {
+    const uint8_t *row =
+        this->grayscale_buffer_ + static_cast<size_t>(py) * reduced_width;
+    for (uint16_t px = roi_x; px < roi_right; ++px) {
+      const uint8_t value = row[px];
+      luminance_sum += value;
+      luminance_count++;
+      if (value <= 12U) dark_count++;
+      if (value >= 243U) bright_count++;
+    }
+  }
+  if (luminance_count > 0) {
+    this->mean_luma_x100_ =
+        static_cast<uint32_t>((luminance_sum * 100U) / luminance_count);
+    this->dark_percent_x100_ =
+        static_cast<uint32_t>((static_cast<uint64_t>(dark_count) * 10000U) / luminance_count);
+    this->bright_percent_x100_ =
+        static_cast<uint32_t>((static_cast<uint64_t>(bright_count) * 10000U) / luminance_count);
+  }
+
   this->score_x100_ = this->compute_score_x100_(
       roi_x, roi_y, static_cast<uint16_t>(roi_right - roi_x), static_cast<uint16_t>(roi_bottom - roi_y));
   this->evaluation_ms_ = millis() - started_ms;
@@ -180,6 +210,9 @@ bool ImageSharpnessEvaluator::evaluate_region(uint16_t x, uint16_t y, uint16_t w
 bool ImageSharpnessEvaluator::ready() const { return this->ready_; }
 uint32_t ImageSharpnessEvaluator::score_x100() const { return this->score_x100_; }
 uint32_t ImageSharpnessEvaluator::evaluation_ms() const { return this->evaluation_ms_; }
+uint32_t ImageSharpnessEvaluator::mean_luma_x100() const { return this->mean_luma_x100_; }
+uint32_t ImageSharpnessEvaluator::dark_percent_x100() const { return this->dark_percent_x100_; }
+uint32_t ImageSharpnessEvaluator::bright_percent_x100() const { return this->bright_percent_x100_; }
 uint16_t ImageSharpnessEvaluator::preview_width() const { return this->width_; }
 uint16_t ImageSharpnessEvaluator::preview_height() const { return this->height_; }
 
