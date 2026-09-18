@@ -18,7 +18,7 @@ class JpegDiagnostic : public camera::CameraListener {
   ~JpegDiagnostic();
 
   void set_camera(esp32_camera::ESP32Camera *camera);
-  bool request_capture();
+  bool request_capture(bool force_post_request_frame = true);
   void cancel_capture();
   void release_buffer();
   void loop();
@@ -62,6 +62,7 @@ class JpegDiagnostic : public camera::CameraListener {
   bool capture_pending_;
   bool discard_next_frame_;
   bool fresh_request_pending_;
+  bool force_post_request_frame_;
   bool ready_;
   uint32_t request_started_ms_;
   uint32_t stale_frame_received_ms_;
