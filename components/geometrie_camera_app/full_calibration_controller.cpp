@@ -594,7 +594,7 @@ bool FullCalibrationController::begin_optical_tuning_(
 
   ESP_LOGI(TAG,
            "Auto-reglage metrologique: ROI %ux%u @%u,%u, centre exp=%d gain=%d; "
-           "recherche exp +/-160/80/40/20 puis gain +/-4/2/1",
+           "recherche exp +/-160/80/40/20, gain +/-4/2/1, contraste puis luminosite",
            static_cast<unsigned>(this->tuning_roi_width_),
            static_cast<unsigned>(this->tuning_roi_height_),
            static_cast<unsigned>(this->tuning_roi_x_),
@@ -976,6 +976,13 @@ bool FullCalibrationController::start_contrast_tuning_() {
   this->best_brightness_ = 0;
   this->best_contrast_ = 0;
 
+  // Revenir explicitement au meilleur couple exp/gain : la derniere image du
+  // balayage gain peut correspondre au candidat oppose, pas au gagnant.
+  if (!this->prepare_manual_candidate_(
+          this->best_exposure_, this->best_gain_)) {
+    return false;
+  }
+
   // Baseline = contraste 0 / luminosite 0 avec exp/gain deja optimises.
   // Tester +1, puis -1. +2 n'est teste que si +1 a effectivement gagne.
   if (!this->prepare_postprocess_candidate_(0, 1)) return false;
@@ -1244,6 +1251,7 @@ void FullCalibrationController::reset_run_() {
   this->tuning_attempts_ = 0;
   this->tuning_round_ = 0;
   this->tuning_side_ = 0;
+  this->tuning_index_ = 0;
   this->tuning_pair_base_ = 0;
   this->tuning_step_ = 0;
   this->tuning_pair_best_value_ = 0;
