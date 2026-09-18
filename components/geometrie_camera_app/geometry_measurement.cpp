@@ -16,6 +16,8 @@ constexpr float POSE_V2_MAX_LINE_RMS_PX = 1.20f;
 constexpr float POSE_V2_MAX_CORNER_RMS_PX = 2.50f;
 constexpr float POSE_V2_MIN_NORMAL_Z = 0.05f;
 constexpr float POSE_V2_CORNER_COST_WEIGHT = 0.10f;
+constexpr float POSE_V3_MIN_NORMAL_Z = 0.05f;
+constexpr float POSE_V3_MAX_FIT_RMS_PX = 1.25f;
 
 struct Vec3 {
   float x;
@@ -580,6 +582,178 @@ bool refine_pose_v2(
   if (!current_score.valid ||
       current_score.line_rms_px > POSE_V2_MAX_LINE_RMS_PX ||
       current_score.corner_rms_px > POSE_V2_MAX_CORNER_RMS_PX) {
+    return false;
+  }
+
+  refined_basis = current;
+  refined_score = current_score;
+  return true;
+}
+
+struct PoseV3Score {
+  bool valid;
+  float rms_px;
+};
+
+bool project_pattern_homography(
+    const float (&h)[9], float u, float v, ImagePoint &image) {
+  const float w = h[6] * u + h[7] * v + h[8];
+  if (!std::isfinite(w) || std::fabs(w) < 1.0e-7f) return false;
+  image.x = (h[0] * u + h[1] * v + h[2]) / w;
+  image.y = (h[3] * u + h[4] * v + h[5]) / w;
+  return std::isfinite(image.x) && std::isfinite(image.y);
+}
+
+bool basis_from_pattern_homography(
+    const float (&h)[9],
+    const CameraCalibration &calibration,
+    PoseBasis &basis) {
+  Vec3 axis_u =
+      inverse_intrinsics_column(h[0], h[3], h[6], calibration);
+  Vec3 axis_v =
+      inverse_intrinsics_column(h[1], h[4], h[7], calibration);
+
+  if (!normalize(axis_u)) return false;
+  axis_v = subtract(axis_v, scale(axis_u, dot(axis_v, axis_u)));
+  if (!normalize(axis_v)) return false;
+
+  PoseBasis candidate{axis_u, axis_v, cross(axis_u, axis_v)};
+  if (!normalize_basis(candidate)) return false;
+  if (candidate.normal.z <= POSE_V3_MIN_NORMAL_Z) return false;
+
+  basis = candidate;
+  return true;
+}
+
+PoseV3Score evaluate_pose_v3(
+    const PoseBasis &basis,
+    const Vec3 &translation,
+    float target_size_mm,
+    const CameraCalibration &calibration,
+    const float (&pattern_h)[9]) {
+  PoseV3Score score{};
+  score.valid = false;
+  score.rms_px = 0.0f;
+
+  if (basis.normal.z <= POSE_V3_MIN_NORMAL_Z) return score;
+
+  // 25 points repartis sur toute la surface. L'homographie cible a ete
+  // estimee avec les nombreuses transitions internes du 7x7 ; cette grille
+  // transforme ce resultat photometrique en contrainte de rotation, sans
+  // reutiliser les quatre coins exterieurs.
+  constexpr float UV[5] = {0.10f, 0.30f, 0.50f, 0.70f, 0.90f};
+  double sum_sq = 0.0;
+  uint16_t count = 0;
+
+  for (float v : UV) {
+    for (float u : UV) {
+      ImagePoint expected;
+      if (!project_pattern_homography(pattern_h, u, v, expected)) {
+        return score;
+      }
+
+      const Vec3 local = {
+          (u - 0.5f) * target_size_mm,
+          (v - 0.5f) * target_size_mm,
+          0.0f,
+      };
+      ImagePoint projected;
+      if (!project_target_point(
+              local, basis, translation, calibration, projected)) {
+        return score;
+      }
+
+      const float dx = projected.x - expected.x;
+      const float dy = projected.y - expected.y;
+      sum_sq += static_cast<double>(dx) * dx +
+                static_cast<double>(dy) * dy;
+      count++;
+    }
+  }
+
+  if (count == 0) return score;
+  score.rms_px =
+      static_cast<float>(std::sqrt(sum_sq / static_cast<double>(count)));
+  score.valid = std::isfinite(score.rms_px);
+  return score;
+}
+
+bool refine_pose_v3(
+    const PoseBasis &pattern_basis,
+    const PoseBasis *alternate_basis,
+    const Vec3 &translation,
+    float target_size_mm,
+    const CameraCalibration &calibration,
+    const float (&pattern_h)[9],
+    PoseBasis &refined_basis,
+    PoseV3Score &refined_score) {
+  PoseBasis current = pattern_basis;
+  if (!normalize_basis(current)) return false;
+
+  PoseV3Score current_score = evaluate_pose_v3(
+      current, translation, target_size_mm, calibration, pattern_h);
+  if (!current_score.valid) return false;
+
+  // Si V2 fournit deja une orientation proche, la tester comme second point
+  // de depart. Elle n'est retenue que si elle explique mieux l'homographie
+  // issue du motif interieur.
+  if (alternate_basis != nullptr) {
+    PoseBasis alternate = *alternate_basis;
+    if (normalize_basis(alternate)) {
+      const PoseV3Score alternate_score = evaluate_pose_v3(
+          alternate, translation, target_size_mm, calibration, pattern_h);
+      if (alternate_score.valid &&
+          alternate_score.rms_px < current_score.rms_px) {
+        current = alternate;
+        current_score = alternate_score;
+      }
+    }
+  }
+
+  // Dernier pas = 0,0015 deg = 0,09 minute d'arc.
+  constexpr float STEPS_DEG[] = {
+      1.50f, 0.40f, 0.10f, 0.025f, 0.006f, 0.0015f,
+  };
+  static const int SIGNS[2] = {-1, 1};
+
+  for (float step_deg : STEPS_DEG) {
+    const float step_rad = step_deg / RAD_TO_DEG_F;
+    for (uint8_t pass = 0; pass < 6; ++pass) {
+      bool improved = false;
+      for (uint8_t axis = 0; axis < 3; ++axis) {
+        PoseBasis best_basis = current;
+        PoseV3Score best_score = current_score;
+
+        for (int sign : SIGNS) {
+          PoseBasis candidate = rotate_basis_camera_axis(
+              current, axis, static_cast<float>(sign) * step_rad);
+          if (candidate.normal.z <= POSE_V3_MIN_NORMAL_Z) continue;
+
+          const PoseV3Score candidate_score = evaluate_pose_v3(
+              candidate, translation, target_size_mm,
+              calibration, pattern_h);
+          if (candidate_score.valid &&
+              candidate_score.rms_px + 1.0e-7f <
+                  best_score.rms_px) {
+            best_basis = candidate;
+            best_score = candidate_score;
+          }
+        }
+
+        if (best_score.rms_px + 1.0e-7f <
+            current_score.rms_px) {
+          current = best_basis;
+          current_score = best_score;
+          improved = true;
+        }
+      }
+
+      if (!improved) break;
+    }
+  }
+
+  if (!current_score.valid ||
+      current_score.rms_px > POSE_V3_MAX_FIT_RMS_PX) {
     return false;
   }
 
