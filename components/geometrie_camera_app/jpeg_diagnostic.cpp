@@ -30,6 +30,7 @@ JpegDiagnostic::JpegDiagnostic()
       capture_pending_(false),
       discard_next_frame_(false),
       fresh_request_pending_(false),
+      force_post_request_frame_(true),
       ready_(false),
       request_started_ms_(0),
       stale_frame_received_ms_(0),
@@ -77,6 +78,7 @@ void JpegDiagnostic::cancel_capture() {
   this->capture_pending_ = false;
   this->discard_next_frame_ = false;
   this->fresh_request_pending_ = false;
+  this->force_post_request_frame_ = true;
   this->ready_ = false;
   this->request_started_ms_ = 0;
   this->stale_frame_received_ms_ = 0;
@@ -89,7 +91,7 @@ void JpegDiagnostic::cancel_capture() {
   ESP_LOGI(TAG, "Capture JPEG en cours annulee");
 }
 
-bool JpegDiagnostic::request_capture() {
+bool JpegDiagnostic::request_capture(bool force_post_request_frame) {
   if (this->camera_ == nullptr || this->capture_pending_) {
     return false;
   }
@@ -108,18 +110,23 @@ bool JpegDiagnostic::request_capture() {
   // effectivement copiee et marquee ready_ dans on_camera_image().
   this->ready_ = false;
   this->capture_pending_ = true;
-  this->discard_next_frame_ = true;
+  this->force_post_request_frame_ = force_post_request_frame;
+  this->discard_next_frame_ = force_post_request_frame;
   this->fresh_request_pending_ = false;
 
-  // ESPHome pre-acquires one framebuffer in its dedicated camera task. The
-  // first image delivered after request_image() can therefore predate this
-  // HTTP request (and can even have the previous framesize). We explicitly
-  // consume that queued frame first, then request the useful fresh frame from
-  // loop(), after ESPHome has finished the listener callback and returned the
-  // stale framebuffer to the driver.
+  // ESPHome pre-acquires en permanence la frame suivante dans sa tache camera.
+  // Apres un changement de viewport/reglage, cette frame peut appartenir a
+  // l'ancien etat : on la purge alors obligatoirement.
+  //
+  // En regime continu stable, elle est au contraire exactement la prochaine
+  // frame sequentielle, capturee pendant le decodage/detection du cycle
+  // precedent. L'accepter permet de chevaucher acquisition et traitement sans
+  // modifier la camera ni la precision de l'image.
   this->camera_->request_image(camera::WEB_REQUESTER);
-  ESP_LOGD(TAG, "Capture JPEG demandee a %u ms; purge de la frame en attente",
-           static_cast<unsigned>(this->request_started_ms_));
+  ESP_LOGD(TAG,
+           "Capture JPEG demandee a %u ms; strategie=%s",
+           static_cast<unsigned>(this->request_started_ms_),
+           force_post_request_frame ? "fresh_after_request" : "pipelined_next_frame");
   return true;
 }
 
