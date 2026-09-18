@@ -30,7 +30,7 @@ GeometrieCameraApp
 │   └── TargetDetectionApiHandler     # status + preview
 ├── TargetDetectionPreview
 ├── MeasurementManager
-│   └── GeometryMeasurementEngine V6
+│   └── GeometryMeasurementEngine V6.1 figé
 ├── MeasurementApiHandler
 ├── FullCalibrationController
 │   └── FullCalibrationApiHandler
@@ -93,7 +93,7 @@ CameraViewportController::to_reference()
    ↓
 TargetObservation 2560×1920
    ↓
-GeometryMeasurementEngine V6
+GeometryMeasurementEngine V6.1 figé
 ```
 
 Il n'existe plus de contrôle de netteté ni de correction d'artefacts dans cette chaîne.
@@ -110,7 +110,18 @@ Pour préserver la répétabilité observée en V5 :
 
 Les valeurs d'incertitude servent ensuite à pondérer les estimations de distance.
 
-En V23, les dimensions V5, V6 et V6.1 sont conservées simultanément dans le diagnostic. Les quatre RMS et gradients de bords sont également publiés afin de distinguer une régression de calcul d'une régression de qualité image. La sortie officielle reste V6.1.
+Les dimensions V5, V6 et V6.1 restent conservées simultanément dans le diagnostic. Les quatre RMS et gradients de bords permettent de distinguer une régression de calcul d'une régression de qualité image.
+
+### Méthode de mesure figée
+
+La sortie opérationnelle est figée sur **V6.1 + stabilisation robuste 5 mesures** :
+
+- dimension principale : séparation des droites robustes opposées ;
+- incertitude V6 utilisée pour pondérer largeur/hauteur sans déplacer directement la dimension ;
+- fusion Z largeur/hauteur pondérée ;
+- `MeasurementManager` conserve une fenêtre de 5 mesures et publie la moyenne robuste des trois valeurs centrales ;
+- V5 et V6 restent diagnostics uniquement ;
+- `pose_z` et l'homographie n'influencent pas la distance principale.
 
 ## Calibration automatique
 
@@ -118,8 +129,10 @@ La calibration est un workflow autonome :
 
 ```text
 tracking jusqu'à PRECISE
-→ recherche automatique du profil optique
-→ verrouillage exposition/gain
+→ stabilisation AEC/AGC auto OV5640
+→ lecture des registres réels exposition/gain
+→ validation du verrouillage manuel
+→ affinage local exposition/gain/contraste/luminosité
 → acquisition de N échantillons
 → calcul robuste fx/fy
 → stockage calibration
@@ -169,7 +182,7 @@ cycle_ms
 
 ## API
 
-Contrat : `GET /api/wsdl`, version **23**.
+Contrat : `GET /api/wsdl`, version **27**.
 
 ### Lecture seule
 
@@ -224,3 +237,13 @@ La sortie de travail 800×600 protège la marge PSRAM tout en permettant la plei
 8. vérifier la stabilité V6.1 et les temps capture/decode/detect/compute ;
 9. masquer puis retrouver la cible pour valider le retour SEARCH ;
 10. comparer la dispersion avec les mesures précédentes.
+
+
+## Configuration figée
+
+À partir de V27 :
+
+- le réglage caméra correspond à la stratégie validée V25 ;
+- la tentative V26 de sélection sur deux images par candidat est abandonnée ;
+- la méthode de distance officielle est V6.1 avec stabilisation robuste sur 5 mesures ;
+- toute évolution future doit cibler séparément la pose et les angles sans modifier ces deux références, sauf nouvelle campagne de validation explicite.
