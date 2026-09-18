@@ -976,7 +976,7 @@ bool FullCalibrationController::start_manual_exposure_round_() {
   this->tuning_side_ = 0;
 
   const int candidate =
-      clamp_int(this->tuning_pair_base_ - this->tuning_step_, 0, 1200);
+      clamp_int(this->tuning_pair_base_ - this->tuning_step_, 0, 65535);
   if (!this->prepare_manual_candidate_(candidate, this->best_gain_)) return false;
   return this->request_next_capture_();
 }
@@ -989,7 +989,7 @@ bool FullCalibrationController::start_manual_gain_round_() {
   this->tuning_side_ = 0;
 
   const int candidate =
-      clamp_int(this->tuning_pair_base_ - this->tuning_step_, 0, 30);
+      clamp_int(this->tuning_pair_base_ - this->tuning_step_, 0, 64);
   if (!this->prepare_manual_candidate_(this->best_exposure_, candidate)) return false;
   return this->request_next_capture_();
 }
@@ -1004,7 +1004,7 @@ bool FullCalibrationController::advance_manual_pair_(bool exposure_axis) {
 
   if (this->tuning_side_ == 0) {
     this->tuning_side_ = 1;
-    const int maximum = exposure_axis ? 1200 : 30;
+    const int maximum = exposure_axis ? 65535 : 64;
     const int candidate =
         clamp_int(this->tuning_pair_base_ + this->tuning_step_, 0, maximum);
     if (exposure_axis) {
@@ -1026,17 +1026,12 @@ bool FullCalibrationController::advance_manual_pair_(bool exposure_axis) {
 
   this->tuning_round_++;
   if (exposure_axis) {
-    if (this->tuning_round_ < 4) {
-      this->tuning_step_ = std::max(10, this->tuning_step_ / 2);
+    if (this->tuning_round_ < 2) {
+      this->tuning_step_ = 10;
       return this->start_manual_exposure_round_();
     }
     this->tuning_round_ = 0;
-    this->tuning_step_ = 2;
-    return this->start_manual_gain_round_();
-  }
-
-  if (this->tuning_round_ < 2) {
-    this->tuning_step_ = std::max(1, this->tuning_step_ / 2);
+    this->tuning_step_ = 1;
     return this->start_manual_gain_round_();
   }
 
@@ -1074,24 +1069,46 @@ bool FullCalibrationController::start_brightness_tuning_() {
 }
 
 bool FullCalibrationController::finish_optical_tuning_() {
+  if (this->best_optical_score_ <= 0.0f) {
+    return this->fallback_to_auto_sampling_("manual_tuning_no_valid_profile");
+  }
+
   if (!this->prepare_manual_candidate_(
           this->best_exposure_, this->best_gain_) ||
       !this->prepare_postprocess_candidate_(
           this->best_brightness_, this->best_contrast_)) {
-    return false;
+    return this->fallback_to_auto_sampling_("manual_final_apply_failed");
   }
 
   this->phase_ = CalibrationPhase::SAMPLING;
   this->current_optical_score_ = this->best_optical_score_;
 
   ESP_LOGI(TAG,
-           "Optique verrouillee: AE=%d exposition=%d gain=%d lum=%d ctr=%d score=%.1f "
-           "AEC=OFF AGC=OFF; debut des %u mesures calibration",
+           "Optique verrouillee MANUEL: AE=%d exposition=%d gain=%d lum=%d ctr=%d "
+           "score=%.1f AEC=OFF AGC=OFF; debut des %u mesures calibration",
            this->best_ae_level_, this->best_exposure_, this->best_gain_,
            this->best_brightness_, this->best_contrast_,
            this->best_optical_score_,
            static_cast<unsigned>(this->requested_samples_));
 
+  return this->request_next_capture_();
+}
+
+bool FullCalibrationController::fallback_to_auto_sampling_(const char *reason) {
+  ESP_LOGW(TAG,
+           "Verrouillage manuel refuse (%s): retour AEC/AGC AUTO avant calibration",
+           reason != nullptr ? reason : "unknown");
+
+  this->auto_fallback_ = true;
+  this->best_optical_score_ = -1.0f;
+  this->best_exposure_ = 0;
+  this->best_gain_ = 0;
+  this->best_brightness_ = 0;
+  this->best_contrast_ = 0;
+  this->tuning_index_ = 0;
+
+  if (!this->enable_auto_controls_()) return false;
+  this->phase_ = CalibrationPhase::TUNE_AUTO_SETTLE;
   return this->request_next_capture_();
 }
 
