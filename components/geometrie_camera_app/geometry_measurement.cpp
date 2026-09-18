@@ -543,6 +543,9 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
       use_v4_edges &&
       observation.subpixel_width_sigma_px > 0.0f &&
       observation.subpixel_height_sigma_px > 0.0f;
+  // V6 conserve la chaine de confiance V5 mais les dimensions proviennent
+  // maintenant des separations locales robustes et de la polarite du bord.
+  result.edge_v6_used = result.edge_v5_used;
   result.apparent_width_px = width_px;
   result.apparent_height_px = height_px;
   result.apparent_width_sigma_px =
