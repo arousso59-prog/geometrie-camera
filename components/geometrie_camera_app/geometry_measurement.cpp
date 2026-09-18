@@ -351,12 +351,56 @@ bool GeometryMeasurementEngine::derive_calibration_from_known_distance(
   }
 
   CameraCalibration calibration;
-  calibration.fx_px = width_px * known_distance_mm / this->target_size_mm_;
-  calibration.fy_px = height_px * known_distance_mm / this->target_size_mm_;
   calibration.cx_px = (static_cast<float>(frame_width) - 1.0f) * 0.5f;
   calibration.cy_px = (static_cast<float>(frame_height) - 1.0f) * 0.5f;
   calibration.reference_width_px = frame_width;
   calibration.reference_height_px = frame_height;
+
+  // La distance saisie par l'utilisateur est la distance physique entre le
+  // centre optique de la camera et le centre de la cible (range 3D), et non
+  // la profondeur Z. Hors axe, utiliser directement range comme Z surestime
+  // fx/fy et introduit un biais systematique. Resoudre iterativement :
+  //
+  //   range = Z * sqrt(1 + x_n^2 + y_n^2)
+  //   fx = largeur_px * Z / taille_cible
+  //   fy = hauteur_px * Z / taille_cible
+  //
+  // avec x_n/y_n calcules au centre projectif de la cible.
+  const ImagePoint center = quadrilateral_center(points);
+  float fx = width_px * known_distance_mm / this->target_size_mm_;
+  float fy = height_px * known_distance_mm / this->target_size_mm_;
+
+  for (uint8_t iteration = 0; iteration < 8; ++iteration) {
+    if (!std::isfinite(fx) || !std::isfinite(fy) ||
+        fx <= 0.0f || fy <= 0.0f) {
+      return false;
+    }
+
+    const float normalized_x = (center.x - calibration.cx_px) / fx;
+    const float normalized_y = (center.y - calibration.cy_px) / fy;
+    const float range_factor =
+        std::sqrt(1.0f + normalized_x * normalized_x +
+                  normalized_y * normalized_y);
+    if (!std::isfinite(range_factor) || range_factor < 1.0f) {
+      return false;
+    }
+
+    const float z_mm = known_distance_mm / range_factor;
+    const float next_fx = width_px * z_mm / this->target_size_mm_;
+    const float next_fy = height_px * z_mm / this->target_size_mm_;
+
+    if (std::fabs(next_fx - fx) < 0.0001f &&
+        std::fabs(next_fy - fy) < 0.0001f) {
+      fx = next_fx;
+      fy = next_fy;
+      break;
+    }
+    fx = next_fx;
+    fy = next_fy;
+  }
+
+  calibration.fx_px = fx;
+  calibration.fy_px = fy;
 
   // La calibration distance ne sait pas estimer la distorsion a elle seule.
   // Conserver les coefficients deja connus ; sinon ils restent nuls.
