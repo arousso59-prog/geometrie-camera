@@ -1,5 +1,7 @@
 #include "geometry_measurement.h"
 
+#include "target_board_model.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -443,7 +445,8 @@ float pose_edge_weight(float rms_px, float gradient) {
 PoseV2Score evaluate_pose_v2(
     const PoseBasis &basis,
     const Vec3 &translation,
-    float target_size_mm,
+    float target_width_mm,
+    float target_height_mm,
     const CameraCalibration &calibration,
     const ImagePoint (&observed_corners)[4],
     const ImageLine (&observed_lines)[4],
@@ -459,12 +462,13 @@ PoseV2Score evaluate_pose_v2(
     return score;
   }
 
-  const float half = 0.5f * target_size_mm;
+  const float half_w = 0.5f * target_width_mm;
+  const float half_h = 0.5f * target_height_mm;
   const Vec3 model[4] = {
-      {-half, -half, 0.0f},
-      { half, -half, 0.0f},
-      { half,  half, 0.0f},
-      {-half,  half, 0.0f},
+      {-half_w, -half_h, 0.0f},
+      { half_w, -half_h, 0.0f},
+      { half_w,  half_h, 0.0f},
+      {-half_w,  half_h, 0.0f},
   };
 
   ImagePoint projected[4];
@@ -520,7 +524,8 @@ PoseV2Score evaluate_pose_v2(
 bool refine_pose_v2(
     const PoseBasis &initial_basis,
     const Vec3 &translation,
-    float target_size_mm,
+    float target_width_mm,
+    float target_height_mm,
     const CameraCalibration &calibration,
     const ImagePoint (&observed_corners)[4],
     const TargetObservation &observation,
@@ -537,7 +542,7 @@ bool refine_pose_v2(
   PoseBasis current = initial_basis;
   if (!normalize_basis(current)) return false;
   PoseV2Score current_score = evaluate_pose_v2(
-      current, translation, target_size_mm, calibration,
+      current, translation, target_width_mm, target_height_mm, calibration,
       observed_corners, lines, edge_rms, edge_gradient);
   if (!current_score.valid) return false;
 
@@ -562,7 +567,7 @@ bool refine_pose_v2(
           if (candidate.normal.z <= POSE_V2_MIN_NORMAL_Z) continue;
 
           const PoseV2Score candidate_score = evaluate_pose_v2(
-              candidate, translation, target_size_mm, calibration,
+              candidate, translation, target_width_mm, target_height_mm, calibration,
               observed_corners, lines, edge_rms, edge_gradient);
           if (candidate_score.valid &&
               candidate_score.objective + 1.0e-8f <
@@ -633,7 +638,8 @@ bool basis_from_pattern_homography(
 PoseV3Score evaluate_pose_v3(
     const PoseBasis &basis,
     const Vec3 &translation,
-    float target_size_mm,
+    float target_width_mm,
+    float target_height_mm,
     const CameraCalibration &calibration,
     const float (&pattern_h)[9]) {
   PoseV3Score score{};
@@ -658,8 +664,8 @@ PoseV3Score evaluate_pose_v3(
       }
 
       const Vec3 local = {
-          (u - 0.5f) * target_size_mm,
-          (v - 0.5f) * target_size_mm,
+          (u - 0.5f) * target_width_mm,
+          (v - 0.5f) * target_height_mm,
           0.0f,
       };
       ImagePoint projected;
@@ -687,7 +693,8 @@ bool refine_pose_v3(
     const PoseBasis &pattern_basis,
     const PoseBasis *alternate_basis,
     const Vec3 &translation,
-    float target_size_mm,
+    float target_width_mm,
+    float target_height_mm,
     const CameraCalibration &calibration,
     const float (&pattern_h)[9],
     PoseBasis &refined_basis,
@@ -696,7 +703,7 @@ bool refine_pose_v3(
   if (!normalize_basis(current)) return false;
 
   PoseV3Score current_score = evaluate_pose_v3(
-      current, translation, target_size_mm, calibration, pattern_h);
+      current, translation, target_width_mm, target_height_mm, calibration, pattern_h);
   if (!current_score.valid) return false;
 
   // Si V2 fournit deja une orientation proche, la tester comme second point
@@ -706,7 +713,7 @@ bool refine_pose_v3(
     PoseBasis alternate = *alternate_basis;
     if (normalize_basis(alternate)) {
       const PoseV3Score alternate_score = evaluate_pose_v3(
-          alternate, translation, target_size_mm, calibration, pattern_h);
+          alternate, translation, target_width_mm, target_height_mm, calibration, pattern_h);
       if (alternate_score.valid &&
           alternate_score.rms_px < current_score.rms_px) {
         current = alternate;
@@ -735,7 +742,7 @@ bool refine_pose_v3(
           if (candidate.normal.z <= POSE_V3_MIN_NORMAL_Z) continue;
 
           const PoseV3Score candidate_score = evaluate_pose_v3(
-              candidate, translation, target_size_mm,
+              candidate, translation, target_width_mm, target_height_mm,
               calibration, pattern_h);
           if (candidate_score.valid &&
               candidate_score.rms_px + 1.0e-7f <
@@ -778,7 +785,8 @@ struct PoseV4Score {
 PoseV4Score evaluate_pose_v4(
     const PoseBasis &basis,
     const Vec3 &translation,
-    float target_size_mm,
+    float target_width_mm,
+    float target_height_mm,
     const CameraCalibration &calibration,
     const PatternFeature *features,
     uint16_t feature_count) {
@@ -804,8 +812,8 @@ PoseV4Score evaluate_pose_v4(
     if (!feature.inlier) continue;
 
     const Vec3 local = {
-        (feature.u - 0.5f) * target_size_mm,
-        (feature.v - 0.5f) * target_size_mm,
+        (feature.u - 0.5f) * target_width_mm,
+        (feature.v - 0.5f) * target_height_mm,
         0.0f,
     };
 
@@ -867,7 +875,8 @@ bool refine_pose_v4(
     const PoseBasis &initial_basis,
     const PoseBasis *alternate_basis,
     const Vec3 &translation,
-    float target_size_mm,
+    float target_width_mm,
+    float target_height_mm,
     const CameraCalibration &calibration,
     const PatternFeature *features,
     uint16_t feature_count,
@@ -877,7 +886,7 @@ bool refine_pose_v4(
   if (!normalize_basis(current)) return false;
 
   PoseV4Score current_score = evaluate_pose_v4(
-      current, translation, target_size_mm, calibration,
+      current, translation, target_width_mm, target_height_mm, calibration,
       features, feature_count);
   if (!current_score.valid) return false;
 
@@ -885,7 +894,7 @@ bool refine_pose_v4(
     PoseBasis alternate = *alternate_basis;
     if (normalize_basis(alternate)) {
       const PoseV4Score alternate_score = evaluate_pose_v4(
-          alternate, translation, target_size_mm, calibration,
+          alternate, translation, target_width_mm, target_height_mm, calibration,
           features, feature_count);
       if (alternate_score.valid &&
           alternate_score.objective < current_score.objective) {
@@ -916,7 +925,7 @@ bool refine_pose_v4(
           if (candidate.normal.z <= POSE_V4_MIN_NORMAL_Z) continue;
 
           const PoseV4Score candidate_score = evaluate_pose_v4(
-              candidate, translation, target_size_mm, calibration,
+              candidate, translation, target_width_mm, target_height_mm, calibration,
               features, feature_count);
           if (candidate_score.valid &&
               candidate_score.objective + 1.0e-10f <
@@ -986,18 +995,27 @@ void pose_angles_from_basis(
 }
 
 GeometryMeasurementEngine::GeometryMeasurementEngine()
-    : calibration_(), target_size_mm_(50.0f) {}
+    : calibration_(),
+      target_width_mm_(TARGET_R1_REFERENCE_WIDTH_MM),
+      target_height_mm_(TARGET_R1_REFERENCE_HEIGHT_MM) {}
 
 bool GeometryMeasurementEngine::set_target_size_mm(float target_size_mm) {
-  if (!std::isfinite(target_size_mm) || target_size_mm <= 0.0f) {
-    return false;
-  }
-  this->target_size_mm_ = target_size_mm;
-  return true;
+  // Compatibilite avec d'anciens clients uniquement. La cible R1 est fixe et
+  // ne peut plus etre redimensionnee par API.
+  return std::isfinite(target_size_mm) &&
+         std::fabs(target_size_mm - this->target_width_mm_) < 0.001f;
 }
 
 float GeometryMeasurementEngine::target_size_mm() const {
-  return this->target_size_mm_;
+  return this->target_width_mm_;
+}
+
+float GeometryMeasurementEngine::target_width_mm() const {
+  return this->target_width_mm_;
+}
+
+float GeometryMeasurementEngine::target_height_mm() const {
+  return this->target_height_mm_;
 }
 
 void GeometryMeasurementEngine::set_calibration(const CameraCalibration &calibration) {
@@ -1051,9 +1069,11 @@ bool GeometryMeasurementEngine::derive_calibration_from_known_distance(
     uint16_t frame_height,
     float known_distance_mm,
     CameraCalibration &result) const {
-  if (!observation.valid || frame_width == 0 || frame_height == 0 ||
+  if (!observation.valid || !observation.board_complete ||
+      observation.marker_id != TargetMarkerId::BOARD_R1 ||
+      frame_width == 0 || frame_height == 0 ||
       !std::isfinite(known_distance_mm) || known_distance_mm <= 0.0f ||
-      this->target_size_mm_ <= 0.0f) {
+      this->target_width_mm_ <= 0.0f || this->target_height_mm_ <= 0.0f) {
     return false;
   }
 
@@ -1108,8 +1128,8 @@ bool GeometryMeasurementEngine::derive_calibration_from_known_distance(
   //
   // avec x_n/y_n calcules au centre projectif de la cible.
   const ImagePoint center = quadrilateral_center(points);
-  float fx = width_px * known_distance_mm / this->target_size_mm_;
-  float fy = height_px * known_distance_mm / this->target_size_mm_;
+  float fx = width_px * known_distance_mm / this->target_width_mm_;
+  float fy = height_px * known_distance_mm / this->target_height_mm_;
 
   for (uint8_t iteration = 0; iteration < 8; ++iteration) {
     if (!std::isfinite(fx) || !std::isfinite(fy) ||
@@ -1127,8 +1147,8 @@ bool GeometryMeasurementEngine::derive_calibration_from_known_distance(
     }
 
     const float z_mm = known_distance_mm / range_factor;
-    const float next_fx = width_px * z_mm / this->target_size_mm_;
-    const float next_fy = height_px * z_mm / this->target_size_mm_;
+    const float next_fx = width_px * z_mm / this->target_width_mm_;
+    const float next_fy = height_px * z_mm / this->target_height_mm_;
 
     if (std::fabs(next_fx - fx) < 0.0001f &&
         std::fabs(next_fy - fy) < 0.0001f) {
@@ -1214,7 +1234,10 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
   result.quality = observation.quality;
   result.calibrated = this->has_calibration();
 
-  if (!observation.valid || !result.calibrated || this->target_size_mm_ <= 0.0f) {
+  if (!observation.valid || !observation.board_complete ||
+      observation.marker_id != TargetMarkerId::BOARD_R1 ||
+      !result.calibrated ||
+      this->target_width_mm_ <= 0.0f || this->target_height_mm_ <= 0.0f) {
     return result;
   }
 
@@ -1313,8 +1336,8 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
   // Distance V5 : convertir l'incertitude en pixels de chaque paire de droites
   // en incertitude attendue sur Z. Cela donne un poids physique directement
   // comparable entre largeur et hauteur.
-  result.z_from_width_mm = calibration.fx_px * this->target_size_mm_ / width_px;
-  result.z_from_height_mm = calibration.fy_px * this->target_size_mm_ / height_px;
+  result.z_from_width_mm = calibration.fx_px * this->target_width_mm_ / width_px;
+  result.z_from_height_mm = calibration.fy_px * this->target_height_mm_ / height_px;
   if (!std::isfinite(result.z_from_width_mm) || !std::isfinite(result.z_from_height_mm) ||
       result.z_from_width_mm <= 0.0f || result.z_from_height_mm <= 0.0f) {
     return result;
@@ -1381,9 +1404,9 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
     }
 
     const float z_width =
-        calibration.fx_px * this->target_size_mm_ / diagnostic_width_px;
+        calibration.fx_px * this->target_width_mm_ / diagnostic_width_px;
     const float z_height =
-        calibration.fy_px * this->target_size_mm_ / diagnostic_height_px;
+        calibration.fy_px * this->target_height_mm_ / diagnostic_height_px;
     if (!std::isfinite(z_width) || !std::isfinite(z_height) ||
         z_width <= 0.0f || z_height <= 0.0f) {
       return 0.0f;
@@ -1462,16 +1485,17 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
     return result;
   }
 
-  const float inverse_size = 1.0f / this->target_size_mm_;
+  const float inverse_width = 1.0f / this->target_width_mm_;
+  const float inverse_height = 1.0f / this->target_height_mm_;
   const Vec3 h1 = {
-      unit_h[0] * inverse_size,
-      unit_h[3] * inverse_size,
-      unit_h[6] * inverse_size,
+      unit_h[0] * inverse_width,
+      unit_h[3] * inverse_width,
+      unit_h[6] * inverse_width,
   };
   const Vec3 h2 = {
-      unit_h[1] * inverse_size,
-      unit_h[4] * inverse_size,
-      unit_h[7] * inverse_size,
+      unit_h[1] * inverse_height,
+      unit_h[4] * inverse_height,
+      unit_h[7] * inverse_height,
   };
   const Vec3 h3 = {
       0.5f * unit_h[0] + 0.5f * unit_h[1] + unit_h[2],
@@ -1548,7 +1572,7 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
       distortion_is_zero(calibration) &&
       refine_pose_v2(
           pose_v1_basis, fixed_translation,
-          this->target_size_mm_, calibration,
+          this->target_width_mm_, this->target_height_mm_, calibration,
           points, observation,
           pose_v2_basis, pose_v2_score)) {
     pose_v2_available = true;
@@ -1579,7 +1603,7 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
       if (refine_pose_v3(
               pattern_basis, alternate,
               fixed_translation,
-              this->target_size_mm_, calibration,
+              this->target_width_mm_, this->target_height_mm_, calibration,
               observation.pattern_homography,
               pose_v3_basis, pose_v3_score)) {
         pose_v3_available = true;
@@ -1621,7 +1645,7 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
     if (refine_pose_v4(
             initial, alternate,
             fixed_translation,
-            this->target_size_mm_, calibration,
+            this->target_width_mm_, this->target_height_mm_, calibration,
             observation.pattern_features,
             observation.pattern_features_count,
             pose_v4_basis, pose_v4_score)) {
