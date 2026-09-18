@@ -62,6 +62,7 @@ class FullCalibrationController {
   float stddev_fx_px() const;
   float stddev_fy_px() const;
   uint8_t preview_attempt() const;
+  const std::string &preview_mode() const;
   bool last_target_found() const;
   bool last_sample_valid() const;
   float last_sample_fx_px() const;
@@ -108,6 +109,7 @@ class FullCalibrationController {
   float stddev_fx_px_;
   float stddev_fy_px_;
   uint8_t preview_attempt_;
+  std::string preview_mode_;
   bool last_target_found_;
   bool last_sample_valid_;
   float last_sample_fx_px_;
