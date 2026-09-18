@@ -1,5 +1,7 @@
 #include "target_code_decoder.h"
 
+#include "target_board_model.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -11,15 +13,6 @@ namespace geometrie_camera_app {
 namespace {
 static const char *const TAG = "target_code_decoder";
 
-constexpr uint8_t TARGET_GRID[7][7] = {
-    {1, 1, 1, 1, 1, 1, 1},
-    {1, 1, 0, 1, 1, 0, 1},
-    {1, 0, 1, 0, 0, 1, 1},
-    {1, 1, 1, 1, 0, 0, 1},
-    {1, 0, 0, 1, 1, 1, 1},
-    {1, 1, 0, 0, 1, 0, 1},
-    {1, 1, 1, 1, 1, 1, 1},
-};
 
 constexpr float EXPANSION_FACTORS[] = {0.92f, 1.00f, 1.08f, 1.16f, 1.24f, 1.32f};
 
@@ -67,6 +60,7 @@ TargetObservation TargetCodeDecoder::decode(const GrayFrameView &frame,
   int best_contrast = 0;
   int best_black_mean = 0;
   uint8_t best_rotation = 0;
+  TargetMarkerId best_marker_id = TargetMarkerId::NONE;
 
   if (frame.data == nullptr || frame.width == 0 || frame.height == 0 || frame.stride < frame.width) {
     return best;
@@ -104,7 +98,10 @@ TargetObservation TargetCodeDecoder::decode(const GrayFrameView &frame,
 
       const float outside_mean = this->outside_mean_(frame, adjusted);
 
-      for (uint8_t rotation = 0; rotation < 4; ++rotation) {
+      static constexpr TargetMarkerId MARKER_IDS[3] = {
+          TargetMarkerId::A, TargetMarkerId::B, TargetMarkerId::C};
+      for (TargetMarkerId marker_id : MARKER_IDS) {
+        for (uint8_t rotation = 0; rotation < 4; ++rotation) {
         uint32_t black_sum = 0;
         uint32_t white_sum = 0;
         uint16_t black_count = 0;
@@ -112,7 +109,7 @@ TargetObservation TargetCodeDecoder::decode(const GrayFrameView &frame,
 
         for (uint8_t row = 0; row < 7; ++row) {
           for (uint8_t column = 0; column < 7; ++column) {
-            if (this->expected_cell_(row, column, rotation) != 0) {
+            if (this->expected_cell_(marker_id, row, column, rotation) != 0) {
               black_sum += samples[row][column];
               black_count++;
             } else {
@@ -144,7 +141,7 @@ TargetObservation TargetCodeDecoder::decode(const GrayFrameView &frame,
 
         for (uint8_t row = 0; row < 7; ++row) {
           for (uint8_t column = 0; column < 7; ++column) {
-            const bool expected_black = this->expected_cell_(row, column, rotation) != 0;
+            const bool expected_black = this->expected_cell_(marker_id, row, column, rotation) != 0;
             const bool measured_black = static_cast<int>(samples[row][column]) < threshold;
             if (expected_black == measured_black) {
               correct++;
@@ -175,6 +172,7 @@ TargetObservation TargetCodeDecoder::decode(const GrayFrameView &frame,
         if (score > best_score) {
           best_score = score;
           best.valid = score >= MIN_ACCEPTED_SCORE;
+          best.marker_id = marker_id;
           best.center_x_px = adjusted.center_x;
           best.center_y_px = adjusted.center_y;
           best.width_px = adjusted.width;
@@ -203,7 +201,9 @@ TargetObservation TargetCodeDecoder::decode(const GrayFrameView &frame,
           best_contrast = contrast;
           best_black_mean = black_mean;
           best_rotation = rotation;
+          best_marker_id = marker_id;
         }
+      }
       }
     }
 
@@ -223,6 +223,7 @@ TargetObservation TargetCodeDecoder::decode(const GrayFrameView &frame,
              static_cast<unsigned>(best_rotation) * 90U, best_score, best.valid ? "YES" : "NO",
              best_pattern_score, best_border_ratio, best_contrast, best_outside_mean,
              best_black_mean, best_expansion, best_phase_u_cells, best_phase_v_cells);
+    ESP_LOGD(TAG, "R1 marker id=%u", static_cast<unsigned>(best_marker_id));
   }
 
   return best;
@@ -311,17 +312,19 @@ uint8_t TargetCodeDecoder::sample_cell_(const GrayFrameView &frame, const Target
   return values[2];
 }
 
-uint8_t TargetCodeDecoder::expected_cell_(uint8_t row, uint8_t column, uint8_t rotation_quarters) const {
+uint8_t TargetCodeDecoder::expected_cell_(
+    TargetMarkerId marker_id, uint8_t row, uint8_t column,
+    uint8_t rotation_quarters) const {
   rotation_quarters &= 0x03;
   switch (rotation_quarters) {
     case 1:
-      return TARGET_GRID[6 - column][row];
+      return target_r1_marker_cell(marker_id, 6 - column, row);
     case 2:
-      return TARGET_GRID[6 - row][6 - column];
+      return target_r1_marker_cell(marker_id, 6 - row, 6 - column);
     case 3:
-      return TARGET_GRID[column][6 - row];
+      return target_r1_marker_cell(marker_id, column, 6 - row);
     default:
-      return TARGET_GRID[row][column];
+      return target_r1_marker_cell(marker_id, row, column);
   }
 }
 
