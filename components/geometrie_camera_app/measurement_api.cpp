@@ -10,6 +10,7 @@
 #include "jpeg_filtered_diagnostic.h"
 #include "measurement_manager.h"
 #include "target_detection_service.h"
+#include "target_board_model.h"
 #include "types.h"
 
 namespace esphome {
@@ -146,15 +147,12 @@ void MeasurementApiHandler::handle_config_set_(AsyncWebServerRequest *request) {
     return;
   }
 
-  float target_size_mm = 0.0f;
   float k1 = 0.0f, k2 = 0.0f, p1 = 0.0f, p2 = 0.0f, k3 = 0.0f;
   float clear_distortion_value = 0.0f;
-  bool has_target_size = false;
   bool has_k1 = false, has_k2 = false, has_p1 = false, has_p2 = false, has_k3 = false;
   bool has_clear_distortion = false;
   std::string error;
-  if (!this->parse_float_param_(request, "target_size_mm", target_size_mm, has_target_size, error) ||
-      !this->parse_float_param_(request, "k1", k1, has_k1, error) ||
+  if (!this->parse_float_param_(request, "k1", k1, has_k1, error) ||
       !this->parse_float_param_(request, "k2", k2, has_k2, error) ||
       !this->parse_float_param_(request, "p1", p1, has_p1, error) ||
       !this->parse_float_param_(request, "p2", p2, has_p2, error) ||
@@ -167,7 +165,7 @@ void MeasurementApiHandler::handle_config_set_(AsyncWebServerRequest *request) {
   }
 
   const bool has_any_distortion = has_k1 || has_k2 || has_p1 || has_p2 || has_k3;
-  if (!has_target_size && !has_any_distortion && !has_clear_distortion) {
+  if (!has_any_distortion && !has_clear_distortion) {
     request->send(400, "application/json",
                   "{\"status\":\"error\",\"error\":\"no_setting_provided\"}");
     return;
@@ -187,27 +185,6 @@ void MeasurementApiHandler::handle_config_set_(AsyncWebServerRequest *request) {
   }
 
   GeometryMeasurementEngine &engine = this->manager_->measurement_engine();
-
-  if (has_target_size) {
-    if (target_size_mm < 1.0f || target_size_mm > 1000.0f ||
-        !engine.set_target_size_mm(target_size_mm)) {
-      request->send(400, "application/json",
-                    "{\"status\":\"error\",\"error\":\"target_size_mm_out_of_range\"}");
-      return;
-    }
-
-    // Changer la taille physique invalide fx/fy. Les coefficients de
-    // distorsion sont independants de la taille et pourront etre reappliques
-    // par la calibration full suivante.
-    const CameraCalibration previous = engine.calibration();
-    engine.clear_calibration();
-    if (has_any_distortion) {
-      engine.set_distortion_coefficients(k1, k2, p1, p2, k3);
-    } else if (!has_clear_distortion || clear_distortion_value == 0.0f) {
-      engine.set_distortion_coefficients(previous.k1, previous.k2,
-                                         previous.p1, previous.p2, previous.k3);
-    }
-  }
 
   if (has_clear_distortion && clear_distortion_value == 1.0f) {
     engine.clear_distortion();
@@ -231,14 +208,11 @@ void MeasurementApiHandler::handle_calibrate_(AsyncWebServerRequest *request) {
   }
 
   float distance_mm = 0.0f;
-  float target_size_mm = 0.0f;
   float force_value = 0.0f;
   bool has_distance = false;
-  bool has_target_size = false;
   bool has_force = false;
   std::string error;
   if (!this->parse_float_param_(request, "distance_mm", distance_mm, has_distance, error) ||
-      !this->parse_float_param_(request, "target_size_mm", target_size_mm, has_target_size, error) ||
       !this->parse_float_param_(request, "force", force_value, has_force, error)) {
     const std::string body = std::string("{\"status\":\"error\",\"error\":\"") + error + "\"}";
     request->send(400, "application/json", body.c_str());
@@ -258,12 +232,6 @@ void MeasurementApiHandler::handle_calibrate_(AsyncWebServerRequest *request) {
   }
   const bool force = has_force && force_value == 1.0f;
 
-  if (has_target_size && (target_size_mm < 1.0f || target_size_mm > 1000.0f)) {
-    request->send(400, "application/json",
-                  "{\"status\":\"error\",\"error\":\"target_size_mm_out_of_range\"}");
-    return;
-  }
-
   GeometryMeasurementEngine &engine = this->manager_->measurement_engine();
   if (engine.has_calibration() && !force) {
     this->send_snapshot_(request, 409, "error", "calibration_locked");
@@ -281,19 +249,11 @@ void MeasurementApiHandler::handle_calibrate_(AsyncWebServerRequest *request) {
     return;
   }
 
-  const float previous_target_size = engine.target_size_mm();
   const CameraCalibration previous_calibration = engine.calibration();
-
-  if (has_target_size && !engine.set_target_size_mm(target_size_mm)) {
-    request->send(400, "application/json",
-                  "{\"status\":\"error\",\"error\":\"target_size_mm_out_of_range\"}");
-    return;
-  }
 
   if (!engine.calibrate_from_known_distance(this->detection_service_->last_observation(),
                                             this->source_->width(), this->source_->height(),
                                             distance_mm)) {
-    engine.set_target_size_mm(previous_target_size);
     engine.set_calibration(previous_calibration);
     this->send_snapshot_(request, 500, "error", "calibration_failed");
     return;
@@ -302,7 +262,6 @@ void MeasurementApiHandler::handle_calibrate_(AsyncWebServerRequest *request) {
   this->manager_->reset();
   if (!this->manager_->process(this->detection_service_->last_observation(),
                                this->source_->width(), this->source_->height(), millis())) {
-    engine.set_target_size_mm(previous_target_size);
     engine.set_calibration(previous_calibration);
     this->manager_->reset();
     this->send_snapshot_(request, 500, "error", "measurement_after_calibration_failed");
@@ -345,8 +304,13 @@ void MeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *request, int r
     json += ",\"target_found\":";
     json += (this->detection_service_ != nullptr && this->detection_service_->target_found()) ? "true" : "false";
 
-    json += ",\"config\":{\"target_size_mm\":";
-    json += std::to_string(engine.target_size_mm());
+    json += ",\"config\":{";
+    json += "\"target_model\":\"R1_250x100\"";
+    json += ",\"board_width_mm\":" + std::to_string(TARGET_R1_BOARD_WIDTH_MM);
+    json += ",\"board_height_mm\":" + std::to_string(TARGET_R1_BOARD_HEIGHT_MM);
+    json += ",\"reference_width_mm\":" + std::to_string(engine.target_width_mm());
+    json += ",\"reference_height_mm\":" + std::to_string(engine.target_height_mm());
+    json += ",\"geometry_fixed\":true";
     json += "}";
 
     // Methode operationnelle figee apres comparaison V5/V6/V6.1 :
