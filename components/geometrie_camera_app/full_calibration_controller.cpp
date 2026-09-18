@@ -8,7 +8,6 @@
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 #include "geometry_measurement.h"
-#include "image_sharpness_evaluator.h"
 #include "jpeg_diagnostic.h"
 #include "jpeg_filtered_diagnostic.h"
 #include "measurement_manager.h"
@@ -51,7 +50,6 @@ float median_float(float *values, uint8_t count) {
 
 FullCalibrationController::FullCalibrationController(
     JpegDiagnostic *jpeg_source,
-    ImageSharpnessEvaluator *sharpness_evaluator,
     CameraSettingsController *settings_controller,
     JpegFilteredDiagnostic *filtered_source,
     TargetDetectionService *detection_service,
@@ -60,7 +58,6 @@ FullCalibrationController::FullCalibrationController(
     TargetTrackingController *tracking_controller,
     TargetDetectionPreview *preview)
     : jpeg_source_(jpeg_source),
-      sharpness_evaluator_(sharpness_evaluator),
       settings_controller_(settings_controller),
       filtered_source_(filtered_source),
       detection_service_(detection_service),
@@ -103,7 +100,6 @@ FullCalibrationController::FullCalibrationController(
       current_exposure_(0),
       current_gain_(0),
       current_optical_score_(0.0f),
-      current_sharpness_x100_(0),
       current_detection_quality_(0.0f),
       current_subpixel_rms_px_(0.0f),
       current_mean_luma_x100_(0),
@@ -123,8 +119,6 @@ FullCalibrationController::FullCalibrationController(
       previous_target_size_mm_(0.0f),
       previous_calibration_(),
       previous_config_saved_(false),
-      previous_tracking_enabled_(true),
-      tracking_setting_saved_(false),
       previous_camera_settings_(),
       previous_camera_settings_saved_(false) {}
 
@@ -137,7 +131,6 @@ bool FullCalibrationController::start(float known_distance_mm,
     return false;
   }
   if (this->jpeg_source_ == nullptr ||
-      this->sharpness_evaluator_ == nullptr ||
       this->settings_controller_ == nullptr ||
       this->filtered_source_ == nullptr ||
       this->detection_service_ == nullptr ||
@@ -180,9 +173,6 @@ bool FullCalibrationController::start(float known_distance_mm,
   this->previous_target_size_mm_ = engine.target_size_mm();
   this->previous_calibration_ = engine.calibration();
   this->previous_config_saved_ = true;
-
-  this->previous_tracking_enabled_ = this->tracking_controller_->enabled();
-  this->tracking_setting_saved_ = true;
 
   this->previous_camera_settings_ = this->settings_controller_->read();
   this->previous_camera_settings_saved_ = this->previous_camera_settings_.available;
@@ -270,7 +260,7 @@ void FullCalibrationController::loop() {
     }
 
     case FullCalibrationState::FILTER:
-      if (!this->filtered_source_->process(false)) {
+      if (!this->filtered_source_->process()) {
         this->fail_("calibration_filter_failed");
         return;
       }
@@ -480,7 +470,6 @@ int FullCalibrationController::current_ae_level() const { return this->current_a
 int FullCalibrationController::current_exposure() const { return this->current_exposure_; }
 int FullCalibrationController::current_gain() const { return this->current_gain_; }
 float FullCalibrationController::current_optical_score() const { return this->current_optical_score_; }
-uint32_t FullCalibrationController::current_sharpness_x100() const { return this->current_sharpness_x100_; }
 float FullCalibrationController::current_detection_quality() const { return this->current_detection_quality_; }
 float FullCalibrationController::current_subpixel_rms_px() const { return this->current_subpixel_rms_px_; }
 uint32_t FullCalibrationController::current_mean_luma_x100() const { return this->current_mean_luma_x100_; }
@@ -504,10 +493,6 @@ const CameraCalibration &FullCalibrationController::result_calibration() const {
 
 bool FullCalibrationController::begin_native_tracking_() {
   if (this->tracking_controller_->active()) this->tracking_controller_->stop();
-  if (!this->tracking_controller_->enabled() &&
-      !this->tracking_controller_->set_enabled(true)) {
-    return false;
-  }
   if (!this->tracking_controller_->start()) return false;
   this->detection_service_->reset_tracking();
   this->phase_ = CalibrationPhase::TRACKING;
@@ -626,7 +611,6 @@ bool FullCalibrationController::prepare_manual_candidate_(int exposure, int gain
 
 float FullCalibrationController::evaluate_optical_score_(
     const TargetObservation &observation, bool target_found) {
-  this->current_sharpness_x100_ = 0;
   this->current_detection_quality_ = target_found ? observation.quality : 0.0f;
   this->current_subpixel_rms_px_ =
       target_found && observation.subpixel_refined
@@ -639,68 +623,115 @@ float FullCalibrationController::evaluate_optical_score_(
   this->current_p90_luma_ = 0;
   this->current_contrast_luma_ = 0;
 
-  if (!this->sharpness_evaluator_->evaluate_region(
-          this->tuning_roi_x_, this->tuning_roi_y_,
-          this->tuning_roi_width_, this->tuning_roi_height_)) {
+  if (this->filtered_source_ == nullptr ||
+      !this->filtered_source_->ready() ||
+      this->filtered_source_->grayscale_data() == nullptr ||
+      this->tuning_roi_width_ == 0 || this->tuning_roi_height_ == 0) {
     return 0.0f;
   }
 
-  this->current_sharpness_x100_ = this->sharpness_evaluator_->score_x100();
-  this->current_mean_luma_x100_ = this->sharpness_evaluator_->mean_luma_x100();
-  this->current_dark_percent_x100_ = this->sharpness_evaluator_->dark_percent_x100();
-  this->current_bright_percent_x100_ = this->sharpness_evaluator_->bright_percent_x100();
-  this->current_p10_luma_ = this->sharpness_evaluator_->p10_luma();
-  this->current_p90_luma_ = this->sharpness_evaluator_->p90_luma();
-  this->current_contrast_luma_ = this->sharpness_evaluator_->contrast_luma();
+  const uint8_t *pixels = this->filtered_source_->grayscale_data();
+  const size_t stride = this->filtered_source_->grayscale_stride();
+  uint32_t histogram[256] = {};
+  uint64_t sum = 0;
+  uint32_t dark = 0;
+  uint32_t bright = 0;
+  uint32_t count = 0;
 
-  // Pour la calibration de precision, un candidat sans detection V4 fiable
-  // ne peut pas devenir le meilleur reglage optique.
-  if (!target_found || !observation.subpixel_refined) {
-    return 0.0f;
+  const uint16_t x_end = std::min<uint16_t>(
+      this->filtered_source_->width(),
+      static_cast<uint16_t>(this->tuning_roi_x_ + this->tuning_roi_width_));
+  const uint16_t y_end = std::min<uint16_t>(
+      this->filtered_source_->height(),
+      static_cast<uint16_t>(this->tuning_roi_y_ + this->tuning_roi_height_));
+
+  for (uint16_t y = this->tuning_roi_y_; y < y_end; ++y) {
+    const uint8_t *row = pixels + static_cast<size_t>(y) * stride;
+    for (uint16_t x = this->tuning_roi_x_; x < x_end; ++x) {
+      const uint8_t value = row[x];
+      histogram[value]++;
+      sum += value;
+      if (value <= 20) dark++;
+      if (value >= 235) bright++;
+      count++;
+    }
   }
+
+  if (count < 16) return 0.0f;
+
+  this->current_mean_luma_x100_ =
+      static_cast<uint32_t>((sum * 100ULL) / count);
+  this->current_dark_percent_x100_ =
+      static_cast<uint32_t>((static_cast<uint64_t>(dark) * 10000ULL) / count);
+  this->current_bright_percent_x100_ =
+      static_cast<uint32_t>((static_cast<uint64_t>(bright) * 10000ULL) / count);
+
+  const uint32_t p10_target = std::max<uint32_t>(1, count / 10U);
+  const uint32_t p90_target = std::max<uint32_t>(1, (count * 9U) / 10U);
+  uint32_t cumulative = 0;
+  bool p10_set = false;
+  for (uint16_t value = 0; value < 256; ++value) {
+    cumulative += histogram[value];
+    if (!p10_set && cumulative >= p10_target) {
+      this->current_p10_luma_ = static_cast<uint8_t>(value);
+      p10_set = true;
+    }
+    if (cumulative >= p90_target) {
+      this->current_p90_luma_ = static_cast<uint8_t>(value);
+      break;
+    }
+  }
+  this->current_contrast_luma_ =
+      this->current_p90_luma_ >= this->current_p10_luma_
+          ? static_cast<uint8_t>(this->current_p90_luma_ -
+                                 this->current_p10_luma_)
+          : 0;
+
+  // Un candidat sans detection subpixel fiable ne peut pas devenir le
+  // meilleur profil optique.
+  if (!target_found || !observation.subpixel_refined) return 0.0f;
 
   const float quality_factor =
-      target_found ? (0.55f + 0.45f * std::max(0.0f, std::min(1.0f, observation.quality)))
-                   : 0.20f;
+      0.55f + 0.45f *
+                  std::max(0.0f, std::min(1.0f, observation.quality));
   const float rms = std::max(0.0f, this->current_subpixel_rms_px_);
-  const float rms_factor =
-      target_found && observation.subpixel_refined
-          ? 1.0f / (1.0f + 1.5f * rms)
-          : 0.45f;
+  const float rms_factor = 1.0f / (1.0f + 1.5f * rms);
 
-  // V5 : favoriser explicitement les reglages qui positionnent les deux paires
-  // de bords avec une faible incertitude. Le pire axe est volontairement pris
-  // en compte afin de ne plus choisir une image tres bonne horizontalement
-  // mais instable verticalement (ou inversement).
   const float worst_axis_sigma =
       std::max(observation.subpixel_width_sigma_px,
                observation.subpixel_height_sigma_px);
   const float axis_precision_factor =
-      observation.subpixel_refined && worst_axis_sigma > 0.0f
+      worst_axis_sigma > 0.0f
           ? 1.0f / (1.0f + 8.0f * worst_axis_sigma)
           : 0.55f;
 
-  // Score continu : une image sombre doit pouvoir etre comparee avec une
-  // image plus claire afin que la recherche manuelle puisse sortir d'un mauvais
-  // point de depart. Pas de seuil binaire ici.
   const float white_factor = std::max(
       0.05f, std::min(1.15f,
                       static_cast<float>(this->current_p90_luma_) / 210.0f));
   const float black_factor = std::max(
       0.10f, std::min(1.0f,
-                      (220.0f - static_cast<float>(this->current_p10_luma_)) / 180.0f));
+                      (220.0f - static_cast<float>(this->current_p10_luma_)) /
+                          180.0f));
   const float contrast_factor = std::max(
       0.05f, std::min(1.20f,
-                      static_cast<float>(this->current_contrast_luma_) / 175.0f));
-
-  // Le gain peut artificiellement faire monter un score de nettete en
-  // ajoutant du bruit. A qualite geometrique comparable, favoriser le gain bas.
+                      static_cast<float>(this->current_contrast_luma_) /
+                          175.0f));
+  const float clipping_percent =
+      static_cast<float>(this->current_dark_percent_x100_ +
+                         this->current_bright_percent_x100_) /
+      100.0f;
+  const float clipping_factor =
+      1.0f / (1.0f + 0.04f * std::max(0.0f, clipping_percent - 8.0f));
   const float gain_factor =
-      1.0f / (1.0f + 0.025f * static_cast<float>(std::max(0, this->current_gain_)));
+      1.0f /
+      (1.0f + 0.025f *
+                  static_cast<float>(std::max(0, this->current_gain_)));
 
-  return static_cast<float>(this->current_sharpness_x100_) *
-         quality_factor * rms_factor * axis_precision_factor *
-         white_factor * black_factor * contrast_factor * gain_factor;
+  // Echelle arbitraire mais stable : la geometrie subpixel et la dynamique
+  // de luminance remplacent l'ancien score de nettete.
+  return 10000.0f * quality_factor * rms_factor *
+         axis_precision_factor * white_factor * black_factor *
+         contrast_factor * clipping_factor * gain_factor;
 }
 
 bool FullCalibrationController::handle_tuning_result_(
@@ -717,14 +748,13 @@ bool FullCalibrationController::handle_tuning_result_(
       this->evaluate_optical_score_(observation, target_found);
 
   ESP_LOGI(TAG,
-           "Optique %u/%u phase=%s AE=%d exp=%d gain=%d score=%.1f net=%u "
+           "Optique %u/%u phase=%s AE=%d exp=%d gain=%d score=%.1f "
            "qual=%.3f rms=%.3f sigmaW=%.3f sigmaH=%.3f P10=%u P90=%u C=%u luma=%.1f clip=%.1f%%",
            static_cast<unsigned>(this->tuning_attempts_),
            static_cast<unsigned>(OPTICAL_TUNING_MAX_ATTEMPTS),
            this->phase_text(), this->current_ae_level_,
            this->current_exposure_, this->current_gain_,
            this->current_optical_score_,
-           static_cast<unsigned>(this->current_sharpness_x100_),
            this->current_detection_quality_,
            this->current_subpixel_rms_px_,
            observation.subpixel_width_sigma_px,
@@ -1073,10 +1103,6 @@ void FullCalibrationController::restore_nominal_camera_() {
   if (this->tracking_controller_ != nullptr) {
     if (this->tracking_controller_->active()) {
       this->tracking_controller_->stop();
-    }
-    if (this->tracking_setting_saved_) {
-      this->tracking_controller_->set_enabled(this->previous_tracking_enabled_);
-      this->tracking_setting_saved_ = false;
     }
   }
   if (this->detection_service_ != nullptr) {
