@@ -518,6 +518,9 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
   float height_px = 0.5f * (point_distance(points[0], points[3]) +
                             point_distance(points[1], points[2]));
 
+  result.corner_width_px = width_px;
+  result.corner_height_px = height_px;
+
   // Distance V5 : quand le raffinement des bords a reussi et qu'aucune
   // correction de distorsion n'est necessaire, utiliser directement la
   // separation des paires de droites opposees. On evite ainsi de convertir
@@ -540,18 +543,50 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
 
   result.edge_v4_used = use_v4_edges;
   result.edge_v5_used =
-      use_v4_edges &&
-      observation.subpixel_width_sigma_px > 0.0f &&
-      observation.subpixel_height_sigma_px > 0.0f;
-  // V6.1 conserve les dimensions des droites robustes. Les separations
-  // locales ne servent plus qu'a estimer la confiance de chaque axe.
-  result.edge_v6_used = result.edge_v5_used;
+      observation.subpixel_refined &&
+      observation.subpixel_v5_width_px >= 4.0f &&
+      observation.subpixel_v5_height_px >= 4.0f;
+  result.edge_v6_used =
+      observation.subpixel_refined &&
+      observation.subpixel_v6_width_px >= 4.0f &&
+      observation.subpixel_v6_height_px >= 4.0f;
+
+  // Valeur officielle V6.1 : dimensions V5 directes + incertitude enrichie
+  // par le desaccord avec V6 local. Les diagnostics ci-dessous sont purement
+  // paralleles et ne pilotent pas la sortie officielle.
   result.apparent_width_px = width_px;
   result.apparent_height_px = height_px;
   result.apparent_width_sigma_px =
-      result.edge_v5_used ? observation.subpixel_width_sigma_px : 0.0f;
+      use_v4_edges ? observation.subpixel_width_sigma_px : 0.0f;
   result.apparent_height_sigma_px =
-      result.edge_v5_used ? observation.subpixel_height_sigma_px : 0.0f;
+      use_v4_edges ? observation.subpixel_height_sigma_px : 0.0f;
+
+  result.v5_width_px =
+      result.edge_v5_used ? observation.subpixel_v5_width_px : 0.0f;
+  result.v5_height_px =
+      result.edge_v5_used ? observation.subpixel_v5_height_px : 0.0f;
+  result.v6_width_px =
+      result.edge_v6_used ? observation.subpixel_v6_width_px : 0.0f;
+  result.v6_height_px =
+      result.edge_v6_used ? observation.subpixel_v6_height_px : 0.0f;
+  result.v61_width_px = use_v4_edges ? observation.subpixel_width_px : width_px;
+  result.v61_height_px = use_v4_edges ? observation.subpixel_height_px : height_px;
+
+  if (result.edge_v5_used && result.edge_v6_used) {
+    result.v5_v6_width_delta_px =
+        result.v6_width_px - result.v5_width_px;
+    result.v5_v6_height_delta_px =
+        result.v6_height_px - result.v5_height_px;
+  }
+
+  result.edge_top_rms_px = observation.subpixel_top_rms_px;
+  result.edge_right_rms_px = observation.subpixel_right_rms_px;
+  result.edge_bottom_rms_px = observation.subpixel_bottom_rms_px;
+  result.edge_left_rms_px = observation.subpixel_left_rms_px;
+  result.edge_top_gradient = observation.subpixel_top_gradient;
+  result.edge_right_gradient = observation.subpixel_right_gradient;
+  result.edge_bottom_gradient = observation.subpixel_bottom_gradient;
+  result.edge_left_gradient = observation.subpixel_left_gradient;
 
   // Distance V5 : convertir l'incertitude en pixels de chaque paire de droites
   // en incertitude attendue sur Z. Cela donne un poids physique directement
@@ -565,7 +600,9 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
 
   float width_weight = 1.0f;
   float height_weight = 1.0f;
-  if (result.edge_v5_used) {
+  if (use_v4_edges &&
+      result.apparent_width_sigma_px > 0.0f &&
+      result.apparent_height_sigma_px > 0.0f) {
     const float width_sigma_px =
         std::max(0.015f, result.apparent_width_sigma_px);
     const float height_sigma_px =
@@ -610,6 +647,57 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
   if (!std::isfinite(result.z_mm) || result.z_mm <= 0.0f) {
     return result;
   }
+
+  auto diagnostic_z = [&](float diagnostic_width_px,
+                          float diagnostic_height_px,
+                          float width_sigma_px,
+                          float height_sigma_px) -> float {
+    if (!std::isfinite(diagnostic_width_px) ||
+        !std::isfinite(diagnostic_height_px) ||
+        diagnostic_width_px < 4.0f || diagnostic_height_px < 4.0f) {
+      return 0.0f;
+    }
+
+    const float z_width =
+        calibration.fx_px * this->target_size_mm_ / diagnostic_width_px;
+    const float z_height =
+        calibration.fy_px * this->target_size_mm_ / diagnostic_height_px;
+    if (!std::isfinite(z_width) || !std::isfinite(z_height) ||
+        z_width <= 0.0f || z_height <= 0.0f) {
+      return 0.0f;
+    }
+
+    float diagnostic_width_weight = 1.0f;
+    float diagnostic_height_weight = 1.0f;
+    if (width_sigma_px > 0.0f && height_sigma_px > 0.0f) {
+      const float sigma_w = std::max(0.015f, width_sigma_px);
+      const float sigma_h = std::max(0.015f, height_sigma_px);
+      const float sigma_z_w =
+          std::max(0.05f, z_width * sigma_w / diagnostic_width_px);
+      const float sigma_z_h =
+          std::max(0.05f, z_height * sigma_h / diagnostic_height_px);
+      diagnostic_width_weight = 1.0f / (sigma_z_w * sigma_z_w);
+      diagnostic_height_weight = 1.0f / (sigma_z_h * sigma_z_h);
+    }
+
+    return fuse_size_distance(
+        z_width, z_height,
+        diagnostic_width_weight, diagnostic_height_weight);
+  };
+
+  if (result.edge_v5_used) {
+    result.v5_z_mm = diagnostic_z(
+        result.v5_width_px, result.v5_height_px,
+        observation.subpixel_v5_width_sigma_px,
+        observation.subpixel_v5_height_sigma_px);
+  }
+  if (result.edge_v6_used) {
+    result.v6_z_mm = diagnostic_z(
+        result.v6_width_px, result.v6_height_px,
+        observation.subpixel_v6_width_sigma_px,
+        observation.subpixel_v6_height_sigma_px);
+  }
+  result.v61_z_mm = result.z_mm;
 
   const ImagePoint center = quadrilateral_center(points);
   const float normalized_x = (center.x - calibration.cx_px) / calibration.fx_px;
