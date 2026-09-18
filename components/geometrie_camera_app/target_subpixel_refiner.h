@@ -36,6 +36,8 @@ class TargetSubpixelRefiner {
               TargetSubpixelMetrics *metrics = nullptr) const;
 
  private:
+  static constexpr uint8_t EDGE_SAMPLE_CAPACITY = 31;
+
   struct EdgeLine {
     TargetPoint point;
     float dx;
@@ -44,11 +46,16 @@ class TargetSubpixelRefiner {
     float position_sigma;
     float mean_gradient;
     uint8_t samples;
+    uint8_t local_sample_count;
+    float local_fraction[EDGE_SAMPLE_CAPACITY];
+    float local_x[EDGE_SAMPLE_CAPACITY];
+    float local_y[EDGE_SAMPLE_CAPACITY];
   };
 
   bool refine_edge_(const GrayFrameView &frame,
                     const TargetPoint &start,
                     const TargetPoint &end,
+                    const TargetPoint &target_center,
                     EdgeLine &line) const;
 
   bool find_edge_offset_(const GrayFrameView &frame,
@@ -58,6 +65,7 @@ class TargetSubpixelRefiner {
                          float tangent_y,
                          float normal_x,
                          float normal_y,
+                         float expected_gradient_sign,
                          float &offset,
                          float &gradient) const;
 
@@ -77,6 +85,9 @@ class TargetSubpixelRefiner {
                   TargetPoint &point) const;
   float opposite_edge_separation_(const EdgeLine &a,
                                   const EdgeLine &b) const;
+  float robust_local_separation_(const EdgeLine &a,
+                                 const EdgeLine &b,
+                                 float &sigma_px) const;
 
   bool bilinear_sample_(const GrayFrameView &frame,
                         float x,
