@@ -22,6 +22,14 @@ struct ImageLine {
   float dy;
 };
 
+enum class TargetMarkerId : uint8_t {
+  NONE = 0,
+  A = 1,
+  B = 2,
+  C = 3,
+  BOARD_R1 = 4,
+};
+
 struct PatternFeature {
   PatternFeature();
 
@@ -58,6 +66,10 @@ struct TargetObservation {
   TargetObservation();
 
   bool valid;
+  TargetMarkerId marker_id;
+  uint8_t board_marker_mask;
+  uint8_t board_marker_count;
+  bool board_complete;
   float center_x_px;
   float center_y_px;
   float width_px;
