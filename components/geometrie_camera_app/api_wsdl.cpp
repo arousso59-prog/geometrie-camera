@@ -24,7 +24,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   std::string xml;
   xml.reserve(30000);
   xml += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-  xml += "<api name=\"geometrie-camera\" version=\"32\" style=\"REST-over-HTTP\">\n";
+  xml += "<api name=\"geometrie-camera\" version=\"33\" style=\"REST-over-HTTP\">\n";
   xml += "  <description>API camera OV5640 : capture JPEG, reglages capteur, viewport ROI haute resolution, tracking cible, detection, calibration, mesure geometrique et acquisition continue.</description>\n";
   xml += "  <conventions>\n";
   xml += "    <item>Les routes de commande utilisent encore HTTP GET pendant la phase de mise au point.</item>\n";
@@ -39,6 +39,8 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "    <item>La calibration automatique utilise le tracking jusqu au mode PRECISE 800x600 natif sans scaling. Les quatre coins sont ensuite convertis dans le repere canonique 2560x1920 ; on obtient ainsi une calibration plein capteur sans decoder une image 5 MP complete.</item>\n";
   xml += "    <item>Le moteur de geometrie supporte le modele de distorsion Brown-Conrady k1,k2,p1,p2,k3. Les coefficients nuls conservent exactement le comportement sans correction.</item>\n";
   xml += "    <item>Apres la detection et le raffinement pixel historiques, la geometrie de cible peut etre affinee au subpixel par ajustement des quatre bords externes. /target/status expose subpixel_refined et les RMS de l ajustement ; en cas de rejet, le chemin pixel historique est conserve.</item>\n";
+  xml += "    <item>La distance fournie a la calibration est interpretee comme la distance physique camera-centre cible. Le moteur resout iterativement la profondeur Z hors axe avant de calculer fx/fy, au lieu d assimiler directement cette distance a Z.</item>\n";
+  xml += "    <item>En mode continu PRECISE, MeasurementManager stabilise les mesures sur une fenetre de 5 acquisitions : amorcage brut sur 2 points, puis mediane/moyenne tronquee robuste. Toute transition/recentrage de viewport remet cette fenetre a zero.</item>\n";
   xml += "    <item>Le mode continu exige une calibration valide et n empile jamais les cycles. sharpness=0 saute le controle de nettete et les recaptures pour flou.</item>\n";
   xml += "    <item>Dans timing, processing_ms est la somme capture+nettete+filtre+detection+calcul et orchestration_ms le temps mural restant entre les etapes. filter_decode_ms et filter_correction_ms detaillent filter_ms.</item>\n";
   xml += "  </conventions>\n";
@@ -113,9 +115,15 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "    <parameter name=\"clear_distortion\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0,1\"/>\n";
   xml += "    <response code=\"200\" content_type=\"application/json\"/><response code=\"400\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/>\n";
   xml += "  </method>\n";
-  xml += "  <method name=\"measurement_calibrate\" http=\"GET\" path=\"/measurement/calibrate\"><parameter name=\"distance_mm\" location=\"query\" required=\"true\" type=\"number\" allowed=\"50..20000\"/><parameter name=\"target_size_mm\" location=\"query\" required=\"false\" type=\"number\" allowed=\"1..1000\"/><parameter name=\"force\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0,1\" default=\"0\"/><response code=\"200\" content_type=\"application/json\"/><response code=\"400\" content_type=\"application/json\"/><response code=\"409\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
+  xml += "  <method name=\"measurement_calibrate\" http=\"GET\" path=\"/measurement/calibrate\">\n";
+  xml += "    <comment>distance_mm = distance physique entre le centre optique camera et le centre de la cible ; le moteur derive Z hors axe avant fx/fy.</comment>\n";
+  xml += "    <parameter name=\"distance_mm\" location=\"query\" required=\"true\" type=\"number\" allowed=\"50..20000\"/>\n";
+  xml += "    <parameter name=\"target_size_mm\" location=\"query\" required=\"false\" type=\"number\" allowed=\"1..1000\"/>\n";
+  xml += "    <parameter name=\"force\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0,1\" default=\"0\"/>\n";
+  xml += "    <response code=\"200\" content_type=\"application/json\"/><response code=\"400\" content_type=\"application/json\"/><response code=\"409\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/>\n";
+  xml += "  </method>\n";
   xml += "  <method name=\"full_calibration_start\" http=\"GET\" path=\"/calibration/full/start\">\n";
-  xml += "    <comment>Mode autonome ESP : arret du continu, tracking SEARCH vers PRECISE natif 800x600, 10 mesures valides par defaut puis moyenne fx/fy dans le repere 2560x1920. Le demarrage repond avec un JSON minimal et est idempotent si une calibration est deja en cours.</comment>\n";
+  xml += "    <comment>Mode autonome ESP : arret du continu, tracking SEARCH vers PRECISE natif 800x600, 10 mesures valides par defaut puis moyenne fx/fy dans le repere 2560x1920. distance_mm est la distance physique camera-centre cible, pas Z. Le demarrage repond avec un JSON minimal et est idempotent si une calibration est deja en cours.</comment>\n";
   xml += "    <parameter name=\"distance_mm\" location=\"query\" required=\"true\" type=\"number\" allowed=\"50..20000\"/>\n";
   xml += "    <parameter name=\"target_size_mm\" location=\"query\" required=\"true\" type=\"number\" allowed=\"1..1000\"/>\n";
   xml += "    <parameter name=\"samples\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"3..20\" default=\"10\"/>\n";
