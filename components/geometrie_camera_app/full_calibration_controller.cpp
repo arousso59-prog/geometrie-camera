@@ -705,6 +705,29 @@ float FullCalibrationController::evaluate_optical_score_(
           ? 1.0f / (1.0f + 8.0f * worst_axis_sigma)
           : 0.55f;
 
+  // Pour la metrologie, la qualite utile n'est pas une "nettete" generale
+  // de l'image mais la pente reelle des transitions noir/blanc des quatre
+  // bords. Favoriser un gradient fort ET equilibre entre largeur et hauteur
+  // evite de choisir une exposition excellente horizontalement mais molle
+  // verticalement.
+  const float width_gradient =
+      std::max(0.0f, observation.subpixel_width_gradient);
+  const float height_gradient =
+      std::max(0.0f, observation.subpixel_height_gradient);
+  const float min_axis_gradient =
+      std::min(width_gradient, height_gradient);
+  const float max_axis_gradient =
+      std::max(width_gradient, height_gradient);
+  const float geometric_gradient =
+      std::sqrt(width_gradient * height_gradient);
+  const float gradient_factor =
+      std::max(0.50f, std::min(1.35f, geometric_gradient / 32.0f));
+  const float gradient_balance_factor =
+      max_axis_gradient > 0.0f
+          ? std::max(0.60f,
+                     std::min(1.0f, min_axis_gradient / max_axis_gradient))
+          : 0.60f;
+
   const float white_factor = std::max(
       0.05f, std::min(1.15f,
                       static_cast<float>(this->current_p90_luma_) / 210.0f));
@@ -730,7 +753,8 @@ float FullCalibrationController::evaluate_optical_score_(
   // Echelle arbitraire mais stable : la geometrie subpixel et la dynamique
   // de luminance forment le score d'optimisation.
   return 10000.0f * quality_factor * rms_factor *
-         axis_precision_factor * white_factor * black_factor *
+         axis_precision_factor * gradient_factor *
+         gradient_balance_factor * white_factor * black_factor *
          contrast_factor * clipping_factor * gain_factor;
 }
 
@@ -749,7 +773,7 @@ bool FullCalibrationController::handle_tuning_result_(
 
   ESP_LOGI(TAG,
            "Optique %u/%u phase=%s AE=%d exp=%d gain=%d score=%.1f "
-           "qual=%.3f rms=%.3f sigmaW=%.3f sigmaH=%.3f P10=%u P90=%u C=%u luma=%.1f clip=%.1f%%",
+           "qual=%.3f rms=%.3f sigmaW=%.3f sigmaH=%.3f gradW=%.1f gradH=%.1f P10=%u P90=%u C=%u luma=%.1f clip=%.1f%%",
            static_cast<unsigned>(this->tuning_attempts_),
            static_cast<unsigned>(OPTICAL_TUNING_MAX_ATTEMPTS),
            this->phase_text(), this->current_ae_level_,
@@ -759,6 +783,8 @@ bool FullCalibrationController::handle_tuning_result_(
            this->current_subpixel_rms_px_,
            observation.subpixel_width_sigma_px,
            observation.subpixel_height_sigma_px,
+           observation.subpixel_width_gradient,
+           observation.subpixel_height_gradient,
            static_cast<unsigned>(this->current_p10_luma_),
            static_cast<unsigned>(this->current_p90_luma_),
            static_cast<unsigned>(this->current_contrast_luma_),
