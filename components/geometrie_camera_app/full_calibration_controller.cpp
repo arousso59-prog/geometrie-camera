@@ -564,6 +564,7 @@ bool FullCalibrationController::begin_optical_tuning_(
   this->current_brightness_ = 0;
   this->current_contrast_ = 0;
   this->auto_fallback_ = false;
+  this->reset_candidate_accumulator_();
 
   const CameraSettingsSnapshot baseline = this->settings_controller_->read();
   this->best_ae_level_ =
@@ -1211,6 +1212,7 @@ bool FullCalibrationController::fallback_to_auto_sampling_(const char *reason) {
   this->best_brightness_ = 0;
   this->best_contrast_ = 0;
   this->tuning_index_ = 0;
+  this->reset_candidate_accumulator_();
 
   if (!this->enable_auto_controls_()) return false;
   this->phase_ = CalibrationPhase::TUNE_AUTO_SETTLE;
