@@ -58,12 +58,35 @@ struct TargetObservation {
   float subpixel_width_px;
   float subpixel_height_px;
 
-  // V5 : incertitude estimee sur la separation des paires de droites et
-  // contraste moyen des bords correspondants.
+  // V6.1 officielle : meme dimension directe que V5, mais incertitude
+  // augmentee si la mesure locale V6 diverge.
   float subpixel_width_sigma_px;
   float subpixel_height_sigma_px;
   float subpixel_width_gradient;
   float subpixel_height_gradient;
+
+  // Diagnostic comparatif conserve en parallele, sans modifier le resultat
+  // officiel : V5 = separation directe des droites robustes, V6 = separation
+  // locale robuste des echantillons de bords.
+  float subpixel_v5_width_px;
+  float subpixel_v5_height_px;
+  float subpixel_v5_width_sigma_px;
+  float subpixel_v5_height_sigma_px;
+  float subpixel_v6_width_px;
+  float subpixel_v6_height_px;
+  float subpixel_v6_width_sigma_px;
+  float subpixel_v6_height_sigma_px;
+
+  // Qualite individuelle des quatre bords, utile pour diagnostiquer une
+  // asymetrie horizontale/verticale de l'image.
+  float subpixel_top_rms_px;
+  float subpixel_right_rms_px;
+  float subpixel_bottom_rms_px;
+  float subpixel_left_rms_px;
+  float subpixel_top_gradient;
+  float subpixel_right_gradient;
+  float subpixel_bottom_gradient;
+  float subpixel_left_gradient;
 
   ImagePoint top_left_px;
   ImagePoint top_right_px;
@@ -84,6 +107,31 @@ struct GeometryMeasurement {
   float apparent_height_px;
   float apparent_width_sigma_px;
   float apparent_height_sigma_px;
+
+  // Diagnostic de precision : les trois methodes sont calculees en parallele
+  // mais n'influencent pas la mesure officielle V6.1.
+  float corner_width_px;
+  float corner_height_px;
+  float v5_width_px;
+  float v5_height_px;
+  float v6_width_px;
+  float v6_height_px;
+  float v61_width_px;
+  float v61_height_px;
+  float v5_v6_width_delta_px;
+  float v5_v6_height_delta_px;
+  float v5_z_mm;
+  float v6_z_mm;
+  float v61_z_mm;
+  float edge_top_rms_px;
+  float edge_right_rms_px;
+  float edge_bottom_rms_px;
+  float edge_left_rms_px;
+  float edge_top_gradient;
+  float edge_right_gradient;
+  float edge_bottom_gradient;
+  float edge_left_gradient;
+
   float width_distance_weight;
   float height_distance_weight;
   float distance_mm;
