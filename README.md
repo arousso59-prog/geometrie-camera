@@ -65,7 +65,7 @@ La référence du contrat HTTP est :
 GET /api/wsdl
 ```
 
-Version actuelle : **30**.
+Version actuelle : **31**.
 
 ### Diagnostic lecture seule
 
@@ -275,3 +275,10 @@ En V30 :
 Le but est de chevaucher le temps capteur avec le décodage et la détection sans changer XCLK, JPEG, exposition, gain, contraste, luminosité, V6.1 ou la pose.
 
 `/continuous/status` expose `timing.capture_pipelined` pour vérifier quels cycles utilisent cette optimisation.
+
+
+## Correctif memoire V31
+
+La Pose V3 V29/V30 utilisait plusieurs grands tableaux temporaires sur la pile de la tache ESPHome pendant le raffinement du motif 7x7. En calibration, l'empilement avec les buffers de detection/subpixel pouvait declencher `vApplicationStackOverflowHook`.
+
+V31 deplace environ 4,4 Ko de buffers de travail (`Feature[128]`, poids robustes, residus et matrice normale) dans l'objet persistant `TargetPatternRefiner`. Les formules, seuils, homographie, V6.1-robust5, reglages camera et Pose V3 restent strictement identiques.
