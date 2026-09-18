@@ -613,28 +613,30 @@ float FullCalibrationController::evaluate_optical_score_(
   const float luma_factor = std::max(
       0.35f, 1.0f - std::fabs(luma - 128.0f) / 170.0f);
 
-  const float clipped_percent =
-      static_cast<float>(this->current_dark_percent_x100_ +
-                         this->current_bright_percent_x100_) /
-      100.0f;
-  const float clipping_factor =
-      std::max(0.25f, 1.0f - clipped_percent / 45.0f);
+  // Le motif contient volontairement de grandes zones noires et blanches :
+  // le pourcentage de pixels proches des bornes est donc conserve comme
+  // diagnostic mais ne doit pas penaliser directement le score. A resultat
+  // optique comparable, preferer legerement un gain plus faible pour limiter
+  // le bruit capteur.
+  const float gain_factor =
+      1.0f / (1.0f + 0.012f * static_cast<float>(std::max(0, this->current_gain_)));
 
   return static_cast<float>(this->current_sharpness_x100_) *
-         quality_factor * rms_factor * luma_factor * clipping_factor;
+         quality_factor * rms_factor * luma_factor * gain_factor;
 }
 
 bool FullCalibrationController::handle_tuning_result_(
     const TargetObservation &observation, bool target_found) {
   this->tuning_attempts_++;
-  this->current_optical_score_ =
-      this->evaluate_optical_score_(observation, target_found);
 
   const CameraSettingsSnapshot actual = this->settings_controller_->read();
   if (actual.available) {
     this->current_exposure_ = actual.aec_value;
     this->current_gain_ = actual.agc_gain;
   }
+
+  this->current_optical_score_ =
+      this->evaluate_optical_score_(observation, target_found);
 
   ESP_LOGI(TAG,
            "Optique %u/%u phase=%s AE=%d exp=%d gain=%d score=%.1f net=%u "
