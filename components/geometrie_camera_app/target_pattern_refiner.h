@@ -39,6 +39,13 @@ class TargetPatternRefiner {
 
   static constexpr uint16_t MAX_FEATURES = 128;
 
+  // Buffers de travail persistants : ne surtout pas les placer sur la pile
+  // de la tache ESPHome. Ensemble ils representent ~4.4 Ko.
+  mutable Feature features_[MAX_FEATURES];
+  mutable float robust_weights_[MAX_FEATURES];
+  mutable float residuals_[MAX_FEATURES];
+  mutable float normal_matrix_[8][9];
+
   TargetPoint project_candidate_(const TargetCandidate &candidate,
                                  float u, float v) const;
   float sample_bilinear_(const GrayFrameView &frame,
