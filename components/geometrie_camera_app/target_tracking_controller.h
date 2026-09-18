@@ -22,11 +22,9 @@ class TargetTrackingController {
   bool start();
   void stop();
 
-  bool set_enabled(bool enabled);
   bool set_lost_cycles(uint8_t cycles);
   bool set_recenter_threshold_pct(uint8_t percent);
 
-  bool enabled() const;
   bool active() const;
   bool supported() const;
   uint8_t lost_cycles() const;
@@ -50,7 +48,6 @@ class TargetTrackingController {
   void clear_runtime_();
 
   CameraViewportController *viewport_controller_;
-  bool enabled_;
   bool active_;
   uint8_t lost_cycles_;
   uint8_t recenter_threshold_pct_;
