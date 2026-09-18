@@ -197,7 +197,7 @@ void ContinuousMeasurementController::stop() {
   // Stop doit etre immediat du point de vue de la session continue. Si une
   // sequence JPEG purge+frame fraiche etait deja engagee, l'annuler afin que
   // JpegDiagnostic::loop() ne puisse pas lancer la deuxieme acquisition.
-  if (this->jpeg_source_ != nullptr) {
+  if (was_running && this->jpeg_source_ != nullptr) {
     this->jpeg_source_->cancel_capture();
   }
 
