@@ -45,13 +45,31 @@ TargetDetectionPreview::~TargetDetectionPreview() { this->clear_buffer_(); }
 
 bool TargetDetectionPreview::render(const JpegFilteredDiagnostic *source,
                                     const TargetObservation &observation) {
-  if (source == nullptr || !source->ready() || source->grayscale_data() == nullptr ||
-      source->width() == 0 || source->height() == 0 || source->grayscale_stride() < source->width()) {
+  if (source == nullptr) {
     return false;
   }
 
+  // IMPORTANT : le serveur HTTP et le pipeline camera peuvent s'executer sur
+  // deux coeurs differents. Ne jamais appeler grayscale_data() une premiere
+  // fois pour tester puis une seconde fois pour l'utiliser : process() met
+  // ready_=false au debut du decode et le second appel pourrait alors rendre
+  // nullptr entre les deux tests.
+  //
+  // On capture donc UNE SEULE FOIS la vue de l'image courante. Le buffer
+  // decode est persistant a resolution constante (800x600) ; si un nouveau
+  // decode commence pendant la copie, on rejettera simplement cette preview
+  // en fin de fonction au lieu d'envoyer une image dechiree.
+  const uint8_t *source_pixels = source->grayscale_data();
   const uint16_t source_width = source->width();
   const uint16_t source_height = source->height();
+  const size_t source_stride = source->grayscale_stride();
+  const uint32_t source_process_count = source->process_count();
+
+  if (source_pixels == nullptr ||
+      source_width == 0 || source_height == 0 ||
+      source_stride < source_width) {
+    return false;
+  }
   const uint16_t preview_width = std::min<uint16_t>(source_width, MAX_PREVIEW_WIDTH);
   const uint16_t preview_height = std::max<uint16_t>(
       1, static_cast<uint16_t>((static_cast<uint32_t>(source_height) * preview_width) / source_width));
@@ -68,8 +86,6 @@ bool TargetDetectionPreview::render(const JpegFilteredDiagnostic *source,
   this->build_bmp_header_(preview_width, preview_height, row_stride);
 
   uint8_t *pixels = this->bmp_buffer_ + BMP_PIXEL_OFFSET;
-  const uint8_t *source_pixels = source->grayscale_data();
-  const size_t source_stride = source->grayscale_stride();
 
   for (uint16_t y = 0; y < preview_height; ++y) {
     const uint32_t source_y = std::min<uint32_t>(
@@ -84,6 +100,14 @@ bool TargetDetectionPreview::render(const JpegFilteredDiagnostic *source,
           (static_cast<uint32_t>(x) * source_width) / preview_width);
       destination[x] = source_line[source_x];
     }
+  }
+
+  // Si le decode suivant a demarre ou s'est termine pendant la copie,
+  // l'image peut etre incoherente. Ne pas l'envoyer au client ; le prochain
+  // poll recuperera une preview propre.
+  if (!source->ready() ||
+      source->process_count() != source_process_count) {
+    return false;
   }
 
   if (observation.width_px > 0.0f && observation.height_px > 0.0f) {
