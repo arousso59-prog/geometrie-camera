@@ -24,7 +24,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   std::string xml;
   xml.reserve(30000);
   xml += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-  xml += "<api name=\"geometrie-camera\" version=\"31\" style=\"REST-over-HTTP\">\n";
+  xml += "<api name=\"geometrie-camera\" version=\"32\" style=\"REST-over-HTTP\">\n";
   xml += "  <description>API camera OV5640 : capture JPEG, reglages capteur, viewport ROI haute resolution, tracking cible, detection, calibration, mesure geometrique et acquisition continue.</description>\n";
   xml += "  <conventions>\n";
   xml += "    <item>Les routes de commande utilisent encore HTTP GET pendant la phase de mise au point.</item>\n";
@@ -38,6 +38,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "    <item>Apres lost_cycles pertes consecutives dans un niveau zoome, le capteur revient automatiquement en SEARCH. En PRECISE, un centrage fin rapproche aussi la cible du centre 400x300.</item>\n";
   xml += "    <item>La calibration automatique utilise le tracking jusqu au mode PRECISE 800x600 natif sans scaling. Les quatre coins sont ensuite convertis dans le repere canonique 2560x1920 ; on obtient ainsi une calibration plein capteur sans decoder une image 5 MP complete.</item>\n";
   xml += "    <item>Le moteur de geometrie supporte le modele de distorsion Brown-Conrady k1,k2,p1,p2,k3. Les coefficients nuls conservent exactement le comportement sans correction.</item>\n";
+  xml += "    <item>Apres la detection et le raffinement pixel historiques, la geometrie de cible peut etre affinee au subpixel par ajustement des quatre bords externes. /target/status expose subpixel_refined et les RMS de l ajustement ; en cas de rejet, le chemin pixel historique est conserve.</item>\n";
   xml += "    <item>Le mode continu exige une calibration valide et n empile jamais les cycles. sharpness=0 saute le controle de nettete et les recaptures pour flou.</item>\n";
   xml += "    <item>Dans timing, processing_ms est la somme capture+nettete+filtre+detection+calcul et orchestration_ms le temps mural restant entre les etapes. filter_decode_ms et filter_correction_ms detaillent filter_ms.</item>\n";
   xml += "  </conventions>\n";
@@ -95,7 +96,10 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  <method name=\"jpeg_filtered_image\" http=\"GET\" path=\"/diagnostic-jpeg/filtered.bmp\"><response code=\"200\" content_type=\"image/bmp\"/><response code=\"404\" content_type=\"application/json\"/></method>\n";
 
   xml += "  <method name=\"target_detect\" http=\"GET\" path=\"/target/detect\"><response code=\"200\" content_type=\"application/json\"/><response code=\"409\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
-  xml += "  <method name=\"target_status\" http=\"GET\" path=\"/target/status\"><response code=\"200\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
+  xml += "  <method name=\"target_status\" http=\"GET\" path=\"/target/status\">\n";
+  xml += "    <comment>Expose la cible detectee et le diagnostic de raffinement subpixel : subpixel_refined, subpixel_rms_px, subpixel_max_rms_px et subpixel_gradient.</comment>\n";
+  xml += "    <response code=\"200\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/>\n";
+  xml += "  </method>\n";
   xml += "  <method name=\"target_preview\" http=\"GET\" path=\"/target/preview.bmp\"><response code=\"200\" content_type=\"image/bmp\"/><response code=\"409\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
 
   xml += "  <method name=\"measurement_config\" http=\"GET\" path=\"/measurement/config\"><response code=\"200\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
