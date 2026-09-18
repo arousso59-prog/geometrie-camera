@@ -182,7 +182,7 @@ cycle_ms
 
 ## API
 
-Contrat : `GET /api/wsdl`, version **32**.
+Contrat : `GET /api/wsdl`, version **34**.
 
 ### Lecture seule
 
@@ -314,3 +314,36 @@ Pipeline d'orientation :
 La translation X/Y/Z est exclusivement celle de V6.1-robust5. V4 ne peut donc modifier ni distance, ni X/Y/Z, ni calibration caméra.
 
 Cette V32 constitue la dernière optimisation logicielle avant augmentation de la base physique de la cible.
+
+
+## Cible R1 V34
+
+La cible unique 50 × 50 mm n'est plus une cible opérationnelle. Le modèle fixe R1 est défini dans `target_board_model.*`.
+
+Géométrie :
+
+- plaque : 250 × 100 mm ;
+- cadre de référence : 240 × 90 mm, origine optique à (5,5) mm sur la plaque ;
+- A : 40 mm, position fixe ;
+- B : 50 mm, position fixe ;
+- C : 40 mm, position fixe.
+
+Chaîne de détection :
+
+`candidats carrés → identification A/B/C → subpixel par marqueur → fusion des correspondances → homographie R1 globale`
+
+Le tracking accepte une géométrie construite avec au moins deux marqueurs. La calibration et `GeometryMeasurementEngine::compute()` imposent `board_complete=true`, donc les trois marqueurs.
+
+La calibration n'accepte plus de taille de cible. La distance connue reste le seul paramètre physique saisi.
+
+### Repère unique pour la pose
+
+`CameraViewportController::to_reference()` remappe désormais toutes les primitives, et non plus seulement les coins :
+
+- largeurs/hauteurs et sigma V5/V6/V6.1 ;
+- quatre droites subpixel ;
+- RMS en pixels ;
+- homographie du motif ;
+- correspondances subpixel du motif.
+
+Ainsi les primitives de pose et la calibration intrinsèque utilisent toutes le repère canonique 2560 × 1920.
