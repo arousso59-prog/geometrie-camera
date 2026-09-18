@@ -223,24 +223,32 @@ void FullCalibrationApiHandler::send_status_(
   }
 
   json += ",\"result\":{\"valid\":";
-  json += this->controller_->state() == FullCalibrationState::COMPLETE ? "true" : "false";
+  const bool complete = this->controller_->state() == FullCalibrationState::COMPLETE;
+  json += complete ? "true" : "false";
   json += ",\"mean_fx_px\":" + std::to_string(this->controller_->mean_fx_px());
   json += ",\"mean_fy_px\":" + std::to_string(this->controller_->mean_fy_px());
   json += ",\"stddev_fx_px\":" + std::to_string(this->controller_->stddev_fx_px());
   json += ",\"stddev_fy_px\":" + std::to_string(this->controller_->stddev_fy_px());
-  json += ",\"calibration\":{";
-  json += "\"fx_px\":" + std::to_string(calibration.fx_px);
-  json += ",\"fy_px\":" + std::to_string(calibration.fy_px);
-  json += ",\"cx_px\":" + std::to_string(calibration.cx_px);
-  json += ",\"cy_px\":" + std::to_string(calibration.cy_px);
-  json += ",\"k1\":" + std::to_string(calibration.k1);
-  json += ",\"k2\":" + std::to_string(calibration.k2);
-  json += ",\"p1\":" + std::to_string(calibration.p1);
-  json += ",\"p2\":" + std::to_string(calibration.p2);
-  json += ",\"k3\":" + std::to_string(calibration.k3);
-  json += ",\"reference_width_px\":" + std::to_string(calibration.reference_width_px);
-  json += ",\"reference_height_px\":" + std::to_string(calibration.reference_height_px);
-  json += "}}}";
+
+  // Pendant l'operation, garder la reponse courte : le PC ne requiert que
+  // progression + statistiques. La calibration complete n'est serialisee
+  // qu'une fois l'operation terminee.
+  if (complete) {
+    json += ",\"calibration\":{";
+    json += "\"fx_px\":" + std::to_string(calibration.fx_px);
+    json += ",\"fy_px\":" + std::to_string(calibration.fy_px);
+    json += ",\"cx_px\":" + std::to_string(calibration.cx_px);
+    json += ",\"cy_px\":" + std::to_string(calibration.cy_px);
+    json += ",\"k1\":" + std::to_string(calibration.k1);
+    json += ",\"k2\":" + std::to_string(calibration.k2);
+    json += ",\"p1\":" + std::to_string(calibration.p1);
+    json += ",\"p2\":" + std::to_string(calibration.p2);
+    json += ",\"k3\":" + std::to_string(calibration.k3);
+    json += ",\"reference_width_px\":" + std::to_string(calibration.reference_width_px);
+    json += ",\"reference_height_px\":" + std::to_string(calibration.reference_height_px);
+    json += "}";
+  }
+  json += "}}";
 
   auto *response = request->beginResponse(response_code, "application/json", json);
   response->addHeader("Cache-Control", "no-store");
