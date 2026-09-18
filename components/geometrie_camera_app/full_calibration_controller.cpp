@@ -504,7 +504,7 @@ bool FullCalibrationController::begin_optical_tuning_(
     const TargetObservation &observation) {
   // La qualite optique doit etre mesuree sur le motif lui-meme. L'ancienne
   // marge de 35 % faisait dominer le fond de la scene dans P10/P90 et dans le
-  // score de nettete. Garder seulement une petite marge pour couvrir le bord
+  // diagnostic optique. Garder seulement une petite marge pour couvrir le bord
   // externe sans diluer la cible.
   const float margin_x = std::max(4.0f, observation.width_px * 0.08f);
   const float margin_y = std::max(4.0f, observation.height_px * 0.08f);
@@ -728,7 +728,7 @@ float FullCalibrationController::evaluate_optical_score_(
                   static_cast<float>(std::max(0, this->current_gain_)));
 
   // Echelle arbitraire mais stable : la geometrie subpixel et la dynamique
-  // de luminance remplacent l'ancien score de nettete.
+  // de luminance forment le score d'optimisation.
   return 10000.0f * quality_factor * rms_factor *
          axis_precision_factor * white_factor * black_factor *
          contrast_factor * clipping_factor * gain_factor;
@@ -1151,7 +1151,6 @@ void FullCalibrationController::reset_run_() {
   this->current_exposure_ = 0;
   this->current_gain_ = 0;
   this->current_optical_score_ = 0.0f;
-  this->current_sharpness_x100_ = 0;
   this->current_detection_quality_ = 0.0f;
   this->current_subpixel_rms_px_ = 0.0f;
   this->current_mean_luma_x100_ = 0;
