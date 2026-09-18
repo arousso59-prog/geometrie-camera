@@ -8,12 +8,12 @@
 namespace esphome {
 namespace geometrie_camera_app {
 
-class CameraResolutionController;
 class ContinuousMeasurementController;
 class JpegDiagnostic;
 class JpegFilteredDiagnostic;
 class MeasurementManager;
 class TargetDetectionService;
+class TargetTrackingController;
 
 enum class FullCalibrationState : uint8_t {
   IDLE,
@@ -30,12 +30,12 @@ class FullCalibrationController {
   static constexpr uint8_t DEFAULT_SAMPLE_COUNT = 10;
   static constexpr uint8_t MAX_SAMPLE_COUNT = 20;
 
-  FullCalibrationController(CameraResolutionController *resolution_controller,
-                            JpegDiagnostic *jpeg_source,
+  FullCalibrationController(JpegDiagnostic *jpeg_source,
                             JpegFilteredDiagnostic *filtered_source,
                             TargetDetectionService *detection_service,
                             MeasurementManager *measurement_manager,
-                            ContinuousMeasurementController *continuous_controller);
+                            ContinuousMeasurementController *continuous_controller,
+                            TargetTrackingController *tracking_controller);
 
   bool start(float known_distance_mm, float target_size_mm,
              uint8_t sample_count = DEFAULT_SAMPLE_COUNT,
@@ -61,7 +61,7 @@ class FullCalibrationController {
   const CameraCalibration &result_calibration() const;
 
  private:
-  bool begin_full_resolution_();
+  bool begin_native_tracking_();
   bool request_next_capture_();
   bool derive_current_sample_(CameraCalibration &sample);
   void finish_success_();
@@ -70,12 +70,12 @@ class FullCalibrationController {
   void restore_previous_measurement_config_();
   void reset_run_();
 
-  CameraResolutionController *resolution_controller_;
   JpegDiagnostic *jpeg_source_;
   JpegFilteredDiagnostic *filtered_source_;
   TargetDetectionService *detection_service_;
   MeasurementManager *measurement_manager_;
   ContinuousMeasurementController *continuous_controller_;
+  TargetTrackingController *tracking_controller_;
 
   FullCalibrationState state_;
   std::string last_error_;
@@ -99,6 +99,8 @@ class FullCalibrationController {
   float previous_target_size_mm_;
   CameraCalibration previous_calibration_;
   bool previous_config_saved_;
+  bool previous_tracking_enabled_;
+  bool tracking_setting_saved_;
 };
 
 }  // namespace geometrie_camera_app
