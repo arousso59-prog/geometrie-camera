@@ -140,7 +140,10 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  </method>\n";
   xml += "  <method name=\"full_calibration_cancel\" http=\"GET\" path=\"/calibration/full/cancel\"><response code=\"200\" content_type=\"application/json\"/></method>\n";
   xml += "  <method name=\"measurement_compute\" http=\"GET\" path=\"/measurement/compute\"><response code=\"200\" content_type=\"application/json\"/><response code=\"409\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
-  xml += "  <method name=\"measurement_status\" http=\"GET\" path=\"/measurement/status\"><response code=\"200\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/></method>\n";
+  xml += "  <method name=\"measurement_status\" http=\"GET\" path=\"/measurement/status\">\n";
+  xml += "    <comment>Retourne measurement (valeur publiee), raw_measurement (derniere mesure brute) et stabilization avec sample_count/window_size/distance_stddev_mm/distance_span_mm. La stabilisation est active uniquement sur les acquisitions PRECISE du mode continu.</comment>\n";
+  xml += "    <response code=\"200\" content_type=\"application/json\"/><response code=\"500\" content_type=\"application/json\"/>\n";
+  xml += "  </method>\n";
 
   xml += "  <method name=\"continuous_start\" http=\"GET\" path=\"/continuous/start\">\n";
   xml += "    <parameter name=\"interval_ms\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"200..10000\"/>\n";
