@@ -65,7 +65,7 @@ La référence du contrat HTTP est :
 GET /api/wsdl
 ```
 
-Version actuelle : **28**.
+Version actuelle : **29**.
 
 ### Diagnostic lecture seule
 
@@ -231,3 +231,29 @@ L'ancienne pose V1 par homographie est conservée comme diagnostic. La nouvelle 
 8. conserve V1 en repli sans jamais modifier la distance.
 
 Le roll est stabilisé avec une périodicité de 180 degrés. Yaw/pitch sont stabilisés via la normale 3D moyenne plutôt qu'en moyennant directement les angles.
+
+
+## Pose V3 V29 — motif complet 7×7
+
+La V29 ne modifie ni la caméra ni la distance :
+
+- caméra : stratégie V25 figée ;
+- distance : V6.1-robust5 figée ;
+- V5/V6 : diagnostics uniquement.
+
+La pose V3 ajoute un raffinement spécifique à l'orientation :
+
+1. le décodeur connaît le motif 7×7 exact ;
+2. toutes les frontières internes noir/blanc exploitables sont recherchées ;
+3. chaque frontière est localisée en subpixel par recherche du gradient orienté ;
+4. les coordonnées sont remappées dans l'orientation canonique du motif ;
+5. une homographie robuste est ajustée sur l'ensemble de ces transitions ;
+6. les résidus sont repondérés de façon robuste et les outliers sont rejetés ;
+7. cette homographie produit une orientation initiale indépendante des quatre coins externes ;
+8. X/Y/Z restent ceux de V6.1-robust5 ;
+9. seule la rotation est réoptimisée sur une grille de 25 points du plan cible ;
+10. le dernier pas angulaire vaut 0,0015° = 0,09 minute d'arc.
+
+V3 est rejetée si l'homographie du motif ou la reprojection de pose devient incohérente. Le repli est alors V2, puis V1.
+
+La stabilisation sur 5 mesures ne mélange jamais les méthodes : si V3 est majoritaire, seuls les échantillons V3 participent à la moyenne de normale/roll.
