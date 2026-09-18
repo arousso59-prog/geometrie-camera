@@ -190,14 +190,29 @@ bool ContinuousMeasurementController::start(uint32_t interval_ms) {
 }
 
 void ContinuousMeasurementController::stop() {
-  if (this->running_) {
-    ESP_LOGI(TAG, "Mesure continue arretee apres %u cycles", static_cast<unsigned>(this->cycle_count_));
-  }
+  const bool was_running = this->running_;
   this->running_ = false;
   this->state_ = ContinuousMeasurementState::STOPPED;
+
+  // Stop doit etre immediat du point de vue de la session continue. Si une
+  // sequence JPEG purge+frame fraiche etait deja engagee, l'annuler afin que
+  // JpegDiagnostic::loop() ne puisse pas lancer la deuxieme acquisition.
+  if (this->jpeg_source_ != nullptr) {
+    this->jpeg_source_->cancel_capture();
+  }
+
+  if (this->measurement_manager_ != nullptr) {
+    this->measurement_manager_->reset_stabilization();
+  }
+
   if (this->tracking_controller_ != nullptr) {
     this->tracking_controller_->stop();
     this->reset_local_tracking_after_viewport_change_();
+  }
+
+  if (was_running) {
+    ESP_LOGI(TAG, "Mesure continue arretee apres %u cycles; acquisition en vol annulee",
+             static_cast<unsigned>(this->cycle_count_));
   }
 }
 
@@ -290,7 +305,12 @@ void ContinuousMeasurementController::loop() {
 
     case ContinuousMeasurementState::FILTER:
       if (!this->filtered_source_->process(this->artifact_correction_enabled_)) {
-        this->fail_cycle_("filter_failed");
+        if (this->running_) {
+          this->fail_cycle_("filter_failed");
+        }
+        return;
+      }
+      if (!this->running_) {
         return;
       }
       this->current_filter_ms_ = this->filtered_source_->total_ms();
@@ -301,7 +321,12 @@ void ContinuousMeasurementController::loop() {
 
     case ContinuousMeasurementState::DETECT: {
       if (!this->detection_service_->detect()) {
-        this->fail_cycle_("detection_failed");
+        if (this->running_) {
+          this->fail_cycle_("detection_failed");
+        }
+        return;
+      }
+      if (!this->running_) {
         return;
       }
       this->current_detect_ms_ = this->detection_service_->detection_ms();
@@ -349,6 +374,9 @@ void ContinuousMeasurementController::loop() {
       const bool measured = this->measurement_manager_->process(
           measurement_observation, measurement_width, measurement_height, millis(),
           stabilize_measurement);
+      if (!this->running_) {
+        return;
+      }
       this->current_compute_ms_ = millis() - compute_started_ms;
       if (!measured) {
         this->fail_cycle_("measurement_failed");
@@ -514,6 +542,9 @@ void ContinuousMeasurementController::publish_cycle_timing_(uint32_t cycle_ms) {
 }
 
 void ContinuousMeasurementController::finish_cycle_(bool target_found, bool measurement_valid) {
+  if (!this->running_) {
+    return;
+  }
   const uint32_t now = millis();
   this->publish_cycle_timing_(now - this->cycle_started_ms_);
   this->cycle_count_++;
@@ -532,6 +563,9 @@ void ContinuousMeasurementController::finish_cycle_(bool target_found, bool meas
 }
 
 void ContinuousMeasurementController::fail_cycle_(const char *error) {
+  if (!this->running_) {
+    return;
+  }
   const uint32_t now = millis();
   this->publish_cycle_timing_(now - this->cycle_started_ms_);
   this->cycle_count_++;
@@ -557,6 +591,9 @@ void ContinuousMeasurementController::stop_with_error_(const char *error) {
 }
 
 bool ContinuousMeasurementController::request_capture_() {
+  if (!this->running_ || this->jpeg_source_ == nullptr) {
+    return false;
+  }
   this->capture_count_before_request_ = this->jpeg_source_->capture_count();
   return this->jpeg_source_->request_capture();
 }
