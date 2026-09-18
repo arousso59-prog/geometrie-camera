@@ -683,7 +683,10 @@ bool FullCalibrationController::handle_tuning_result_(
       this->best_gain_ = this->current_gain_;
     }
     this->tuning_round_ = 0;
-    this->tuning_step_ = 300;
+    // Premiere passe : atteindre explicitement les deux bornes 0/1200,
+    // puis resserrer autour du meilleur point aux tours suivants.
+    this->tuning_step_ = std::max(
+        this->best_exposure_, 1200 - this->best_exposure_);
     return this->start_manual_exposure_round_();
   }
 
@@ -761,7 +764,9 @@ bool FullCalibrationController::advance_manual_pair_(bool exposure_axis) {
       return this->start_manual_exposure_round_();
     }
     this->tuning_round_ = 0;
-    this->tuning_step_ = 8;
+    // Meme principe pour le gain : premiere paire aux bornes 0/30.
+    this->tuning_step_ = std::max(
+        this->best_gain_, 30 - this->best_gain_);
     return this->start_manual_gain_round_();
   }
 
