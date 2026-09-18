@@ -33,6 +33,7 @@ float safe_ratio(float a, float b) {
 TargetDetector::TargetDetector()
     : candidate_finder_(),
       corner_refiner_(),
+      subpixel_refiner_(),
       code_decoder_(),
       candidates_(),
       last_valid_observation_(),
@@ -41,7 +42,7 @@ TargetDetector::TargetDetector()
 void TargetDetector::reset_tracking() {
   this->last_valid_observation_ = TargetObservation();
   this->consecutive_misses_ = 0;
-  ESP_LOGD(TAG, "V5.5 tracking reset on viewport change");
+  ESP_LOGD(TAG, "V5.7 tracking reset on viewport change");
 }
 
 TargetObservation TargetDetector::detect(const GrayFrameView &frame) {
@@ -62,9 +63,10 @@ TargetObservation TargetDetector::detect(const GrayFrameView &frame) {
 
     TargetCandidate refined_candidate = candidate;
     if (this->corner_refiner_.refine(frame, candidate, refined_candidate)) {
-      const TargetObservation refined_observation = this->code_decoder_.decode(frame, refined_candidate);
+      const TargetObservation refined_observation =
+          this->code_decoder_.decode(frame, refined_candidate);
       ESP_LOGD(TAG,
-               "V5.5 candidate[%u] coarse=%.4f refined=%.4f refined_valid=%s",
+               "V5.7 candidate[%u] coarse=%.4f refined=%.4f refined_valid=%s",
                static_cast<unsigned>(index), coarse_observation.quality,
                refined_observation.quality, refined_observation.valid ? "YES" : "NO");
 
@@ -74,11 +76,41 @@ TargetObservation TargetDetector::detect(const GrayFrameView &frame) {
                  coarse_observation.rotation_deg == refined_observation.rotation_deg) {
         copy_geometry(refined_observation, candidate_best);
       }
+
+      // Le raffinement subpixel est volontairement une etape terminale :
+      // il ne participe ni a la localisation grossiere ni a la decision de
+      // validite de la cible. Il affine seulement les quatre coins d'une
+      // cible deja reconnue par le chemin historique.
+      if (refined_observation.valid) {
+        TargetCandidate subpixel_candidate = refined_candidate;
+        if (this->subpixel_refiner_.refine(frame, refined_candidate,
+                                           subpixel_candidate)) {
+          const TargetObservation subpixel_observation =
+              this->code_decoder_.decode(frame, subpixel_candidate);
+
+          ESP_LOGD(TAG,
+                   "V5.7 candidate[%u] subpixel=%.4f valid=%s",
+                   static_cast<unsigned>(index), subpixel_observation.quality,
+                   subpixel_observation.valid ? "YES" : "NO");
+
+          if (subpixel_observation.valid) {
+            if (!candidate_best.valid ||
+                subpixel_observation.quality > candidate_best.quality) {
+              candidate_best = subpixel_observation;
+            } else if (candidate_best.rotation_deg ==
+                       subpixel_observation.rotation_deg) {
+              // Conserver le score/choix du decodeur deja etabli, mais
+              // remplacer la geometrie physique par les coins subpixel.
+              copy_geometry(subpixel_observation, candidate_best);
+            }
+          }
+        }
+      }
     }
 
     const float selection_score = this->selection_score_(candidate_best);
     ESP_LOGD(TAG,
-             "V5.5 candidate[%u] quality=%.4f valid=%s continuity=%.3f selection=%.4f",
+             "V5.7 candidate[%u] quality=%.4f valid=%s continuity=%.3f selection=%.4f",
              static_cast<unsigned>(index), candidate_best.quality,
              candidate_best.valid ? "YES" : "NO",
              this->continuity_score_(candidate_best), selection_score);
@@ -165,7 +197,7 @@ void TargetDetector::update_tracking_(const TargetObservation &observation) {
   if (this->last_valid_observation_.valid) {
     this->consecutive_misses_++;
     if (this->consecutive_misses_ >= TRACKING_RESET_AFTER_MISSES) {
-      ESP_LOGD(TAG, "V5.5 tracking reset after %u misses",
+      ESP_LOGD(TAG, "V5.7 tracking reset after %u misses",
                static_cast<unsigned>(this->consecutive_misses_));
       this->last_valid_observation_ = TargetObservation();
       this->consecutive_misses_ = 0;
