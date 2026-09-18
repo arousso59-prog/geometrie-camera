@@ -1341,15 +1341,13 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
       std::isfinite(result.pose_scale_error_pct) &&
       result.pose_scale_error_pct <= MAX_POSE_SCALE_ERROR_PCT;
 
-  // Pose V2 : seule l'orientation est optimisee. La translation provient
-  // EXCLUSIVEMENT de V6.1-robust5 deja calculee ci-dessus et n'est jamais
-  // reinjectee dans la distance. Le cout s'appuie principalement sur les
-  // quatre droites subpixel, les coins ne servant que de faible regularisation.
+  // Pose V2 : orientation issue des quatre droites externes.
   const Vec3 fixed_translation = {
       result.x_mm, result.y_mm, result.z_mm};
 
   PoseBasis pose_v2_basis;
   PoseV2Score pose_v2_score{};
+  bool pose_v2_available = false;
   if (observation.subpixel_refined &&
       distortion_is_zero(calibration) &&
       refine_pose_v2(
@@ -1357,8 +1355,8 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
           this->target_size_mm_, calibration,
           points, observation,
           pose_v2_basis, pose_v2_score)) {
+    pose_v2_available = true;
     result.pose_v2_valid = true;
-    result.pose_v2_used = true;
     result.pose_v2_line_rms_px = pose_v2_score.line_rms_px;
     result.pose_v2_corner_rms_px = pose_v2_score.corner_rms_px;
 
@@ -1367,7 +1365,62 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
         result.pose_v2_yaw_deg,
         result.pose_v2_pitch_deg,
         result.pose_v2_roll_deg);
+  }
 
+  // Pose V3 : homographie du motif interieur 7x7. Elle fournit une
+  // orientation independante des quatre coins externes. La translation reste
+  // celle de V6.1-robust5, donc aucune modification de distance n'est possible.
+  PoseBasis pose_v3_basis;
+  PoseV3Score pose_v3_score{};
+  if (observation.pattern_refined &&
+      distortion_is_zero(calibration)) {
+    PoseBasis pattern_basis;
+    if (basis_from_pattern_homography(
+            observation.pattern_homography,
+            calibration, pattern_basis)) {
+      const PoseBasis *alternate =
+          pose_v2_available ? &pose_v2_basis : &pose_v1_basis;
+
+      if (refine_pose_v3(
+              pattern_basis, alternate,
+              fixed_translation,
+              this->target_size_mm_, calibration,
+              observation.pattern_homography,
+              pose_v3_basis, pose_v3_score)) {
+        result.pose_v3_valid = true;
+        result.pose_v3_used = true;
+        result.pose_v3_pattern_rms_px =
+            observation.pattern_rms_px;
+        result.pose_v3_fit_rms_px =
+            pose_v3_score.rms_px;
+        result.pose_v3_feature_count =
+            observation.pattern_feature_count;
+        result.pose_v3_inlier_count =
+            observation.pattern_inlier_count;
+
+        pose_angles_from_basis(
+            pose_v3_basis,
+            result.pose_v3_yaw_deg,
+            result.pose_v3_pitch_deg,
+            result.pose_v3_roll_deg);
+
+        result.yaw_deg = result.pose_v3_yaw_deg;
+        result.pitch_deg = result.pose_v3_pitch_deg;
+        result.roll_deg = result.pose_v3_roll_deg;
+        result.pose_normal_x = pose_v3_basis.normal.x;
+        result.pose_normal_y = pose_v3_basis.normal.y;
+        result.pose_normal_z = pose_v3_basis.normal.z;
+        result.pose_valid = true;
+      }
+    }
+  }
+
+  if (result.pose_v3_used) {
+    return result;
+  }
+
+  if (pose_v2_available) {
+    result.pose_v2_used = true;
     result.yaw_deg = result.pose_v2_yaw_deg;
     result.pitch_deg = result.pose_v2_pitch_deg;
     result.roll_deg = result.pose_v2_roll_deg;
@@ -1378,9 +1431,8 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
     return result;
   }
 
-  // Repli conservateur : l'ancienne pose reste disponible uniquement si sa
-  // coherence d'echelle historique est acceptable. La distance principale
-  // reste dans tous les cas celle de V6.1-robust5.
+  // Repli conservateur V1. La distance principale reste toujours celle de
+  // V6.1-robust5, quelle que soit la methode de pose retenue.
   if (result.pose_v1_valid) {
     result.yaw_deg = result.pose_v1_yaw_deg;
     result.pitch_deg = result.pose_v1_pitch_deg;
