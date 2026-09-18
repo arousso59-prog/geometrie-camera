@@ -16,6 +16,8 @@ struct TargetPatternMetrics {
   float rms_px;
   float max_residual_px;
   float homography[9];
+  const PatternFeature *features;
+  uint16_t features_count;
 };
 
 class TargetPatternRefiner {
@@ -28,20 +30,11 @@ class TargetPatternRefiner {
               TargetPatternMetrics &metrics) const;
 
  private:
-  struct Feature {
-    float u;
-    float v;
-    float x;
-    float y;
-    float strength;
-    float residual;
-  };
-
   static constexpr uint16_t MAX_FEATURES = 128;
 
   // Buffers de travail persistants : ne surtout pas les placer sur la pile
   // de la tache ESPHome. Ensemble ils representent ~4.4 Ko.
-  mutable Feature features_[MAX_FEATURES];
+  mutable PatternFeature features_[MAX_FEATURES];
   mutable float robust_weights_[MAX_FEATURES];
   mutable float residuals_[MAX_FEATURES];
   mutable float normal_matrix_[8][9];
@@ -61,8 +54,8 @@ class TargetPatternRefiner {
                         bool along_u,
                         int expected_sign,
                         uint8_t rotation_quarters,
-                        Feature &feature) const;
-  bool fit_homography_(Feature *features, uint16_t count,
+                        PatternFeature &feature) const;
+  bool fit_homography_(PatternFeature *features, uint16_t count,
                        float homography[9],
                        uint16_t &inlier_count,
                        float &rms_px,
