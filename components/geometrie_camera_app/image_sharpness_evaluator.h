@@ -18,6 +18,9 @@ class ImageSharpnessEvaluator {
   bool ready() const;
   uint32_t score_x100() const;
   uint32_t evaluation_ms() const;
+  uint32_t mean_luma_x100() const;
+  uint32_t dark_percent_x100() const;
+  uint32_t bright_percent_x100() const;
   uint16_t preview_width() const;
   uint16_t preview_height() const;
 
@@ -34,6 +37,9 @@ class ImageSharpnessEvaluator {
   uint16_t height_;
   uint32_t score_x100_;
   uint32_t evaluation_ms_;
+  uint32_t mean_luma_x100_;
+  uint32_t dark_percent_x100_;
+  uint32_t bright_percent_x100_;
   bool ready_;
 };
 
