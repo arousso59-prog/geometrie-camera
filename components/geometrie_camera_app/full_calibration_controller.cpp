@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-#include "camera_resolution_controller.h"
+#include "camera_viewport_controller.h"
 #include "continuous_measurement_controller.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
@@ -12,30 +12,34 @@
 #include "jpeg_filtered_diagnostic.h"
 #include "measurement_manager.h"
 #include "target_detection_service.h"
+#include "target_tracking_controller.h"
 
 namespace esphome {
 namespace geometrie_camera_app {
 
 namespace {
 static const char *const TAG = "full_calibration";
-constexpr uint16_t CALIBRATION_WIDTH = 2560;
-constexpr uint16_t CALIBRATION_HEIGHT = 1920;
+constexpr uint16_t CALIBRATION_REFERENCE_WIDTH = CameraViewportController::REFERENCE_WIDTH;
+constexpr uint16_t CALIBRATION_REFERENCE_HEIGHT = CameraViewportController::REFERENCE_HEIGHT;
+constexpr uint16_t NATIVE_OUTPUT_WIDTH = CameraViewportController::OUTPUT_WIDTH;
+constexpr uint16_t NATIVE_OUTPUT_HEIGHT = CameraViewportController::OUTPUT_HEIGHT;
 constexpr uint32_t CAPTURE_TIMEOUT_MS = 15000;
+constexpr uint8_t MAX_TOTAL_ATTEMPTS = 100;
 }
 
 FullCalibrationController::FullCalibrationController(
-    CameraResolutionController *resolution_controller,
     JpegDiagnostic *jpeg_source,
     JpegFilteredDiagnostic *filtered_source,
     TargetDetectionService *detection_service,
     MeasurementManager *measurement_manager,
-    ContinuousMeasurementController *continuous_controller)
-    : resolution_controller_(resolution_controller),
-      jpeg_source_(jpeg_source),
+    ContinuousMeasurementController *continuous_controller,
+    TargetTrackingController *tracking_controller)
+    : jpeg_source_(jpeg_source),
       filtered_source_(filtered_source),
       detection_service_(detection_service),
       measurement_manager_(measurement_manager),
       continuous_controller_(continuous_controller),
+      tracking_controller_(tracking_controller),
       state_(FullCalibrationState::IDLE),
       last_error_(),
       known_distance_mm_(0.0f),
@@ -43,7 +47,7 @@ FullCalibrationController::FullCalibrationController(
       requested_samples_(DEFAULT_SAMPLE_COUNT),
       valid_samples_(0),
       attempts_(0),
-      max_attempts_(DEFAULT_SAMPLE_COUNT * 2),
+      max_attempts_(DEFAULT_SAMPLE_COUNT * 5),
       capture_count_before_request_(0),
       capture_started_ms_(0),
       samples_{},
@@ -54,7 +58,9 @@ FullCalibrationController::FullCalibrationController(
       stddev_fy_px_(0.0f),
       previous_target_size_mm_(0.0f),
       previous_calibration_(),
-      previous_config_saved_(false) {}
+      previous_config_saved_(false),
+      previous_tracking_enabled_(true),
+      tracking_setting_saved_(false) {}
 
 bool FullCalibrationController::start(float known_distance_mm,
                                       float target_size_mm,
@@ -64,11 +70,12 @@ bool FullCalibrationController::start(float known_distance_mm,
     this->last_error_ = "calibration_already_running";
     return false;
   }
-  if (this->resolution_controller_ == nullptr ||
-      this->jpeg_source_ == nullptr ||
+  if (this->jpeg_source_ == nullptr ||
       this->filtered_source_ == nullptr ||
       this->detection_service_ == nullptr ||
-      this->measurement_manager_ == nullptr) {
+      this->measurement_manager_ == nullptr ||
+      this->tracking_controller_ == nullptr ||
+      !this->tracking_controller_->supported()) {
     this->last_error_ = "calibration_dependencies_unavailable";
     this->state_ = FullCalibrationState::ERROR;
     return false;
@@ -97,6 +104,7 @@ bool FullCalibrationController::start(float known_distance_mm,
     this->state_ = FullCalibrationState::ERROR;
     return false;
   }
+
   if (this->continuous_controller_ != nullptr && this->continuous_controller_->running()) {
     this->continuous_controller_->stop();
   }
@@ -105,13 +113,16 @@ bool FullCalibrationController::start(float known_distance_mm,
   this->previous_calibration_ = engine.calibration();
   this->previous_config_saved_ = true;
 
+  this->previous_tracking_enabled_ = this->tracking_controller_->enabled();
+  this->tracking_setting_saved_ = true;
+
   this->reset_run_();
   this->known_distance_mm_ = known_distance_mm;
   this->target_size_mm_ = target_size_mm;
   this->requested_samples_ = sample_count;
   this->max_attempts_ = std::min<uint8_t>(
-      static_cast<uint8_t>(MAX_SAMPLE_COUNT * 2),
-      static_cast<uint8_t>(std::max<int>(sample_count + 3, sample_count * 2)));
+      MAX_TOTAL_ATTEMPTS,
+      static_cast<uint8_t>(std::max<int>(sample_count * 5, sample_count + 20)));
 
   if (!engine.set_target_size_mm(target_size_mm)) {
     this->fail_("target_size_apply_failed");
@@ -119,20 +130,25 @@ bool FullCalibrationController::start(float known_distance_mm,
   }
 
   ESP_LOGI(TAG,
-           "Calibration full demandee: distance=%.2f mm cible=%.2f mm echantillons=%u",
+           "Calibration native demandee: reference=%ux%u, sortie native PRECISE=%ux%u, "
+           "distance=%.2f mm cible=%.2f mm echantillons=%u",
+           static_cast<unsigned>(CALIBRATION_REFERENCE_WIDTH),
+           static_cast<unsigned>(CALIBRATION_REFERENCE_HEIGHT),
+           static_cast<unsigned>(NATIVE_OUTPUT_WIDTH),
+           static_cast<unsigned>(NATIVE_OUTPUT_HEIGHT),
            known_distance_mm, target_size_mm,
            static_cast<unsigned>(sample_count));
 
   // Si une acquisition etait encore en vol au moment ou le continu a ete
-  // arrete, la laisser se terminer proprement avant de changer de framesize.
+  // arrete, la laisser se terminer avant de reprendre la camera.
   if (this->jpeg_source_->capture_pending()) {
     this->capture_started_ms_ = millis();
     this->state_ = FullCalibrationState::WAIT_IDLE;
     return true;
   }
 
-  if (!this->begin_full_resolution_()) {
-    this->fail_("full_resolution_start_failed");
+  if (!this->begin_native_tracking_()) {
+    this->fail_("native_tracking_start_failed");
     return false;
   }
   return true;
@@ -149,8 +165,8 @@ void FullCalibrationController::loop() {
         return;
       }
 
-      if (!this->begin_full_resolution_()) {
-        this->fail_("full_resolution_start_failed");
+      if (!this->begin_native_tracking_()) {
+        this->fail_("native_tracking_start_failed");
       }
       return;
     }
@@ -172,9 +188,10 @@ void FullCalibrationController::loop() {
         return;
       }
 
-      if (this->jpeg_source_->width() != CALIBRATION_WIDTH ||
-          this->jpeg_source_->height() != CALIBRATION_HEIGHT) {
-        this->fail_("unexpected_full_resolution");
+      // Tous les niveaux SEARCH/ZOOM/PRECISE produisent une image 800x600.
+      if (this->jpeg_source_->width() != NATIVE_OUTPUT_WIDTH ||
+          this->jpeg_source_->height() != NATIVE_OUTPUT_HEIGHT) {
+        this->fail_("unexpected_tracking_output_resolution");
         return;
       }
 
@@ -183,10 +200,9 @@ void FullCalibrationController::loop() {
     }
 
     case FullCalibrationState::FILTER:
-      // Camera nominalement N/B : aucune correction couleur pendant la
-      // calibration 5 MP, seulement le decodage JPEG -> niveaux de gris.
+      // Camera nominalement N/B : decodage JPEG -> gris uniquement.
       if (!this->filtered_source_->process(false)) {
-        this->fail_("full_resolution_filter_failed");
+        this->fail_("calibration_filter_failed");
         return;
       }
       this->state_ = FullCalibrationState::DETECT;
@@ -196,29 +212,64 @@ void FullCalibrationController::loop() {
       this->attempts_++;
 
       if (!this->detection_service_->detect()) {
-        this->fail_("full_resolution_detection_failed");
+        this->fail_("calibration_detection_failed");
         return;
       }
 
-      if (this->detection_service_->target_found()) {
+      const bool target_found = this->detection_service_->target_found();
+      const TargetObservation local_observation =
+          this->detection_service_->last_observation();
+
+      const CameraViewportMode mode_before =
+          this->tracking_controller_->viewport_controller()->snapshot().mode;
+
+      const TrackingUpdateResult tracking_result =
+          this->tracking_controller_->update_after_detection(
+              target_found, local_observation);
+
+      if (tracking_result == TrackingUpdateResult::ERROR) {
+        this->fail_("calibration_tracking_failed");
+        return;
+      }
+
+      // Si le tracking vient de changer de viewport, l'observation appartient
+      // a l'ancien viewport. Ne jamais l'utiliser pour calibrer : reprendre une
+      // image fraiche dans le nouveau cadrage.
+      if (tracking_result == TrackingUpdateResult::VIEWPORT_CHANGED) {
+        if (this->attempts_ >= this->max_attempts_) {
+          this->fail_("precise_lock_timeout");
+          return;
+        }
+        if (!this->request_next_capture_()) {
+          this->fail_("capture_request_failed");
+        }
+        return;
+      }
+
+      // On n'accumule les echantillons qu'en PRECISE natif. Dans ce mode
+      // window=800x600 et scale=1 : chaque pixel est un pixel physique du
+      // capteur. La conversion to_reference() ne fait alors qu'ajouter
+      // l'origine du crop dans le repere canonique 2560x1920.
+      if (target_found &&
+          mode_before == CameraViewportMode::PRECISE_ROI &&
+          this->tracking_controller_->target_locked()) {
+        const TargetObservation reference_observation =
+            this->tracking_controller_->to_reference(local_observation);
+
         CameraCalibration sample;
-        if (this->derive_current_sample_(sample)) {
+        if (this->derive_current_sample_(reference_observation, sample)) {
           this->samples_[this->valid_samples_] = sample;
           this->valid_samples_++;
           ESP_LOGI(TAG,
-                   "Calibration full: echantillon %u/%u fx=%.3f fy=%.3f qualite=%.3f",
+                   "Calibration native PRECISE: echantillon %u/%u fx=%.3f fy=%.3f "
+                   "cible=%.1fx%.1f px qualite=%.3f",
                    static_cast<unsigned>(this->valid_samples_),
                    static_cast<unsigned>(this->requested_samples_),
                    sample.fx_px, sample.fy_px,
-                   this->detection_service_->last_observation().quality);
-        } else {
-          ESP_LOGW(TAG, "Calibration full: echantillon detecte mais non exploitable");
+                   reference_observation.width_px,
+                   reference_observation.height_px,
+                   local_observation.quality);
         }
-      } else {
-        ESP_LOGW(TAG,
-                 "Calibration full: cible non validee tentative %u/%u",
-                 static_cast<unsigned>(this->attempts_),
-                 static_cast<unsigned>(this->max_attempts_));
       }
 
       if (this->valid_samples_ >= this->requested_samples_) {
@@ -227,7 +278,7 @@ void FullCalibrationController::loop() {
       }
 
       if (this->attempts_ >= this->max_attempts_) {
-        this->fail_("not_enough_valid_samples");
+        this->fail_("not_enough_valid_precise_samples");
         return;
       }
 
@@ -292,18 +343,22 @@ const CameraCalibration &FullCalibrationController::result_calibration() const {
   return this->result_calibration_;
 }
 
-bool FullCalibrationController::begin_full_resolution_() {
-  // Liberer les buffers de traitement 800x600 avant l'allocation 5 MP pour
-  // maximiser la PSRAM disponible pendant cette operation exceptionnelle.
-  this->filtered_source_->release_buffers();
-  this->jpeg_source_->release_buffer();
+bool FullCalibrationController::begin_native_tracking_() {
+  if (this->tracking_controller_->active()) {
+    this->tracking_controller_->stop();
+  }
 
-  if (!this->resolution_controller_->apply("2560x1920")) {
+  if (!this->tracking_controller_->enabled() &&
+      !this->tracking_controller_->set_enabled(true)) {
+    return false;
+  }
+
+  if (!this->tracking_controller_->start()) {
     return false;
   }
 
   this->detection_service_->reset_tracking();
-  ESP_LOGI(TAG, "Calibration full: resolution 2560x1920 active");
+  ESP_LOGI(TAG, "Calibration native: SEARCH 800x600 actif, progression vers PRECISE");
 
   return this->request_next_capture_();
 }
@@ -323,16 +378,13 @@ bool FullCalibrationController::request_next_capture_() {
   return true;
 }
 
-bool FullCalibrationController::derive_current_sample_(CameraCalibration &sample) {
-  if (this->filtered_source_->width() != CALIBRATION_WIDTH ||
-      this->filtered_source_->height() != CALIBRATION_HEIGHT) {
-    return false;
-  }
-
+bool FullCalibrationController::derive_current_sample_(
+    const TargetObservation &reference_observation,
+    CameraCalibration &sample) {
   return this->measurement_manager_->measurement_engine().derive_calibration_from_known_distance(
-      this->detection_service_->last_observation(),
-      CALIBRATION_WIDTH,
-      CALIBRATION_HEIGHT,
+      reference_observation,
+      CALIBRATION_REFERENCE_WIDTH,
+      CALIBRATION_REFERENCE_HEIGHT,
       this->known_distance_mm_,
       sample);
 }
@@ -369,10 +421,12 @@ void FullCalibrationController::finish_success_() {
   this->result_calibration_ = this->samples_[0];
   this->result_calibration_.fx_px = this->mean_fx_px_;
   this->result_calibration_.fy_px = this->mean_fy_px_;
-  this->result_calibration_.cx_px = (CALIBRATION_WIDTH - 1.0f) * 0.5f;
-  this->result_calibration_.cy_px = (CALIBRATION_HEIGHT - 1.0f) * 0.5f;
-  this->result_calibration_.reference_width_px = CALIBRATION_WIDTH;
-  this->result_calibration_.reference_height_px = CALIBRATION_HEIGHT;
+  this->result_calibration_.cx_px =
+      (static_cast<float>(CALIBRATION_REFERENCE_WIDTH) - 1.0f) * 0.5f;
+  this->result_calibration_.cy_px =
+      (static_cast<float>(CALIBRATION_REFERENCE_HEIGHT) - 1.0f) * 0.5f;
+  this->result_calibration_.reference_width_px = CALIBRATION_REFERENCE_WIDTH;
+  this->result_calibration_.reference_height_px = CALIBRATION_REFERENCE_HEIGHT;
 
   GeometryMeasurementEngine &engine = this->measurement_manager_->measurement_engine();
   engine.set_calibration(this->result_calibration_);
@@ -384,7 +438,7 @@ void FullCalibrationController::finish_success_() {
   this->state_ = FullCalibrationState::COMPLETE;
 
   ESP_LOGI(TAG,
-           "Calibration full terminee: n=%u fx=%.3f +/- %.3f fy=%.3f +/- %.3f",
+           "Calibration native terminee: n=%u fx=%.3f +/- %.3f fy=%.3f +/- %.3f",
            static_cast<unsigned>(this->valid_samples_),
            this->mean_fx_px_, this->stddev_fx_px_,
            this->mean_fy_px_, this->stddev_fy_px_);
@@ -392,23 +446,24 @@ void FullCalibrationController::finish_success_() {
 
 void FullCalibrationController::fail_(const char *error) {
   this->last_error_ = error != nullptr ? error : "calibration_failed";
-  ESP_LOGE(TAG, "Calibration full en echec: %s", this->last_error_.c_str());
+  ESP_LOGE(TAG, "Calibration native en echec: %s", this->last_error_.c_str());
   this->restore_previous_measurement_config_();
   this->restore_nominal_camera_();
   this->state_ = FullCalibrationState::ERROR;
 }
 
 void FullCalibrationController::restore_nominal_camera_() {
-  if (this->filtered_source_ != nullptr) {
-    this->filtered_source_->release_buffers();
+  if (this->tracking_controller_ != nullptr) {
+    if (this->tracking_controller_->active()) {
+      this->tracking_controller_->stop();
+    }
+
+    if (this->tracking_setting_saved_) {
+      this->tracking_controller_->set_enabled(this->previous_tracking_enabled_);
+      this->tracking_setting_saved_ = false;
+    }
   }
-  if (this->jpeg_source_ != nullptr) {
-    this->jpeg_source_->release_buffer();
-  }
-  if (this->resolution_controller_ != nullptr &&
-      !this->resolution_controller_->apply("800x600")) {
-    ESP_LOGE(TAG, "Impossible de restaurer la resolution nominale 800x600");
-  }
+
   if (this->detection_service_ != nullptr) {
     this->detection_service_->reset_tracking();
   }
