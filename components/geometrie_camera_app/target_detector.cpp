@@ -161,6 +161,46 @@ TargetObservation TargetDetector::detect(const GrayFrameView &frame) {
                   subpixel_metrics.bottom_gradient;
               candidate_best.subpixel_left_gradient =
                   subpixel_metrics.left_gradient;
+
+              candidate_best.subpixel_top_line.valid = true;
+              candidate_best.subpixel_top_line.point.x =
+                  subpixel_metrics.top_line_point.x;
+              candidate_best.subpixel_top_line.point.y =
+                  subpixel_metrics.top_line_point.y;
+              candidate_best.subpixel_top_line.dx =
+                  subpixel_metrics.top_line_dx;
+              candidate_best.subpixel_top_line.dy =
+                  subpixel_metrics.top_line_dy;
+
+              candidate_best.subpixel_right_line.valid = true;
+              candidate_best.subpixel_right_line.point.x =
+                  subpixel_metrics.right_line_point.x;
+              candidate_best.subpixel_right_line.point.y =
+                  subpixel_metrics.right_line_point.y;
+              candidate_best.subpixel_right_line.dx =
+                  subpixel_metrics.right_line_dx;
+              candidate_best.subpixel_right_line.dy =
+                  subpixel_metrics.right_line_dy;
+
+              candidate_best.subpixel_bottom_line.valid = true;
+              candidate_best.subpixel_bottom_line.point.x =
+                  subpixel_metrics.bottom_line_point.x;
+              candidate_best.subpixel_bottom_line.point.y =
+                  subpixel_metrics.bottom_line_point.y;
+              candidate_best.subpixel_bottom_line.dx =
+                  subpixel_metrics.bottom_line_dx;
+              candidate_best.subpixel_bottom_line.dy =
+                  subpixel_metrics.bottom_line_dy;
+
+              candidate_best.subpixel_left_line.valid = true;
+              candidate_best.subpixel_left_line.point.x =
+                  subpixel_metrics.left_line_point.x;
+              candidate_best.subpixel_left_line.point.y =
+                  subpixel_metrics.left_line_point.y;
+              candidate_best.subpixel_left_line.dx =
+                  subpixel_metrics.left_line_dx;
+              candidate_best.subpixel_left_line.dy =
+                  subpixel_metrics.left_line_dy;
             }
           }
         }
