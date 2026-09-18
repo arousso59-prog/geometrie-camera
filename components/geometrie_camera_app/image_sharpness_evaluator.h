@@ -21,6 +21,9 @@ class ImageSharpnessEvaluator {
   uint32_t mean_luma_x100() const;
   uint32_t dark_percent_x100() const;
   uint32_t bright_percent_x100() const;
+  uint8_t p10_luma() const;
+  uint8_t p90_luma() const;
+  uint8_t contrast_luma() const;
   uint16_t preview_width() const;
   uint16_t preview_height() const;
 
@@ -40,6 +43,9 @@ class ImageSharpnessEvaluator {
   uint32_t mean_luma_x100_;
   uint32_t dark_percent_x100_;
   uint32_t bright_percent_x100_;
+  uint8_t p10_luma_;
+  uint8_t p90_luma_;
+  uint8_t contrast_luma_;
   bool ready_;
 };
 
