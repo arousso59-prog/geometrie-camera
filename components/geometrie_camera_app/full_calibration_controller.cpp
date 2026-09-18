@@ -965,8 +965,9 @@ void FullCalibrationController::update_running_stats_() {
   double sum_fy = 0.0;
   uint8_t inlier_count = 0;
   for (uint8_t i = 0; i < this->valid_samples_; ++i) {
-    if (std::fabs(fx_values[i] - median_fx) <= gate_fx &&
-        std::fabs(fy_values[i] - median_fy) <= gate_fy) {
+    if (use_all_samples ||
+        (std::fabs(fx_values[i] - median_fx) <= gate_fx &&
+         std::fabs(fy_values[i] - median_fy) <= gate_fy)) {
       sum_fx += fx_values[i];
       sum_fy += fy_values[i];
       ++inlier_count;
@@ -974,7 +975,9 @@ void FullCalibrationController::update_running_stats_() {
   }
 
   // Securite pour les toutes petites series.
+  bool use_all_samples = false;
   if (inlier_count < 3) {
+    use_all_samples = true;
     sum_fx = 0.0;
     sum_fy = 0.0;
     inlier_count = this->valid_samples_;
