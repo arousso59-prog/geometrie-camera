@@ -65,7 +65,7 @@ La référence du contrat HTTP est :
 GET /api/wsdl
 ```
 
-Version actuelle : **31**.
+Version actuelle : **32**.
 
 ### Diagnostic lecture seule
 
@@ -282,3 +282,37 @@ Le but est de chevaucher le temps capteur avec le décodage et la détection san
 La Pose V3 V29/V30 utilisait plusieurs grands tableaux temporaires sur la pile de la tache ESPHome pendant le raffinement du motif 7x7. En calibration, l'empilement avec les buffers de detection/subpixel pouvait declencher `vApplicationStackOverflowHook`.
 
 V31 deplace environ 4,4 Ko de buffers de travail (`Feature[128]`, poids robustes, residus et matrice normale) dans l'objet persistant `TargetPatternRefiner`. Les formules, seuils, homographie, V6.1-robust5, reglages camera et Pose V3 restent strictement identiques.
+
+
+## Pose V4 V32 — ajustement direct des transitions subpixel
+
+La V32 est la dernière optimisation logicielle prévue avec la cible 50×50 mm.
+
+Les éléments suivants restent strictement figés :
+
+- caméra : stratégie V25 ;
+- distance : V6.1-robust5 ;
+- capture continue : pipeline V30/V31 ;
+- calibration : inchangée.
+
+V4 réutilise les transitions internes déjà extraites pour V3 mais ne passe plus par l'homographie comme coût final.
+
+Pour chaque transition valide, V4 conserve directement :
+
+- position canonique `u/v` dans la cible ;
+- position subpixel `x/y` observée ;
+- force du gradient ;
+- statut inlier issu du raffinement robuste.
+
+Avec X/Y/Z V6.1 figés, V4 optimise uniquement la rotation du plan cible. Le coût utilise :
+
+- toutes les correspondances inliers ;
+- une perte robuste de Huber ;
+- un poids de gradient borné ;
+- un poids géométrique légèrement supérieur pour les points éloignés du centre, plus sensibles à la rotation.
+
+La recherche multi-échelle descend jusqu'à **0,0005° = 0,03 minute d'arc**. V4 est rejetée si moins de 12 transitions restent valides, si le RMS dépasse 1,10 px ou si le résidu maximal dépasse 2,50 px.
+
+Ordre de repli : V4 direct → V3 homographie motif → V2 quatre droites → V1 homographie historique.
+
+Après validation de cette V32, si yaw/pitch restent nettement au-dessus de 1 minute d'arc, l'évolution suivante sera matérielle : cible plus grande, typiquement autour de **300×100 mm**, afin d'augmenter fortement le bras de levier angulaire sans modifier la chaîne caméra/distance.
