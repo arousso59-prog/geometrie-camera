@@ -43,6 +43,15 @@ struct TargetObservation {
   float height_px;
   float rotation_deg;
   float quality;
+
+  // Diagnostic du dernier raffinement geometrique haute precision.
+  // subpixel_refined=false signifie que le chemin historique au pixel a ete
+  // conserve pour cette detection.
+  bool subpixel_refined;
+  float subpixel_rms_px;
+  float subpixel_max_rms_px;
+  float subpixel_gradient;
+
   ImagePoint top_left_px;
   ImagePoint top_right_px;
   ImagePoint bottom_right_px;
