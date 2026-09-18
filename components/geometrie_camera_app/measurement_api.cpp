@@ -315,7 +315,7 @@ void MeasurementApiHandler::handle_calibrate_(AsyncWebServerRequest *request) {
 void MeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *request, int response_code,
                                            const char *status, const char *error) const {
   std::string json;
-  json.reserve(1800);
+  json.reserve(3000);
   json += "{\"status\":\"";
   json += status;
   json += "\"";
@@ -329,6 +329,7 @@ void MeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *request, int r
   if (this->manager_ != nullptr) {
     const GeometryMeasurementEngine &engine = this->manager_->measurement_engine();
     const GeometryMeasurement &measurement = this->manager_->last_measurement();
+    const GeometryMeasurement &raw_measurement = this->manager_->raw_measurement();
     const CameraCalibration &stored = engine.calibration();
 
     const uint16_t frame_width = this->source_ != nullptr ? this->source_->width() : 0;
@@ -394,6 +395,37 @@ void MeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *request, int r
     json += ",\"pose_scale_error_pct\":" + std::to_string(measurement.pose_scale_error_pct);
     json += ",\"quality\":" + std::to_string(measurement.quality);
     json += ",\"timestamp_ms\":" + std::to_string(measurement.timestamp_ms);
+    json += "}";
+
+    json += ",\"stabilization\":{";
+    json += "\"active\":";
+    json += this->manager_->last_measurement_stabilized() ? "true" : "false";
+    json += ",\"sample_count\":" +
+            std::to_string(this->manager_->stabilization_sample_count());
+    json += ",\"window_size\":" +
+            std::to_string(this->manager_->stabilization_window_size());
+    json += ",\"distance_stddev_mm\":" +
+            std::to_string(this->manager_->distance_stddev_mm());
+    json += ",\"distance_span_mm\":" +
+            std::to_string(this->manager_->distance_span_mm());
+    json += "}";
+
+    json += ",\"raw_measurement\":{\"valid\":";
+    json += raw_measurement.valid ? "true" : "false";
+    json += ",\"pose_valid\":";
+    json += raw_measurement.pose_valid ? "true" : "false";
+    json += ",\"distance_mm\":" + std::to_string(raw_measurement.distance_mm);
+    json += ",\"x_mm\":" + std::to_string(raw_measurement.x_mm);
+    json += ",\"y_mm\":" + std::to_string(raw_measurement.y_mm);
+    json += ",\"z_mm\":" + std::to_string(raw_measurement.z_mm);
+    json += ",\"z_from_width_mm\":" + std::to_string(raw_measurement.z_from_width_mm);
+    json += ",\"z_from_height_mm\":" + std::to_string(raw_measurement.z_from_height_mm);
+    json += ",\"target_yaw_deg\":" + std::to_string(raw_measurement.yaw_deg);
+    json += ",\"target_pitch_deg\":" + std::to_string(raw_measurement.pitch_deg);
+    json += ",\"target_roll_deg\":" + std::to_string(raw_measurement.roll_deg);
+    json += ",\"pose_z_mm\":" + std::to_string(raw_measurement.pose_z_mm);
+    json += ",\"quality\":" + std::to_string(raw_measurement.quality);
+    json += ",\"timestamp_ms\":" + std::to_string(raw_measurement.timestamp_ms);
     json += "}";
   }
 
