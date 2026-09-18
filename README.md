@@ -65,7 +65,7 @@ La référence du contrat HTTP est :
 GET /api/wsdl
 ```
 
-Version actuelle : **23**.
+Version actuelle : **24**.
 
 ### Diagnostic lecture seule
 
@@ -155,3 +155,15 @@ Le profil final restant en AEC=OFF / AGC=OFF, la recherche est centrée sur les 
 - 15 captures de réglage au maximum.
 
 Le score privilégie RMS faible, sigma faible et gradients horizontaux/verticaux forts et équilibrés.
+
+
+## Optimisation optique V24
+
+Après l'optimisation exposition/gain, la calibration affine maintenant aussi les traitements capteur :
+
+- contraste : baseline 0, puis +1 et -1 ; +2 uniquement si +1 améliore le score ;
+- luminosité : baseline 0, puis -1 et +1 ;
+- exposition/gain restent verrouillés sur leur meilleur couple pendant ces essais ;
+- le profil final conserve exposition, gain, contraste et luminosité.
+
+Le même score métrologique est utilisé pour tous les candidats : RMS, sigma, gradients horizontaux/verticaux, équilibre des gradients, P10/P90, contraste utile, clipping et qualité de détection.
