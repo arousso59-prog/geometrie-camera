@@ -1555,11 +1555,10 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
         result.pose_v2_roll_deg);
   }
 
-  // Pose V3 : homographie du motif interieur 7x7. Elle fournit une
-  // orientation independante des quatre coins externes. La translation reste
-  // celle de V6.1-robust5, donc aucune modification de distance n'est possible.
+  // Pose V3 : homographie robuste du motif interieur 7x7.
   PoseBasis pose_v3_basis;
   PoseV3Score pose_v3_score{};
+  bool pose_v3_available = false;
   if (observation.pattern_refined &&
       distortion_is_zero(calibration)) {
     PoseBasis pattern_basis;
@@ -1575,8 +1574,8 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
               this->target_size_mm_, calibration,
               observation.pattern_homography,
               pose_v3_basis, pose_v3_score)) {
+        pose_v3_available = true;
         result.pose_v3_valid = true;
-        result.pose_v3_used = true;
         result.pose_v3_pattern_rms_px =
             observation.pattern_rms_px;
         result.pose_v3_fit_rms_px =
@@ -1591,19 +1590,69 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
             result.pose_v3_yaw_deg,
             result.pose_v3_pitch_deg,
             result.pose_v3_roll_deg);
-
-        result.yaw_deg = result.pose_v3_yaw_deg;
-        result.pitch_deg = result.pose_v3_pitch_deg;
-        result.roll_deg = result.pose_v3_roll_deg;
-        result.pose_normal_x = pose_v3_basis.normal.x;
-        result.pose_normal_y = pose_v3_basis.normal.y;
-        result.pose_normal_z = pose_v3_basis.normal.z;
-        result.pose_valid = true;
       }
     }
   }
 
-  if (result.pose_v3_used) {
+  // Pose V4 : ajustement DIRECT sur les correspondances subpixel du motif.
+  // Contrairement a V3, le cout final ne passe plus par l'homographie :
+  // chaque transition interne valide participe directement a l'optimisation.
+  PoseBasis pose_v4_basis;
+  PoseV4Score pose_v4_score{};
+  if (observation.pattern_refined &&
+      observation.pattern_features != nullptr &&
+      observation.pattern_features_count >= POSE_V4_MIN_FEATURES &&
+      distortion_is_zero(calibration)) {
+    const PoseBasis &initial =
+        pose_v3_available
+            ? pose_v3_basis
+            : (pose_v2_available ? pose_v2_basis : pose_v1_basis);
+    const PoseBasis *alternate =
+        pose_v2_available ? &pose_v2_basis : &pose_v1_basis;
+
+    if (refine_pose_v4(
+            initial, alternate,
+            fixed_translation,
+            this->target_size_mm_, calibration,
+            observation.pattern_features,
+            observation.pattern_features_count,
+            pose_v4_basis, pose_v4_score)) {
+      result.pose_v4_valid = true;
+      result.pose_v4_used = true;
+      result.pose_v4_rms_px = pose_v4_score.rms_px;
+      result.pose_v4_max_residual_px =
+          pose_v4_score.max_residual_px;
+      result.pose_v4_feature_count =
+          observation.pattern_features_count;
+      result.pose_v4_inlier_count =
+          pose_v4_score.used_count;
+
+      pose_angles_from_basis(
+          pose_v4_basis,
+          result.pose_v4_yaw_deg,
+          result.pose_v4_pitch_deg,
+          result.pose_v4_roll_deg);
+
+      result.yaw_deg = result.pose_v4_yaw_deg;
+      result.pitch_deg = result.pose_v4_pitch_deg;
+      result.roll_deg = result.pose_v4_roll_deg;
+      result.pose_normal_x = pose_v4_basis.normal.x;
+      result.pose_normal_y = pose_v4_basis.normal.y;
+      result.pose_normal_z = pose_v4_basis.normal.z;
+      result.pose_valid = true;
+      return result;
+    }
+  }
+
+  if (pose_v3_available) {
+    result.pose_v3_used = true;
+    result.yaw_deg = result.pose_v3_yaw_deg;
+    result.pitch_deg = result.pose_v3_pitch_deg;
+    result.roll_deg = result.pose_v3_roll_deg;
+    result.pose_normal_x = pose_v3_basis.normal.x;
+    result.pose_normal_y = pose_v3_basis.normal.y;
+    result.pose_normal_z = pose_v3_basis.normal.z;
+    result.pose_valid = true;
     return result;
   }
 
