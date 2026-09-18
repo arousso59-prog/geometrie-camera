@@ -60,6 +60,7 @@ FullCalibrationController::FullCalibrationController(
       stddev_fx_px_(0.0f),
       stddev_fy_px_(0.0f),
       preview_attempt_(0),
+      preview_mode_("search"),
       last_target_found_(false),
       last_sample_valid_(false),
       last_sample_fx_px_(0.0f),
@@ -243,6 +244,9 @@ void FullCalibrationController::loop() {
 
       const CameraViewportMode mode_before =
           this->tracking_controller_->viewport_controller()->snapshot().mode;
+      if (this->preview_attempt_ == this->attempts_) {
+        this->preview_mode_ = CameraViewportController::mode_text(mode_before);
+      }
 
       const TrackingUpdateResult tracking_result =
           this->tracking_controller_->update_after_detection(
@@ -365,6 +369,7 @@ float FullCalibrationController::mean_fy_px() const { return this->mean_fy_px_; 
 float FullCalibrationController::stddev_fx_px() const { return this->stddev_fx_px_; }
 float FullCalibrationController::stddev_fy_px() const { return this->stddev_fy_px_; }
 uint8_t FullCalibrationController::preview_attempt() const { return this->preview_attempt_; }
+const std::string &FullCalibrationController::preview_mode() const { return this->preview_mode_; }
 bool FullCalibrationController::last_target_found() const { return this->last_target_found_; }
 bool FullCalibrationController::last_sample_valid() const { return this->last_sample_valid_; }
 float FullCalibrationController::last_sample_fx_px() const { return this->last_sample_fx_px_; }
@@ -539,6 +544,7 @@ void FullCalibrationController::reset_run_() {
   this->stddev_fx_px_ = 0.0f;
   this->stddev_fy_px_ = 0.0f;
   this->preview_attempt_ = 0;
+  this->preview_mode_ = "search";
   this->last_target_found_ = false;
   this->last_sample_valid_ = false;
   this->last_sample_fx_px_ = 0.0f;
