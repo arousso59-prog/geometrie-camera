@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstddef>
 #include <string>
 
 #include "types.h"
@@ -14,6 +15,7 @@ class JpegFilteredDiagnostic;
 class MeasurementManager;
 class TargetDetectionService;
 class TargetTrackingController;
+class TargetDetectionPreview;
 
 enum class FullCalibrationState : uint8_t {
   IDLE,
@@ -35,7 +37,8 @@ class FullCalibrationController {
                             TargetDetectionService *detection_service,
                             MeasurementManager *measurement_manager,
                             ContinuousMeasurementController *continuous_controller,
-                            TargetTrackingController *tracking_controller);
+                            TargetTrackingController *tracking_controller,
+                            TargetDetectionPreview *preview);
 
   bool start(float known_distance_mm, float target_size_mm,
              uint8_t sample_count = DEFAULT_SAMPLE_COUNT,
@@ -58,6 +61,12 @@ class FullCalibrationController {
   float mean_fy_px() const;
   float stddev_fx_px() const;
   float stddev_fy_px() const;
+  uint8_t preview_attempt() const;
+  bool last_target_found() const;
+  bool last_sample_valid() const;
+  float last_sample_fx_px() const;
+  float last_sample_fy_px() const;
+  const char *tracking_mode_text() const;
   const CameraCalibration &result_calibration() const;
 
  private:
@@ -65,6 +74,7 @@ class FullCalibrationController {
   bool request_next_capture_();
   bool derive_current_sample_(const TargetObservation &reference_observation,
                               CameraCalibration &sample);
+  void update_running_stats_();
   void finish_success_();
   void fail_(const char *error);
   void restore_nominal_camera_();
@@ -77,6 +87,7 @@ class FullCalibrationController {
   MeasurementManager *measurement_manager_;
   ContinuousMeasurementController *continuous_controller_;
   TargetTrackingController *tracking_controller_;
+  TargetDetectionPreview *preview_;
 
   FullCalibrationState state_;
   std::string last_error_;
@@ -96,6 +107,11 @@ class FullCalibrationController {
   float mean_fy_px_;
   float stddev_fx_px_;
   float stddev_fy_px_;
+  uint8_t preview_attempt_;
+  bool last_target_found_;
+  bool last_sample_valid_;
+  float last_sample_fx_px_;
+  float last_sample_fy_px_;
 
   float previous_target_size_mm_;
   CameraCalibration previous_calibration_;
