@@ -214,6 +214,10 @@ void FullCalibrationApiHandler::send_status_(
   json += ",\"preview_mode\":\"" + this->controller_->preview_mode() + "\"";
   json += ",\"last_target_found\":";
   json += this->controller_->last_target_found() ? "true" : "false";
+  json += ",\"last_marker_count\":" + std::to_string(this->controller_->last_marker_count());
+  json += ",\"last_marker_mask\":" + std::to_string(this->controller_->last_marker_mask());
+  json += ",\"last_board_complete\":";
+  json += this->controller_->last_board_complete() ? "true" : "false";
   json += ",\"last_sample_valid\":";
   json += this->controller_->last_sample_valid() ? "true" : "false";
   json += ",\"last_sample_fx_px\":" + std::to_string(this->controller_->last_sample_fx_px());
