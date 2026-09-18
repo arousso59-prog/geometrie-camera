@@ -79,6 +79,8 @@ class FullCalibrationController {
   float current_optical_score() const;
   float current_detection_quality() const;
   float current_subpixel_rms_px() const;
+  float current_width_gradient() const;
+  float current_height_gradient() const;
   uint32_t current_mean_luma_x100() const;
   uint32_t current_dark_percent_x100() const;
   uint32_t current_bright_percent_x100() const;
@@ -174,6 +176,8 @@ class FullCalibrationController {
   float current_optical_score_;
   float current_detection_quality_;
   float current_subpixel_rms_px_;
+  float current_width_gradient_;
+  float current_height_gradient_;
   uint32_t current_mean_luma_x100_;
   uint32_t current_dark_percent_x100_;
   uint32_t current_bright_percent_x100_;
