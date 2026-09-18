@@ -315,7 +315,7 @@ void MeasurementApiHandler::handle_calibrate_(AsyncWebServerRequest *request) {
 void MeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *request, int response_code,
                                            const char *status, const char *error) const {
   std::string json;
-  json.reserve(4200);
+  json.reserve(6800);
   json += "{\"status\":\"";
   json += status;
   json += "\"";
@@ -436,6 +436,31 @@ void MeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *request, int r
     json += ",\"apparent_height_px\":" + std::to_string(raw_measurement.apparent_height_px);
     json += ",\"apparent_width_sigma_px\":" + std::to_string(raw_measurement.apparent_width_sigma_px);
     json += ",\"apparent_height_sigma_px\":" + std::to_string(raw_measurement.apparent_height_sigma_px);
+
+    json += ",\"precision_diag\":{";
+    json += "\"corner_width_px\":" + std::to_string(raw_measurement.corner_width_px);
+    json += ",\"corner_height_px\":" + std::to_string(raw_measurement.corner_height_px);
+    json += ",\"v5_width_px\":" + std::to_string(raw_measurement.v5_width_px);
+    json += ",\"v5_height_px\":" + std::to_string(raw_measurement.v5_height_px);
+    json += ",\"v6_width_px\":" + std::to_string(raw_measurement.v6_width_px);
+    json += ",\"v6_height_px\":" + std::to_string(raw_measurement.v6_height_px);
+    json += ",\"v61_width_px\":" + std::to_string(raw_measurement.v61_width_px);
+    json += ",\"v61_height_px\":" + std::to_string(raw_measurement.v61_height_px);
+    json += ",\"v5_v6_width_delta_px\":" + std::to_string(raw_measurement.v5_v6_width_delta_px);
+    json += ",\"v5_v6_height_delta_px\":" + std::to_string(raw_measurement.v5_v6_height_delta_px);
+    json += ",\"v5_z_mm\":" + std::to_string(raw_measurement.v5_z_mm);
+    json += ",\"v6_z_mm\":" + std::to_string(raw_measurement.v6_z_mm);
+    json += ",\"v61_z_mm\":" + std::to_string(raw_measurement.v61_z_mm);
+    json += ",\"edge_top_rms_px\":" + std::to_string(raw_measurement.edge_top_rms_px);
+    json += ",\"edge_right_rms_px\":" + std::to_string(raw_measurement.edge_right_rms_px);
+    json += ",\"edge_bottom_rms_px\":" + std::to_string(raw_measurement.edge_bottom_rms_px);
+    json += ",\"edge_left_rms_px\":" + std::to_string(raw_measurement.edge_left_rms_px);
+    json += ",\"edge_top_gradient\":" + std::to_string(raw_measurement.edge_top_gradient);
+    json += ",\"edge_right_gradient\":" + std::to_string(raw_measurement.edge_right_gradient);
+    json += ",\"edge_bottom_gradient\":" + std::to_string(raw_measurement.edge_bottom_gradient);
+    json += ",\"edge_left_gradient\":" + std::to_string(raw_measurement.edge_left_gradient);
+    json += "}";
+
     json += ",\"width_distance_weight\":" + std::to_string(raw_measurement.width_distance_weight);
     json += ",\"height_distance_weight\":" + std::to_string(raw_measurement.height_distance_weight);
     json += ",\"distance_mm\":" + std::to_string(raw_measurement.distance_mm);
