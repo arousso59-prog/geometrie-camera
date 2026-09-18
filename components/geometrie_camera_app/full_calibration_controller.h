@@ -96,18 +96,16 @@ class FullCalibrationController {
  private:
   enum class CalibrationPhase : uint8_t {
     TRACKING,
-    TUNE_AUTO_AE,
     TUNE_MANUAL_BASELINE,
     TUNE_MANUAL_EXPOSURE,
     TUNE_MANUAL_GAIN,
     SAMPLING,
   };
 
-  static constexpr uint8_t OPTICAL_TUNING_MAX_ATTEMPTS = 16;
+  static constexpr uint8_t OPTICAL_TUNING_MAX_ATTEMPTS = 15;
 
   bool begin_native_tracking_();
   bool begin_optical_tuning_(const TargetObservation &observation);
-  bool prepare_auto_ae_candidate_(uint8_t index);
   bool prepare_manual_candidate_(int exposure, int gain);
   bool handle_tuning_result_(const TargetObservation &observation, bool target_found);
   float evaluate_optical_score_(const TargetObservation &observation, bool target_found);
@@ -163,7 +161,6 @@ class FullCalibrationController {
   float last_sample_fy_px_;
 
   uint8_t tuning_attempts_;
-  uint8_t tuning_index_;
   uint8_t tuning_round_;
   uint8_t tuning_side_;
   int tuning_pair_base_;
