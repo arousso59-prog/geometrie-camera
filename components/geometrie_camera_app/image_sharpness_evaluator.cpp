@@ -91,6 +91,9 @@ ImageSharpnessEvaluator::ImageSharpnessEvaluator(JpegDiagnostic *source)
       mean_luma_x100_(0),
       dark_percent_x100_(0),
       bright_percent_x100_(0),
+      p10_luma_(0),
+      p90_luma_(0),
+      contrast_luma_(0),
       ready_(false) {}
 
 ImageSharpnessEvaluator::~ImageSharpnessEvaluator() { this->clear_buffers_(); }
@@ -102,6 +105,9 @@ bool ImageSharpnessEvaluator::evaluate_region(uint16_t x, uint16_t y, uint16_t w
   this->mean_luma_x100_ = 0;
   this->dark_percent_x100_ = 0;
   this->bright_percent_x100_ = 0;
+  this->p10_luma_ = 0;
+  this->p90_luma_ = 0;
+  this->contrast_luma_ = 0;
 
   if (this->source_ == nullptr || !this->source_->ready() || this->source_->jpeg_data() == nullptr ||
       this->source_->jpeg_size() == 0 || !this->source_->has_soi() || !this->source_->has_eoi()) {
@@ -174,12 +180,14 @@ bool ImageSharpnessEvaluator::evaluate_region(uint16_t x, uint16_t y, uint16_t w
   uint32_t luminance_count = 0;
   uint32_t dark_count = 0;
   uint32_t bright_count = 0;
+  uint32_t histogram[256] = {};
   for (uint16_t py = roi_y; py < roi_bottom; ++py) {
     const uint8_t *row =
         this->grayscale_buffer_ + static_cast<size_t>(py) * reduced_width;
     for (uint16_t px = roi_x; px < roi_right; ++px) {
       const uint8_t value = row[px];
       luminance_sum += value;
+      histogram[value]++;
       luminance_count++;
       if (value <= 12U) dark_count++;
       if (value >= 243U) bright_count++;
@@ -192,6 +200,26 @@ bool ImageSharpnessEvaluator::evaluate_region(uint16_t x, uint16_t y, uint16_t w
         static_cast<uint32_t>((static_cast<uint64_t>(dark_count) * 10000U) / luminance_count);
     this->bright_percent_x100_ =
         static_cast<uint32_t>((static_cast<uint64_t>(bright_count) * 10000U) / luminance_count);
+
+    const uint32_t p10_target = std::max<uint32_t>(1U, luminance_count / 10U);
+    const uint32_t p90_target = std::max<uint32_t>(1U, (luminance_count * 9U) / 10U);
+    uint32_t cumulative = 0;
+    bool p10_found = false;
+    for (uint16_t level = 0; level < 256; ++level) {
+      cumulative += histogram[level];
+      if (!p10_found && cumulative >= p10_target) {
+        this->p10_luma_ = static_cast<uint8_t>(level);
+        p10_found = true;
+      }
+      if (cumulative >= p90_target) {
+        this->p90_luma_ = static_cast<uint8_t>(level);
+        break;
+      }
+    }
+    this->contrast_luma_ =
+        this->p90_luma_ >= this->p10_luma_
+            ? static_cast<uint8_t>(this->p90_luma_ - this->p10_luma_)
+            : 0;
   }
 
   this->score_x100_ = this->compute_score_x100_(
@@ -213,6 +241,9 @@ uint32_t ImageSharpnessEvaluator::evaluation_ms() const { return this->evaluatio
 uint32_t ImageSharpnessEvaluator::mean_luma_x100() const { return this->mean_luma_x100_; }
 uint32_t ImageSharpnessEvaluator::dark_percent_x100() const { return this->dark_percent_x100_; }
 uint32_t ImageSharpnessEvaluator::bright_percent_x100() const { return this->bright_percent_x100_; }
+uint8_t ImageSharpnessEvaluator::p10_luma() const { return this->p10_luma_; }
+uint8_t ImageSharpnessEvaluator::p90_luma() const { return this->p90_luma_; }
+uint8_t ImageSharpnessEvaluator::contrast_luma() const { return this->contrast_luma_; }
 uint16_t ImageSharpnessEvaluator::preview_width() const { return this->width_; }
 uint16_t ImageSharpnessEvaluator::preview_height() const { return this->height_; }
 
