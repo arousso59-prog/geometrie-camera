@@ -6,18 +6,14 @@
 #include "esphome/core/component.h"
 #include "api_wsdl.h"
 #include "camera_resolution_controller.h"
-#include "camera_settings_api.h"
 #include "camera_settings_controller.h"
 #include "camera_viewport_controller.h"
 #include "continuous_measurement_api.h"
 #include "continuous_measurement_controller.h"
 #include "full_calibration_api.h"
 #include "full_calibration_controller.h"
-#include "image_sharpness_evaluator.h"
 #include "jpeg_diagnostic.h"
-#include "jpeg_diagnostic_api.h"
 #include "jpeg_filtered_diagnostic.h"
-#include "jpeg_filtered_diagnostic_api.h"
 #include "measurement_api.h"
 #include "measurement_manager.h"
 #include "runtime_diagnostics.h"
@@ -85,7 +81,6 @@ class GeometrieCameraApp : public Component {
   CameraViewportController viewport_controller_;
   TargetTrackingController tracking_controller_;
   JpegDiagnostic jpeg_diagnostic_;
-  ImageSharpnessEvaluator image_sharpness_evaluator_;
   JpegFilteredDiagnostic jpeg_filtered_diagnostic_;
   TargetDetectionService target_detection_service_;
   TargetDetectionPreview target_detection_preview_;
@@ -93,10 +88,7 @@ class GeometrieCameraApp : public Component {
   FullCalibrationController full_calibration_controller_;
   RuntimeDiagnostics runtime_diagnostics_;
   ApiWsdlHandler api_wsdl_handler_;
-  CameraSettingsApiHandler settings_api_handler_;
   TargetTrackingApiHandler tracking_api_handler_;
-  JpegDiagnosticApiHandler jpeg_diagnostic_api_handler_;
-  JpegFilteredDiagnosticApiHandler jpeg_filtered_diagnostic_api_handler_;
   TargetDetectionApiHandler target_detection_api_handler_;
   MeasurementApiHandler measurement_api_handler_;
   ContinuousMeasurementApiHandler continuous_measurement_api_handler_;
