@@ -65,6 +65,30 @@ void JpegDiagnostic::release_buffer() {
   this->ready_ = false;
 }
 
+void JpegDiagnostic::cancel_capture() {
+  if (!this->capture_pending_) {
+    return;
+  }
+
+  // Une requete deja remise au driver camera ne peut pas etre retiree, mais
+  // on peut invalider immediatement notre sequence logique. Le callback
+  // eventuel de cette image sera ignore par on_camera_image() et aucune frame
+  // fraiche supplementaire ne sera demandee par loop().
+  this->capture_pending_ = false;
+  this->discard_next_frame_ = false;
+  this->fresh_request_pending_ = false;
+  this->ready_ = false;
+  this->request_started_ms_ = 0;
+  this->stale_frame_received_ms_ = 0;
+  this->fresh_request_started_ms_ = 0;
+  this->frame_received_ms_ = 0;
+  this->acquisition_ms_ = 0;
+  this->copy_ms_ = 0;
+  this->total_cycle_ms_ = 0;
+
+  ESP_LOGI(TAG, "Capture JPEG en cours annulee");
+}
+
 bool JpegDiagnostic::request_capture() {
   if (this->camera_ == nullptr || this->capture_pending_) {
     return false;
