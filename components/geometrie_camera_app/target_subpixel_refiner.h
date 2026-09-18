@@ -42,6 +42,19 @@ struct TargetSubpixelMetrics {
   float right_gradient;
   float bottom_gradient;
   float left_gradient;
+
+  TargetPoint top_line_point;
+  TargetPoint right_line_point;
+  TargetPoint bottom_line_point;
+  TargetPoint left_line_point;
+  float top_line_dx;
+  float top_line_dy;
+  float right_line_dx;
+  float right_line_dy;
+  float bottom_line_dx;
+  float bottom_line_dy;
+  float left_line_dx;
+  float left_line_dy;
 };
 
 class TargetSubpixelRefiner {
