@@ -185,14 +185,15 @@ void FullCalibrationApiHandler::send_status_(
   const CameraCalibration &calibration = this->controller_->result_calibration();
 
   std::string json;
-  json.reserve(1600);
+  json.reserve(2600);
   json += "{\"status\":\"";
   json += status;
   json += "\"";
   json += ",\"state\":\"" + std::string(this->controller_->state_text()) + "\"";
   json += ",\"running\":";
   json += this->controller_->running() ? "true" : "false";
-  json += ",\"acquisition_mode\":\"precise_native_800x600\"";
+  json += ",\"acquisition_mode\":\"precise_native_800x600_optical_tuning\"";
+  json += ",\"phase\":\"" + std::string(this->controller_->phase_text()) + "\"";
   json += ",\"reference_resolution\":\"2560x1920\"";
   json += ",\"requested_samples\":" + std::to_string(this->controller_->requested_samples());
   json += ",\"valid_samples\":" + std::to_string(this->controller_->valid_samples());
@@ -216,6 +217,26 @@ void FullCalibrationApiHandler::send_status_(
   json += this->controller_->last_sample_valid() ? "true" : "false";
   json += ",\"last_sample_fx_px\":" + std::to_string(this->controller_->last_sample_fx_px());
   json += ",\"last_sample_fy_px\":" + std::to_string(this->controller_->last_sample_fy_px());
+
+  json += ",\"optical_tuning\":{";
+  json += "\"attempt\":" + std::to_string(this->controller_->tuning_attempts());
+  json += ",\"max_attempts\":" + std::to_string(this->controller_->tuning_max_attempts());
+  json += ",\"current_ae_level\":" + std::to_string(this->controller_->current_ae_level());
+  json += ",\"current_exposure\":" + std::to_string(this->controller_->current_exposure());
+  json += ",\"current_gain\":" + std::to_string(this->controller_->current_gain());
+  json += ",\"current_score\":" + std::to_string(this->controller_->current_optical_score());
+  json += ",\"sharpness_x100\":" + std::to_string(this->controller_->current_sharpness_x100());
+  json += ",\"detection_quality\":" + std::to_string(this->controller_->current_detection_quality());
+  json += ",\"subpixel_rms_px\":" + std::to_string(this->controller_->current_subpixel_rms_px());
+  json += ",\"mean_luma_x100\":" + std::to_string(this->controller_->current_mean_luma_x100());
+  json += ",\"dark_percent_x100\":" + std::to_string(this->controller_->current_dark_percent_x100());
+  json += ",\"bright_percent_x100\":" + std::to_string(this->controller_->current_bright_percent_x100());
+  json += ",\"best_ae_level\":" + std::to_string(this->controller_->best_ae_level());
+  json += ",\"best_exposure\":" + std::to_string(this->controller_->best_exposure());
+  json += ",\"best_gain\":" + std::to_string(this->controller_->best_gain());
+  json += ",\"best_score\":" + std::to_string(this->controller_->best_optical_score());
+  json += "}";
+
   json += ",\"preview\":\"/calibration/full/preview.bmp\"";
 
   if (!this->controller_->last_error().empty()) {
