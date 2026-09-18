@@ -63,6 +63,38 @@ CameraSettingsSnapshot CameraSettingsController::read() const {
   return snapshot;
 }
 
+bool CameraSettingsController::read_live_exposure_gain(
+    int &exposure, int &gain, std::string &error) const {
+  sensor_t *sensor = get_sensor(error);
+  if (sensor == nullptr || sensor->get_reg == nullptr) {
+    if (error.empty()) error = "camera_register_read_unavailable";
+    return false;
+  }
+
+  // OV5640 : les champs sensor->status.aec_value/agc_gain ne sont pas
+  // rafraichis en continu pendant AEC/AGC auto. Lire directement les
+  // registres materiels afin de connaitre la valeur reellement utilisee.
+  const int e0 = sensor->get_reg(sensor, 0x3500, 0xFF);
+  const int e1 = sensor->get_reg(sensor, 0x3501, 0xFF);
+  const int e2 = sensor->get_reg(sensor, 0x3502, 0xFF);
+  const int g0 = sensor->get_reg(sensor, 0x350A, 0xFF);
+  const int g1 = sensor->get_reg(sensor, 0x350B, 0xFF);
+  if (e0 < 0 || e1 < 0 || e2 < 0 || g0 < 0 || g1 < 0) {
+    error = "camera_live_exposure_gain_read_failed";
+    return false;
+  }
+
+  exposure =
+      ((e0 & 0x0F) << 12) |
+      ((e1 & 0xFF) << 4) |
+      ((e2 & 0xF0) >> 4);
+
+  gain = ((g1 & 0xF0) >> 4) | ((g0 & 0x03) << 4);
+  if ((g1 & 0x0F) != 0) gain += 1;
+
+  return true;
+}
+
 bool CameraSettingsController::validate_range_(const char *name, int value, int minimum, int maximum,
                                                std::string &error) const {
   if (value >= minimum && value <= maximum) {
@@ -137,7 +169,7 @@ bool CameraSettingsController::set_ae_level(int value, std::string &error) const
 }
 
 bool CameraSettingsController::set_aec_value(int value, std::string &error) const {
-  if (!this->validate_range_("aec_value", value, 0, 1200, error)) return false;
+  if (!this->validate_range_("aec_value", value, 0, 65535, error)) return false;
   sensor_t *sensor = get_sensor(error);
   if (sensor == nullptr || sensor->set_aec_value == nullptr) return false;
   if (sensor->set_aec_value(sensor, value) != 0) {
@@ -160,7 +192,7 @@ bool CameraSettingsController::set_gain_ctrl(bool enabled, std::string &error) c
 }
 
 bool CameraSettingsController::set_agc_gain(int value, std::string &error) const {
-  if (!this->validate_range_("agc_gain", value, 0, 30, error)) return false;
+  if (!this->validate_range_("agc_gain", value, 0, 64, error)) return false;
   sensor_t *sensor = get_sensor(error);
   if (sensor == nullptr || sensor->set_agc_gain == nullptr) return false;
   if (sensor->set_agc_gain(sensor, value) != 0) {
