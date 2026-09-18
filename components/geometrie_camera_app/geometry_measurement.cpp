@@ -999,17 +999,6 @@ GeometryMeasurementEngine::GeometryMeasurementEngine()
       target_width_mm_(TARGET_R1_REFERENCE_WIDTH_MM),
       target_height_mm_(TARGET_R1_REFERENCE_HEIGHT_MM) {}
 
-bool GeometryMeasurementEngine::set_target_size_mm(float target_size_mm) {
-  // Compatibilite avec d'anciens clients uniquement. La cible R1 est fixe et
-  // ne peut plus etre redimensionnee par API.
-  return std::isfinite(target_size_mm) &&
-         std::fabs(target_size_mm - this->target_width_mm_) < 0.001f;
-}
-
-float GeometryMeasurementEngine::target_size_mm() const {
-  return this->target_width_mm_;
-}
-
 float GeometryMeasurementEngine::target_width_mm() const {
   return this->target_width_mm_;
 }
