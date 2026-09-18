@@ -79,6 +79,7 @@ struct GeometryMeasurement {
   bool pose_valid;
   bool edge_v4_used;
   bool edge_v5_used;
+  bool edge_v6_used;
   float apparent_width_px;
   float apparent_height_px;
   float apparent_width_sigma_px;
