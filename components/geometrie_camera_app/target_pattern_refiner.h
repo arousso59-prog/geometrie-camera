@@ -26,6 +26,7 @@ class TargetPatternRefiner {
 
   bool refine(const GrayFrameView &frame,
               const TargetCandidate &candidate,
+              TargetMarkerId marker_id,
               uint8_t rotation_quarters,
               TargetPatternMetrics &metrics) const;
 
@@ -43,7 +44,8 @@ class TargetPatternRefiner {
                                  float u, float v) const;
   float sample_bilinear_(const GrayFrameView &frame,
                          float x, float y) const;
-  uint8_t expected_cell_(uint8_t row, uint8_t column,
+  uint8_t expected_cell_(TargetMarkerId marker_id,
+                         uint8_t row, uint8_t column,
                          uint8_t rotation_quarters) const;
   void canonical_uv_(float observed_u, float observed_v,
                      uint8_t rotation_quarters,
@@ -53,6 +55,7 @@ class TargetPatternRefiner {
                         float observed_u, float observed_v,
                         bool along_u,
                         int expected_sign,
+                        TargetMarkerId marker_id,
                         uint8_t rotation_quarters,
                         PatternFeature &feature) const;
   bool fit_homography_(PatternFeature *features, uint16_t count,
