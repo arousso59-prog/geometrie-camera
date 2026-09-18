@@ -315,7 +315,7 @@ void MeasurementApiHandler::handle_calibrate_(AsyncWebServerRequest *request) {
 void MeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *request, int response_code,
                                            const char *status, const char *error) const {
   std::string json;
-  json.reserve(3400);
+  json.reserve(4200);
   json += "{\"status\":\"";
   json += status;
   json += "\"";
@@ -382,8 +382,14 @@ void MeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *request, int r
     json += measurement.pose_valid ? "true" : "false";
     json += ",\"edge_v4_used\":";
     json += measurement.edge_v4_used ? "true" : "false";
+    json += ",\"edge_v5_used\":";
+    json += measurement.edge_v5_used ? "true" : "false";
     json += ",\"apparent_width_px\":" + std::to_string(measurement.apparent_width_px);
     json += ",\"apparent_height_px\":" + std::to_string(measurement.apparent_height_px);
+    json += ",\"apparent_width_sigma_px\":" + std::to_string(measurement.apparent_width_sigma_px);
+    json += ",\"apparent_height_sigma_px\":" + std::to_string(measurement.apparent_height_sigma_px);
+    json += ",\"width_distance_weight\":" + std::to_string(measurement.width_distance_weight);
+    json += ",\"height_distance_weight\":" + std::to_string(measurement.height_distance_weight);
     json += ",\"distance_mm\":" + std::to_string(measurement.distance_mm);
     json += ",\"x_mm\":" + std::to_string(measurement.x_mm);
     json += ",\"y_mm\":" + std::to_string(measurement.y_mm);
@@ -420,8 +426,14 @@ void MeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *request, int r
     json += raw_measurement.pose_valid ? "true" : "false";
     json += ",\"edge_v4_used\":";
     json += raw_measurement.edge_v4_used ? "true" : "false";
+    json += ",\"edge_v5_used\":";
+    json += raw_measurement.edge_v5_used ? "true" : "false";
     json += ",\"apparent_width_px\":" + std::to_string(raw_measurement.apparent_width_px);
     json += ",\"apparent_height_px\":" + std::to_string(raw_measurement.apparent_height_px);
+    json += ",\"apparent_width_sigma_px\":" + std::to_string(raw_measurement.apparent_width_sigma_px);
+    json += ",\"apparent_height_sigma_px\":" + std::to_string(raw_measurement.apparent_height_sigma_px);
+    json += ",\"width_distance_weight\":" + std::to_string(raw_measurement.width_distance_weight);
+    json += ",\"height_distance_weight\":" + std::to_string(raw_measurement.height_distance_weight);
     json += ",\"distance_mm\":" + std::to_string(raw_measurement.distance_mm);
     json += ",\"x_mm\":" + std::to_string(raw_measurement.x_mm);
     json += ",\"y_mm\":" + std::to_string(raw_measurement.y_mm);
