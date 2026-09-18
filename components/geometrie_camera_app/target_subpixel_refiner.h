@@ -24,6 +24,9 @@ struct TargetSubpixelMetrics {
   float height_sigma_px;
   float width_gradient;
   float height_gradient;
+  bool local_pair_v6;
+  uint8_t width_pair_count;
+  uint8_t height_pair_count;
 };
 
 class TargetSubpixelRefiner {
@@ -85,6 +88,11 @@ class TargetSubpixelRefiner {
                   TargetPoint &point) const;
   float opposite_edge_separation_(const EdgeLine &a,
                                   const EdgeLine &b) const;
+  bool local_pair_separation_(const EdgeLine &a,
+                              const EdgeLine &b,
+                              float &separation,
+                              float &sigma,
+                              uint8_t &pair_count) const;
   float robust_local_separation_(const EdgeLine &a,
                                  const EdgeLine &b,
                                  float &sigma_px) const;
