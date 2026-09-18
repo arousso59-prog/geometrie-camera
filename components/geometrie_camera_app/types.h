@@ -52,6 +52,12 @@ struct TargetObservation {
   float subpixel_max_rms_px;
   float subpixel_gradient;
 
+  // Mesure V4 : dimensions apparentes issues directement des paires de
+  // droites subpixel opposees. Ces valeurs sont moins sensibles aux petites
+  // variations des intersections de coins.
+  float subpixel_width_px;
+  float subpixel_height_px;
+
   ImagePoint top_left_px;
   ImagePoint top_right_px;
   ImagePoint bottom_right_px;
