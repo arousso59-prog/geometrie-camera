@@ -19,7 +19,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   std::string xml;
   xml.reserve(7000);
   xml += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-  xml += "<api name=\"geometrie-camera\" version=\"33\">\n";
+  xml += "<api name=\"geometrie-camera\" version=\"34\">\n";
   xml += "  <description>API operationnelle du capteur de geometrie. Le tracking haute precision et les reglages optiques sont automatiques.</description>\n";
   xml += "  <conventions>\n";
   xml += "    <item>Le tracking SEARCH vers PRECISE est permanent et ne possede plus de commande activation/desactivation.</item>\n";
