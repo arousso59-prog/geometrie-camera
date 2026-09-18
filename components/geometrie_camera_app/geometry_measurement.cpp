@@ -530,9 +530,9 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
   result.apparent_height_px = height_px;
 
   // Distance V4 : fusionner les deux dimensions apparentes. Quand les deux
-  // entre largeur et hauteur. Quand les deux axes sont coherents, leurs tailles
-  // apparentes sont fusionnees. En cas d'inclinaison marquee, la fusion revient
-  // progressivement vers l'estimation la moins affectee par le raccourcissement.
+  // axes sont coherents, leurs estimations sont combinees. En cas d'inclinaison
+  // marquee, la fusion revient progressivement vers la dimension la moins
+  // affectee par le raccourcissement.
   result.z_from_width_mm = calibration.fx_px * this->target_size_mm_ / width_px;
   result.z_from_height_mm = calibration.fy_px * this->target_size_mm_ / height_px;
   if (!std::isfinite(result.z_from_width_mm) || !std::isfinite(result.z_from_height_mm) ||
@@ -563,7 +563,7 @@ GeometryMeasurement GeometryMeasurementEngine::compute(const TargetObservation &
 
   // La decomposition projective n'est pas autorisee a piloter directement la
   // distance principale. Elle sert a l'orientation du plan et fournit pose_z
-  // comme controle independant de coherence avec la distance V3.
+  // comme controle independant de coherence avec la distance V4.
   float unit_h[9];
   if (!build_unit_square_homography(points, unit_h)) {
     return result;
