@@ -1,6 +1,6 @@
 # Capteur camera pour geometrie automobile - ESP32-S3 + OV5640
 # YAML = materiel / ESPHome
-# C++  = acquisition JPEG / correction / detection / calculs
+# C++  = acquisition JPEG / decodage gris / detection / calculs
 
 substitutions:
   device_name: geometrie-camera
