@@ -315,7 +315,7 @@ void MeasurementApiHandler::handle_calibrate_(AsyncWebServerRequest *request) {
 void MeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *request, int response_code,
                                            const char *status, const char *error) const {
   std::string json;
-  json.reserve(3000);
+  json.reserve(3400);
   json += "{\"status\":\"";
   json += status;
   json += "\"";
@@ -380,6 +380,10 @@ void MeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *request, int r
     json += measurement.valid ? "true" : "false";
     json += ",\"pose_valid\":";
     json += measurement.pose_valid ? "true" : "false";
+    json += ",\"edge_v4_used\":";
+    json += measurement.edge_v4_used ? "true" : "false";
+    json += ",\"apparent_width_px\":" + std::to_string(measurement.apparent_width_px);
+    json += ",\"apparent_height_px\":" + std::to_string(measurement.apparent_height_px);
     json += ",\"distance_mm\":" + std::to_string(measurement.distance_mm);
     json += ",\"x_mm\":" + std::to_string(measurement.x_mm);
     json += ",\"y_mm\":" + std::to_string(measurement.y_mm);
@@ -414,6 +418,10 @@ void MeasurementApiHandler::send_snapshot_(AsyncWebServerRequest *request, int r
     json += raw_measurement.valid ? "true" : "false";
     json += ",\"pose_valid\":";
     json += raw_measurement.pose_valid ? "true" : "false";
+    json += ",\"edge_v4_used\":";
+    json += raw_measurement.edge_v4_used ? "true" : "false";
+    json += ",\"apparent_width_px\":" + std::to_string(raw_measurement.apparent_width_px);
+    json += ",\"apparent_height_px\":" + std::to_string(raw_measurement.apparent_height_px);
     json += ",\"distance_mm\":" + std::to_string(raw_measurement.distance_mm);
     json += ",\"x_mm\":" + std::to_string(raw_measurement.x_mm);
     json += ",\"y_mm\":" + std::to_string(raw_measurement.y_mm);
