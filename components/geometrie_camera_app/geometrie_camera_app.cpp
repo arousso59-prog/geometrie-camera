@@ -125,6 +125,11 @@ std::string GeometrieCameraApp::status_text() const {
     return std::string("Mesure continue arretee - ") + this->continuous_measurement_controller_.last_error();
   }
 
+  if (this->continuous_measurement_controller_.state() == ContinuousMeasurementState::STOPPED &&
+      this->continuous_measurement_controller_.cycle_count() > 0) {
+    return "Mesure continue arretee - dernieres donnees conservees";
+  }
+
   if (this->jpeg_diagnostic_.capture_pending()) {
     return "Capture JPEG en cours";
   }
