@@ -227,6 +227,8 @@ void FullCalibrationApiHandler::send_status_(
   json += ",\"current_score\":" + std::to_string(this->controller_->current_optical_score());
   json += ",\"detection_quality\":" + std::to_string(this->controller_->current_detection_quality());
   json += ",\"subpixel_rms_px\":" + std::to_string(this->controller_->current_subpixel_rms_px());
+  json += ",\"width_gradient\":" + std::to_string(this->controller_->current_width_gradient());
+  json += ",\"height_gradient\":" + std::to_string(this->controller_->current_height_gradient());
   json += ",\"mean_luma_x100\":" + std::to_string(this->controller_->current_mean_luma_x100());
   json += ",\"dark_percent_x100\":" + std::to_string(this->controller_->current_dark_percent_x100());
   json += ",\"bright_percent_x100\":" + std::to_string(this->controller_->current_bright_percent_x100());
