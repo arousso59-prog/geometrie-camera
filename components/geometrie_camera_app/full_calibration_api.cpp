@@ -6,12 +6,14 @@
 #include <string>
 
 #include "full_calibration_controller.h"
+#include "target_detection_preview.h"
 
 namespace esphome {
 namespace geometrie_camera_app {
 
-FullCalibrationApiHandler::FullCalibrationApiHandler(FullCalibrationController *controller)
-    : controller_(controller) {}
+FullCalibrationApiHandler::FullCalibrationApiHandler(FullCalibrationController *controller,
+                                                     TargetDetectionPreview *preview)
+    : controller_(controller), preview_(preview) {}
 
 bool FullCalibrationApiHandler::canHandle(AsyncWebServerRequest *request) const {
   if (request->method() != HTTP_GET) return false;
@@ -20,7 +22,8 @@ bool FullCalibrationApiHandler::canHandle(AsyncWebServerRequest *request) const 
   const auto url = request->url_to(url_buf);
   return url == "/calibration/full/start" ||
          url == "/calibration/full/status" ||
-         url == "/calibration/full/cancel";
+         url == "/calibration/full/cancel" ||
+         url == "/calibration/full/preview.bmp";
 }
 
 void FullCalibrationApiHandler::handleRequest(AsyncWebServerRequest *request) {
@@ -41,6 +44,23 @@ void FullCalibrationApiHandler::handleRequest(AsyncWebServerRequest *request) {
   if (url == "/calibration/full/cancel") {
     this->controller_->cancel();
     this->send_status_(request, 200, "ok");
+    return;
+  }
+
+  if (url == "/calibration/full/preview.bmp") {
+    if (this->preview_ == nullptr || this->controller_->preview_attempt() == 0 ||
+        this->preview_->bmp_data() == nullptr || this->preview_->bmp_size() == 0) {
+      request->send(404, "application/json",
+                    "{\"error\":\"calibration_preview_unavailable\"}");
+      return;
+    }
+
+    auto *response = request->beginResponse(200, "image/bmp",
+                                            this->preview_->bmp_data(),
+                                            this->preview_->bmp_size());
+    response->addHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+    response->addHeader("Pragma", "no-cache");
+    request->send(response);
     return;
   }
 
@@ -175,6 +195,15 @@ void FullCalibrationApiHandler::send_status_(
                                 ? static_cast<unsigned>(valid) * 100U / requested
                                 : 0U;
   json += ",\"progress_pct\":" + std::to_string(progress);
+  json += ",\"tracking_mode\":\"" + std::string(this->controller_->tracking_mode_text()) + "\"";
+  json += ",\"preview_attempt\":" + std::to_string(this->controller_->preview_attempt());
+  json += ",\"last_target_found\":";
+  json += this->controller_->last_target_found() ? "true" : "false";
+  json += ",\"last_sample_valid\":";
+  json += this->controller_->last_sample_valid() ? "true" : "false";
+  json += ",\"last_sample_fx_px\":" + std::to_string(this->controller_->last_sample_fx_px());
+  json += ",\"last_sample_fy_px\":" + std::to_string(this->controller_->last_sample_fy_px());
+  json += ",\"preview\":\"/calibration/full/preview.bmp\"";
 
   if (!this->controller_->last_error().empty()) {
     json += ",\"error\":\"" + this->controller_->last_error() + "\"";
