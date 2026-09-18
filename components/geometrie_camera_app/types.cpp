@@ -5,6 +5,9 @@ namespace geometrie_camera_app {
 
 ImagePoint::ImagePoint() : x(0.0f), y(0.0f) {}
 
+ImageLine::ImageLine()
+    : valid(false), point(), dx(0.0f), dy(0.0f) {}
+
 CameraCalibration::CameraCalibration()
     : fx_px(0.0f),
       fy_px(0.0f),
@@ -52,6 +55,10 @@ TargetObservation::TargetObservation()
       subpixel_right_gradient(0.0f),
       subpixel_bottom_gradient(0.0f),
       subpixel_left_gradient(0.0f),
+      subpixel_top_line(),
+      subpixel_right_line(),
+      subpixel_bottom_line(),
+      subpixel_left_line(),
       top_left_px(),
       top_right_px(),
       bottom_right_px(),
@@ -61,6 +68,9 @@ GeometryMeasurement::GeometryMeasurement()
     : valid(false),
       calibrated(false),
       pose_valid(false),
+      pose_v1_valid(false),
+      pose_v2_valid(false),
+      pose_v2_used(false),
       edge_v4_used(false),
       edge_v5_used(false),
       edge_v6_used(false),
@@ -102,6 +112,17 @@ GeometryMeasurement::GeometryMeasurement()
       yaw_deg(0.0f),
       pitch_deg(0.0f),
       roll_deg(0.0f),
+      pose_v1_yaw_deg(0.0f),
+      pose_v1_pitch_deg(0.0f),
+      pose_v1_roll_deg(0.0f),
+      pose_v2_yaw_deg(0.0f),
+      pose_v2_pitch_deg(0.0f),
+      pose_v2_roll_deg(0.0f),
+      pose_v2_line_rms_px(0.0f),
+      pose_v2_corner_rms_px(0.0f),
+      pose_normal_x(0.0f),
+      pose_normal_y(0.0f),
+      pose_normal_z(0.0f),
       pose_z_mm(0.0f),
       pose_scale_error_pct(0.0f),
       quality(0.0f),
