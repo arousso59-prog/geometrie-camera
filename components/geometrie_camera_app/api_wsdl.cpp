@@ -19,12 +19,13 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   std::string xml;
   xml.reserve(7000);
   xml += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-  xml += "<api name=\"geometrie-camera\" version=\"22\">\n";
+  xml += "<api name=\"geometrie-camera\" version=\"23\">\n";
   xml += "  <description>API operationnelle du capteur de geometrie. Le tracking haute precision et les reglages optiques sont automatiques.</description>\n";
   xml += "  <conventions>\n";
   xml += "    <item>Le tracking SEARCH vers PRECISE est permanent et ne possede plus de commande activation/desactivation.</item>\n";
   xml += "    <item>Les reglages camera sont internes a la calibration automatique et ne sont plus exposes en commande manuelle.</item>\n";
   xml += "    <item>Le pipeline image est capture JPEG, decodage gris, detection V6.1 puis mesure. Le controle de nettete et la correction d artefacts ont ete retires.</item>\n";
+  xml += "    <item>V23 calcule V5, V6 et V6.1 en parallele pour diagnostic sans changer la sortie officielle V6.1.</item>\n";
   xml += "    <item>SEARCH, ZOOM_WIDE, ZOOM_MEDIUM et ZOOM_FINE servent uniquement au tracking. Seul PRECISE natif 800x600 produit une mesure.</item>\n";
   xml += "    <item>La calibration, la prise de mesure et le mode continu restent les trois usages operationnels conserves.</item>\n";
   xml += "  </conventions>\n";
@@ -33,7 +34,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  <method name=\"runtime_status\" http=\"GET\" path=\"/api/runtime/status\"/>\n";
   xml += "  <method name=\"camera_viewport\" http=\"GET\" path=\"/api/camera/viewport\"><comment>Diagnostic lecture seule du viewport courant.</comment></method>\n";
   xml += "  <method name=\"tracking_status\" http=\"GET\" path=\"/tracking/status\"><comment>Diagnostic lecture seule du suivi haute precision permanent.</comment></method>\n";
-  xml += "  <method name=\"target_status\" http=\"GET\" path=\"/target/status\"><comment>Diagnostic lecture seule de la derniere detection V6.1.</comment></method>\n";
+  xml += "  <method name=\"target_status\" http=\"GET\" path=\"/target/status\"><comment>Diagnostic lecture seule V5/V6/V6.1 et qualite individuelle des quatre bords.</comment></method>\n";
   xml += "  <method name=\"target_preview\" http=\"GET\" path=\"/target/preview.bmp\"/>\n";
 
   xml += "  <method name=\"measurement_config\" http=\"GET\" path=\"/measurement/config\"/>\n";
@@ -41,7 +42,7 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "    <parameter name=\"target_size_mm\" location=\"query\" required=\"false\" type=\"number\"/>\n";
   xml += "  </method>\n";
   xml += "  <method name=\"measurement_compute\" http=\"GET\" path=\"/measurement/compute\"/>\n";
-  xml += "  <method name=\"measurement_status\" http=\"GET\" path=\"/measurement/status\"/>\n";
+  xml += "  <method name=\"measurement_status\" http=\"GET\" path=\"/measurement/status\"><comment>Inclut raw_measurement.precision_diag pour comparer V5, V6, V6.1, RMS et gradients.</comment></method>\n";
 
   xml += "  <method name=\"full_calibration_start\" http=\"GET\" path=\"/calibration/full/start\">\n";
   xml += "    <comment>Calibration autonome : tracking jusqu a PRECISE, auto-reglage optique, puis serie de mesures.</comment>\n";
