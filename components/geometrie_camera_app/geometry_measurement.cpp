@@ -18,6 +18,11 @@ constexpr float POSE_V2_MIN_NORMAL_Z = 0.05f;
 constexpr float POSE_V2_CORNER_COST_WEIGHT = 0.10f;
 constexpr float POSE_V3_MIN_NORMAL_Z = 0.05f;
 constexpr float POSE_V3_MAX_FIT_RMS_PX = 1.25f;
+constexpr float POSE_V4_MIN_NORMAL_Z = 0.05f;
+constexpr float POSE_V4_MAX_RMS_PX = 1.10f;
+constexpr float POSE_V4_MAX_RESIDUAL_PX = 2.50f;
+constexpr uint16_t POSE_V4_MIN_FEATURES = 12;
+constexpr float POSE_V4_HUBER_PX = 0.30f;
 
 struct Vec3 {
   float x;
@@ -754,6 +759,189 @@ bool refine_pose_v3(
 
   if (!current_score.valid ||
       current_score.rms_px > POSE_V3_MAX_FIT_RMS_PX) {
+    return false;
+  }
+
+  refined_basis = current;
+  refined_score = current_score;
+  return true;
+}
+
+struct PoseV4Score {
+  bool valid;
+  float objective;
+  float rms_px;
+  float max_residual_px;
+  uint16_t used_count;
+};
+
+PoseV4Score evaluate_pose_v4(
+    const PoseBasis &basis,
+    const Vec3 &translation,
+    float target_size_mm,
+    const CameraCalibration &calibration,
+    const PatternFeature *features,
+    uint16_t feature_count) {
+  PoseV4Score score{};
+  score.valid = false;
+  score.objective = 1.0e30f;
+  score.rms_px = 0.0f;
+  score.max_residual_px = 0.0f;
+  score.used_count = 0;
+
+  if (features == nullptr ||
+      feature_count < POSE_V4_MIN_FEATURES ||
+      basis.normal.z <= POSE_V4_MIN_NORMAL_Z) {
+    return score;
+  }
+
+  double weighted_loss = 0.0;
+  double weight_sum = 0.0;
+  double sum_sq = 0.0;
+
+  for (uint16_t i = 0; i < feature_count; ++i) {
+    const PatternFeature &feature = features[i];
+    if (!feature.inlier) continue;
+
+    const Vec3 local = {
+        (feature.u - 0.5f) * target_size_mm,
+        (feature.v - 0.5f) * target_size_mm,
+        0.0f,
+    };
+
+    ImagePoint projected;
+    if (!project_target_point(
+            local, basis, translation, calibration, projected)) {
+      return score;
+    }
+
+    const float dx = projected.x - feature.x;
+    const float dy = projected.y - feature.y;
+    const float residual = std::sqrt(dx * dx + dy * dy);
+    if (!std::isfinite(residual)) return score;
+
+    // Les points eloignes du centre portent davantage d'information sur
+    // roll et perspective. Le poids reste borne pour ne pas sacrifier la
+    // robustesse aux quatre coins du motif.
+    const float du = feature.u - 0.5f;
+    const float dv = feature.v - 0.5f;
+    const float radius2 = du * du + dv * dv;
+    const float leverage_weight =
+        0.75f + 1.50f * std::min(0.50f, radius2);
+    const float strength_weight =
+        std::max(0.70f, std::min(1.40f, feature.strength / 18.0f));
+    const float weight = leverage_weight * strength_weight;
+
+    // Perte de Huber directe sur la correspondance subpixel. V4 ne passe
+    // plus par l'homographie V3 pour son cout final.
+    const float loss =
+        residual <= POSE_V4_HUBER_PX
+            ? 0.5f * residual * residual
+            : POSE_V4_HUBER_PX *
+                  (residual - 0.5f * POSE_V4_HUBER_PX);
+
+    weighted_loss += static_cast<double>(weight) * loss;
+    weight_sum += weight;
+    sum_sq += static_cast<double>(residual) * residual;
+    score.max_residual_px =
+        std::max(score.max_residual_px, residual);
+    score.used_count++;
+  }
+
+  if (score.used_count < POSE_V4_MIN_FEATURES ||
+      weight_sum <= 0.0) {
+    return score;
+  }
+
+  score.objective =
+      static_cast<float>(weighted_loss / weight_sum);
+  score.rms_px = static_cast<float>(
+      std::sqrt(sum_sq / static_cast<double>(score.used_count)));
+  score.valid =
+      std::isfinite(score.objective) &&
+      std::isfinite(score.rms_px);
+  return score;
+}
+
+bool refine_pose_v4(
+    const PoseBasis &initial_basis,
+    const PoseBasis *alternate_basis,
+    const Vec3 &translation,
+    float target_size_mm,
+    const CameraCalibration &calibration,
+    const PatternFeature *features,
+    uint16_t feature_count,
+    PoseBasis &refined_basis,
+    PoseV4Score &refined_score) {
+  PoseBasis current = initial_basis;
+  if (!normalize_basis(current)) return false;
+
+  PoseV4Score current_score = evaluate_pose_v4(
+      current, translation, target_size_mm, calibration,
+      features, feature_count);
+  if (!current_score.valid) return false;
+
+  if (alternate_basis != nullptr) {
+    PoseBasis alternate = *alternate_basis;
+    if (normalize_basis(alternate)) {
+      const PoseV4Score alternate_score = evaluate_pose_v4(
+          alternate, translation, target_size_mm, calibration,
+          features, feature_count);
+      if (alternate_score.valid &&
+          alternate_score.objective < current_score.objective) {
+        current = alternate;
+        current_score = alternate_score;
+      }
+    }
+  }
+
+  // Dernier pas 0,0005 deg = 0,03 minute d'arc.
+  constexpr float STEPS_DEG[] = {
+      0.50f, 0.12f, 0.030f, 0.0075f, 0.0015f, 0.0005f,
+  };
+  static const int SIGNS[2] = {-1, 1};
+
+  for (float step_deg : STEPS_DEG) {
+    const float step_rad = step_deg / RAD_TO_DEG_F;
+    for (uint8_t pass = 0; pass < 6; ++pass) {
+      bool improved = false;
+
+      for (uint8_t axis = 0; axis < 3; ++axis) {
+        PoseBasis best_basis = current;
+        PoseV4Score best_score = current_score;
+
+        for (int sign : SIGNS) {
+          PoseBasis candidate = rotate_basis_camera_axis(
+              current, axis, static_cast<float>(sign) * step_rad);
+          if (candidate.normal.z <= POSE_V4_MIN_NORMAL_Z) continue;
+
+          const PoseV4Score candidate_score = evaluate_pose_v4(
+              candidate, translation, target_size_mm, calibration,
+              features, feature_count);
+          if (candidate_score.valid &&
+              candidate_score.objective + 1.0e-10f <
+                  best_score.objective) {
+            best_basis = candidate;
+            best_score = candidate_score;
+          }
+        }
+
+        if (best_score.objective + 1.0e-10f <
+            current_score.objective) {
+          current = best_basis;
+          current_score = best_score;
+          improved = true;
+        }
+      }
+
+      if (!improved) break;
+    }
+  }
+
+  if (!current_score.valid ||
+      current_score.rms_px > POSE_V4_MAX_RMS_PX ||
+      current_score.max_residual_px > POSE_V4_MAX_RESIDUAL_PX ||
+      current_score.used_count < POSE_V4_MIN_FEATURES) {
     return false;
   }
 
