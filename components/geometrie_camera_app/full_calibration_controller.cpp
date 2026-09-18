@@ -274,6 +274,9 @@ void FullCalibrationController::loop() {
       const bool target_found = this->detection_service_->target_found();
       const TargetObservation local_observation =
           this->detection_service_->last_observation();
+      const bool precision_target_found =
+          target_found && local_observation.board_complete &&
+          local_observation.marker_id == TargetMarkerId::BOARD_R1;
 
       this->last_target_found_ = target_found;
       this->last_marker_count_ = local_observation.board_marker_count;
@@ -321,7 +324,7 @@ void FullCalibrationController::loop() {
       }
 
       if (this->phase_ == CalibrationPhase::TRACKING) {
-        if (target_found &&
+        if (precision_target_found &&
             mode_before == CameraViewportMode::PRECISE_ROI &&
             this->tracking_controller_->target_locked()) {
           if (!this->begin_optical_tuning_(local_observation)) {
@@ -345,13 +348,14 @@ void FullCalibrationController::loop() {
       }
 
       if (this->phase_ != CalibrationPhase::SAMPLING) {
-        if (!this->handle_tuning_result_(local_observation, target_found)) {
+        if (!this->handle_tuning_result_(
+                local_observation, precision_target_found)) {
           this->fail_("optical_tuning_failed");
         }
         return;
       }
 
-      if (target_found &&
+      if (precision_target_found &&
           mode_before == CameraViewportMode::PRECISE_ROI &&
           this->tracking_controller_->target_locked()) {
         const TargetObservation reference_observation =
@@ -366,8 +370,8 @@ void FullCalibrationController::loop() {
           this->last_sample_fy_px_ = sample.fy_px;
           this->update_running_stats_();
           ESP_LOGI(TAG,
-                   "Calibration PRECISE V5: echantillon %u/%u fx=%.3f fy=%.3f "
-                   "cible=%.2fx%.2f px qualite=%.3f",
+                   "Calibration R1 PRECISE: echantillon %u/%u fx=%.3f fy=%.3f "
+                   "reference=%.2fx%.2f px qualite=%.3f",
                    static_cast<unsigned>(this->valid_samples_),
                    static_cast<unsigned>(this->requested_samples_),
                    sample.fx_px, sample.fy_px,
