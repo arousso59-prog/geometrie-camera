@@ -85,6 +85,9 @@ FullCalibrationController::FullCalibrationController(
       preview_attempt_(0),
       preview_mode_("search"),
       last_target_found_(false),
+      last_marker_count_(0),
+      last_marker_mask_(0),
+      last_board_complete_(false),
       last_sample_valid_(false),
       last_sample_fx_px_(0.0f),
       last_sample_fy_px_(0.0f),
@@ -273,6 +276,9 @@ void FullCalibrationController::loop() {
           this->detection_service_->last_observation();
 
       this->last_target_found_ = target_found;
+      this->last_marker_count_ = local_observation.board_marker_count;
+      this->last_marker_mask_ = local_observation.board_marker_mask;
+      this->last_board_complete_ = local_observation.board_complete;
       this->last_sample_valid_ = false;
       this->last_sample_fx_px_ = 0.0f;
       this->last_sample_fy_px_ = 0.0f;
@@ -455,6 +461,9 @@ float FullCalibrationController::stddev_fy_px() const { return this->stddev_fy_p
 uint8_t FullCalibrationController::preview_attempt() const { return this->preview_attempt_; }
 const std::string &FullCalibrationController::preview_mode() const { return this->preview_mode_; }
 bool FullCalibrationController::last_target_found() const { return this->last_target_found_; }
+uint8_t FullCalibrationController::last_marker_count() const { return this->last_marker_count_; }
+uint8_t FullCalibrationController::last_marker_mask() const { return this->last_marker_mask_; }
+bool FullCalibrationController::last_board_complete() const { return this->last_board_complete_; }
 bool FullCalibrationController::last_sample_valid() const { return this->last_sample_valid_; }
 float FullCalibrationController::last_sample_fx_px() const { return this->last_sample_fx_px_; }
 float FullCalibrationController::last_sample_fy_px() const { return this->last_sample_fy_px_; }
@@ -1319,6 +1328,9 @@ void FullCalibrationController::reset_run_() {
   this->preview_attempt_ = 0;
   this->preview_mode_ = "search";
   this->last_target_found_ = false;
+  this->last_marker_count_ = 0;
+  this->last_marker_mask_ = 0;
+  this->last_board_complete_ = false;
   this->last_sample_valid_ = false;
   this->last_sample_fx_px_ = 0.0f;
   this->last_sample_fy_px_ = 0.0f;
