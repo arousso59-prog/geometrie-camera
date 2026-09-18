@@ -119,6 +119,14 @@ TargetObservation TargetDetector::detect(const GrayFrameView &frame) {
               candidate_best.subpixel_gradient = subpixel_metrics.mean_gradient;
               candidate_best.subpixel_width_px = subpixel_metrics.width_px;
               candidate_best.subpixel_height_px = subpixel_metrics.height_px;
+              candidate_best.subpixel_width_sigma_px =
+                  subpixel_metrics.width_sigma_px;
+              candidate_best.subpixel_height_sigma_px =
+                  subpixel_metrics.height_sigma_px;
+              candidate_best.subpixel_width_gradient =
+                  subpixel_metrics.width_gradient;
+              candidate_best.subpixel_height_gradient =
+                  subpixel_metrics.height_gradient;
             }
           }
         }
