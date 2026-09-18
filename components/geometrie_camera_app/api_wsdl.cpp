@@ -25,7 +25,8 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "    <item>Le tracking SEARCH vers PRECISE est permanent et ne possede plus de commande activation/desactivation.</item>\n";
   xml += "    <item>Les reglages camera sont internes a la calibration automatique et ne sont plus exposes en commande manuelle.</item>\n";
   xml += "    <item>Le pipeline image est capture JPEG, decodage gris, detection V6.1 puis mesure. Le controle de nettete et la correction d artefacts ont ete retires.</item>\n";
-  xml += "    <item>V33 conserve camera V25, distance V6.1-robust5 et capture pipelinee; corrige la course HTTP preview, rejette les frames sans subpixel V6.1 et conserve Pose V4 en diagnostic, V3 restant officielle.</item>\n";
+  xml += "    <item>V34 remplace definitivement la cible 50x50 par la cible R1 fixe 250x100 mm, reference metrologique 240x90 mm et trois marqueurs A/B/C identifies.</item>\n";
+  xml += "    <item>La geometrie de cible n est plus configurable. Calibration et mesure exigent les trois marqueurs R1; deux marqueurs peuvent seulement aider le tracking.</item>\n";
   xml += "    <item>SEARCH, ZOOM_WIDE, ZOOM_MEDIUM et ZOOM_FINE servent uniquement au tracking. Seul PRECISE natif 800x600 produit une mesure.</item>\n";
   xml += "    <item>La calibration, la prise de mesure et le mode continu restent les trois usages operationnels conserves.</item>\n";
   xml += "  </conventions>\n";
@@ -38,16 +39,13 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   xml += "  <method name=\"target_preview\" http=\"GET\" path=\"/target/preview.bmp\"/>\n";
 
   xml += "  <method name=\"measurement_config\" http=\"GET\" path=\"/measurement/config\"/>\n";
-  xml += "  <method name=\"measurement_config_set\" http=\"GET\" path=\"/measurement/config/set\">\n";
-  xml += "    <parameter name=\"target_size_mm\" location=\"query\" required=\"false\" type=\"number\"/>\n";
-  xml += "  </method>\n";
+  xml += "  <method name=\"measurement_config_set\" http=\"GET\" path=\"/measurement/config/set\"><comment>Reglages de distorsion uniquement; geometrie R1 fixe.</comment></method>\n";
   xml += "  <method name=\"measurement_compute\" http=\"GET\" path=\"/measurement/compute\"/>\n";
-  xml += "  <method name=\"measurement_status\" http=\"GET\" path=\"/measurement/status\"><comment>Distance officielle V6.1-robust5 figee; pose V3 motif 7x7; capture continue pipelinee en regime stable.</comment></method>\n";
+  xml += "  <method name=\"measurement_status\" http=\"GET\" path=\"/measurement/status\"><comment>Cible R1 A+B+C fixe; distance V6.1-robust5 sur reference 240x90; pose multi-marqueurs.</comment></method>\n";
 
   xml += "  <method name=\"full_calibration_start\" http=\"GET\" path=\"/calibration/full/start\">\n";
-  xml += "    <comment>Calibration autonome : tracking jusqu a PRECISE, auto-reglage optique, puis serie de mesures.</comment>\n";
+  xml += "    <comment>Calibration autonome de la cible R1 fixe : tracking jusqu a PRECISE, auto-reglage optique, puis serie de mesures A+B+C.</comment>\n";
   xml += "    <parameter name=\"distance_mm\" location=\"query\" required=\"true\" type=\"number\"/>\n";
-  xml += "    <parameter name=\"target_size_mm\" location=\"query\" required=\"true\" type=\"number\"/>\n";
   xml += "    <parameter name=\"samples\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"3..20\" default=\"10\"/>\n";
   xml += "    <parameter name=\"force\" location=\"query\" required=\"false\" type=\"integer\" allowed=\"0,1\" default=\"0\"/>\n";
   xml += "  </method>\n";
