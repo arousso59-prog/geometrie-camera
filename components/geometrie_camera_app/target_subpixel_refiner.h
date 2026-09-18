@@ -12,13 +12,22 @@ namespace geometrie_camera_app {
 // Le detecteur reste responsable de trouver la cible. Cette classe ne cherche
 // que la position subpixel des quatre bords externes afin d'ameliorer les
 // calculs de taille, distance et pose.
+struct TargetSubpixelMetrics {
+  bool valid;
+  float mean_rms_px;
+  float max_rms_px;
+  float mean_gradient;
+  uint8_t min_edge_samples;
+};
+
 class TargetSubpixelRefiner {
  public:
   TargetSubpixelRefiner();
 
   bool refine(const GrayFrameView &frame,
               const TargetCandidate &input,
-              TargetCandidate &output) const;
+              TargetCandidate &output,
+              TargetSubpixelMetrics *metrics = nullptr) const;
 
  private:
   struct EdgeLine {
