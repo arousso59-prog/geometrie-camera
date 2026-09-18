@@ -1,32 +1,250 @@
 #include "measurement_manager.h"
 
+#include <algorithm>
+#include <cmath>
+
 namespace esphome {
 namespace geometrie_camera_app {
 
+namespace {
+constexpr float RAD_TO_DEG_F = 57.29577951308232f;
+
+float robust_center(const float *values, uint8_t count) {
+  if (values == nullptr || count == 0) {
+    return 0.0f;
+  }
+
+  float sorted[MeasurementManager::STABILIZATION_WINDOW];
+  for (uint8_t i = 0; i < count; ++i) {
+    sorted[i] = values[i];
+  }
+
+  for (uint8_t i = 1; i < count; ++i) {
+    const float value = sorted[i];
+    int j = static_cast<int>(i) - 1;
+    while (j >= 0 && sorted[j] > value) {
+      sorted[j + 1] = sorted[j];
+      --j;
+    }
+    sorted[j + 1] = value;
+  }
+
+  if (count == 1) {
+    return sorted[0];
+  }
+  if (count == 2) {
+    return 0.5f * (sorted[0] + sorted[1]);
+  }
+  if (count == 3) {
+    return sorted[1];
+  }
+
+  // A partir de 4 valeurs, retirer systematiquement les extremes.
+  // Avec la fenetre nominale de 5, la valeur publiee est donc la moyenne
+  // robuste des trois mesures centrales.
+  float sum = 0.0f;
+  for (uint8_t i = 1; i + 1 < count; ++i) {
+    sum += sorted[i];
+  }
+  return sum / static_cast<float>(count - 2U);
+}
+
+float standard_deviation(const float *values, uint8_t count) {
+  if (values == nullptr || count < 2) {
+    return 0.0f;
+  }
+  double mean = 0.0;
+  for (uint8_t i = 0; i < count; ++i) {
+    mean += values[i];
+  }
+  mean /= count;
+
+  double variance = 0.0;
+  for (uint8_t i = 0; i < count; ++i) {
+    const double delta = values[i] - mean;
+    variance += delta * delta;
+  }
+  variance /= count;
+  return static_cast<float>(std::sqrt(variance));
+}
+
+float span(const float *values, uint8_t count) {
+  if (values == nullptr || count == 0) {
+    return 0.0f;
+  }
+  float minimum = values[0];
+  float maximum = values[0];
+  for (uint8_t i = 1; i < count; ++i) {
+    minimum = std::min(minimum, values[i]);
+    maximum = std::max(maximum, values[i]);
+  }
+  return maximum - minimum;
+}
+}  // namespace
+
 MeasurementManager::MeasurementManager()
-    : measurement_engine_(), last_measurement_(), valid_measurement_count_(0) {}
+    : measurement_engine_(),
+      raw_measurement_(),
+      last_measurement_(),
+      stabilization_samples_{},
+      stabilization_count_(0),
+      stabilization_next_index_(0),
+      last_measurement_stabilized_(false),
+      distance_stddev_mm_(0.0f),
+      distance_span_mm_(0.0f),
+      valid_measurement_count_(0) {}
 
 void MeasurementManager::setup() {
   this->reset();
 }
 
 void MeasurementManager::reset() {
+  this->raw_measurement_ = GeometryMeasurement();
   this->last_measurement_ = GeometryMeasurement();
   this->valid_measurement_count_ = 0;
+  this->reset_stabilization();
+}
+
+void MeasurementManager::reset_stabilization() {
+  for (auto &sample : this->stabilization_samples_) {
+    sample = GeometryMeasurement();
+  }
+  this->stabilization_count_ = 0;
+  this->stabilization_next_index_ = 0;
+  this->last_measurement_stabilized_ = false;
+  this->distance_stddev_mm_ = 0.0f;
+  this->distance_span_mm_ = 0.0f;
 }
 
 bool MeasurementManager::process(const TargetObservation &observation,
                                  uint16_t frame_width, uint16_t frame_height,
-                                 uint32_t timestamp_ms) {
-  this->last_measurement_ = this->measurement_engine_.compute(
+                                 uint32_t timestamp_ms,
+                                 bool stabilize) {
+  this->raw_measurement_ = this->measurement_engine_.compute(
       observation, frame_width, frame_height, timestamp_ms);
 
-  if (this->last_measurement_.valid) {
-    this->valid_measurement_count_++;
+  if (!this->raw_measurement_.valid) {
+    this->last_measurement_ = this->raw_measurement_;
+    this->last_measurement_stabilized_ = false;
+    return false;
+  }
+
+  this->valid_measurement_count_++;
+
+  if (!stabilize) {
+    this->reset_stabilization();
+    this->last_measurement_ = this->raw_measurement_;
     return true;
   }
 
-  return false;
+  this->append_stabilization_sample_(this->raw_measurement_);
+  this->compute_stabilized_measurement_();
+  return true;
+}
+
+void MeasurementManager::append_stabilization_sample_(
+    const GeometryMeasurement &measurement) {
+  this->stabilization_samples_[this->stabilization_next_index_] = measurement;
+  this->stabilization_next_index_ =
+      static_cast<uint8_t>((this->stabilization_next_index_ + 1U) %
+                           STABILIZATION_WINDOW);
+  if (this->stabilization_count_ < STABILIZATION_WINDOW) {
+    this->stabilization_count_++;
+  }
+}
+
+void MeasurementManager::compute_stabilized_measurement_() {
+  if (this->stabilization_count_ == 0) {
+    this->last_measurement_ = this->raw_measurement_;
+    this->last_measurement_stabilized_ = false;
+    return;
+  }
+
+  float distance_values[STABILIZATION_WINDOW];
+  float x_values[STABILIZATION_WINDOW];
+  float y_values[STABILIZATION_WINDOW];
+  float z_values[STABILIZATION_WINDOW];
+  float z_width_values[STABILIZATION_WINDOW];
+  float z_height_values[STABILIZATION_WINDOW];
+  float quality_values[STABILIZATION_WINDOW];
+
+  float yaw_values[STABILIZATION_WINDOW];
+  float pitch_values[STABILIZATION_WINDOW];
+  float roll_values[STABILIZATION_WINDOW];
+  float pose_z_values[STABILIZATION_WINDOW];
+  float pose_error_values[STABILIZATION_WINDOW];
+  uint8_t pose_count = 0;
+
+  for (uint8_t i = 0; i < this->stabilization_count_; ++i) {
+    const GeometryMeasurement &sample = this->stabilization_samples_[i];
+    distance_values[i] = sample.distance_mm;
+    x_values[i] = sample.x_mm;
+    y_values[i] = sample.y_mm;
+    z_values[i] = sample.z_mm;
+    z_width_values[i] = sample.z_from_width_mm;
+    z_height_values[i] = sample.z_from_height_mm;
+    quality_values[i] = sample.quality;
+
+    if (sample.pose_valid) {
+      yaw_values[pose_count] = sample.yaw_deg;
+      pitch_values[pose_count] = sample.pitch_deg;
+      roll_values[pose_count] = sample.roll_deg;
+      pose_z_values[pose_count] = sample.pose_z_mm;
+      pose_error_values[pose_count] = sample.pose_scale_error_pct;
+      pose_count++;
+    }
+  }
+
+  this->distance_stddev_mm_ =
+      standard_deviation(distance_values, this->stabilization_count_);
+  this->distance_span_mm_ =
+      span(distance_values, this->stabilization_count_);
+
+  // Les deux premiers points servent uniquement a amorcer la fenetre :
+  // publier la mesure brute evite de faire croire a une stabilisation qui
+  // n'existe pas encore. A partir de 3 points, la mediane/moyenne tronquee
+  // devient active.
+  if (this->stabilization_count_ < 3) {
+    this->last_measurement_ = this->raw_measurement_;
+    this->last_measurement_stabilized_ = false;
+    return;
+  }
+
+  GeometryMeasurement result = this->raw_measurement_;
+  result.x_mm = robust_center(x_values, this->stabilization_count_);
+  result.y_mm = robust_center(y_values, this->stabilization_count_);
+  result.z_mm = robust_center(z_values, this->stabilization_count_);
+  result.distance_mm = std::sqrt(result.x_mm * result.x_mm +
+                                 result.y_mm * result.y_mm +
+                                 result.z_mm * result.z_mm);
+  result.z_from_width_mm =
+      robust_center(z_width_values, this->stabilization_count_);
+  result.z_from_height_mm =
+      robust_center(z_height_values, this->stabilization_count_);
+  result.quality = robust_center(quality_values, this->stabilization_count_);
+
+  if (result.z_mm > 0.0f) {
+    result.bearing_yaw_deg =
+        std::atan2(result.x_mm, result.z_mm) * RAD_TO_DEG_F;
+    result.bearing_pitch_deg =
+        std::atan2(result.y_mm, result.z_mm) * RAD_TO_DEG_F;
+  }
+
+  const uint8_t required_pose =
+      static_cast<uint8_t>((this->stabilization_count_ + 1U) / 2U);
+  result.pose_valid = pose_count >= required_pose;
+  if (result.pose_valid) {
+    result.yaw_deg = robust_center(yaw_values, pose_count);
+    result.pitch_deg = robust_center(pitch_values, pose_count);
+    result.roll_deg = robust_center(roll_values, pose_count);
+    result.pose_z_mm = robust_center(pose_z_values, pose_count);
+    result.pose_scale_error_pct =
+        robust_center(pose_error_values, pose_count);
+  }
+
+  result.timestamp_ms = this->raw_measurement_.timestamp_ms;
+  this->last_measurement_ = result;
+  this->last_measurement_stabilized_ = true;
 }
 
 uint32_t MeasurementManager::valid_measurement_count() const {
@@ -35,6 +253,30 @@ uint32_t MeasurementManager::valid_measurement_count() const {
 
 const GeometryMeasurement &MeasurementManager::last_measurement() const {
   return this->last_measurement_;
+}
+
+const GeometryMeasurement &MeasurementManager::raw_measurement() const {
+  return this->raw_measurement_;
+}
+
+bool MeasurementManager::last_measurement_stabilized() const {
+  return this->last_measurement_stabilized_;
+}
+
+uint8_t MeasurementManager::stabilization_sample_count() const {
+  return this->stabilization_count_;
+}
+
+uint8_t MeasurementManager::stabilization_window_size() const {
+  return STABILIZATION_WINDOW;
+}
+
+float MeasurementManager::distance_stddev_mm() const {
+  return this->distance_stddev_mm_;
+}
+
+float MeasurementManager::distance_span_mm() const {
+  return this->distance_span_mm_;
 }
 
 GeometryMeasurementEngine &MeasurementManager::measurement_engine() {
