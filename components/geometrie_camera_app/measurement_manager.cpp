@@ -9,6 +9,8 @@ namespace geometrie_camera_app {
 namespace {
 constexpr float RAD_TO_DEG_F = 57.29577951308232f;
 constexpr uint8_t LOCAL_STABILIZATION_WINDOW = 5;
+constexpr float DISTANCE_BLEND_START_RATIO = 0.03f;
+constexpr float DISTANCE_BLEND_FULL_RATIO = 0.15f;
 
 float robust_center(const float *values, uint8_t count) {
   if (values == nullptr || count == 0) {
@@ -67,6 +69,34 @@ float standard_deviation(const float *values, uint8_t count) {
   }
   variance /= count;
   return static_cast<float>(std::sqrt(variance));
+}
+
+float fuse_stabilized_axes(float z_width, float z_height,
+                           float width_weight, float height_weight) {
+  const float lower = std::min(z_width, z_height);
+  const float upper = std::max(z_width, z_height);
+  if (!std::isfinite(z_width) || !std::isfinite(z_height) ||
+      z_width <= 0.0f || z_height <= 0.0f || lower <= 0.0f) {
+    return lower;
+  }
+
+  float w_width =
+      std::isfinite(width_weight) && width_weight > 0.0f ? width_weight : 0.5f;
+  float w_height =
+      std::isfinite(height_weight) && height_weight > 0.0f ? height_weight : 0.5f;
+  if (w_width > w_height * 16.0f) w_width = w_height * 16.0f;
+  if (w_height > w_width * 16.0f) w_height = w_width * 16.0f;
+
+  const float weighted =
+      (w_width * z_width + w_height * z_height) / (w_width + w_height);
+  const float disagreement = (upper - lower) / lower;
+  if (disagreement <= DISTANCE_BLEND_START_RATIO) return weighted;
+  if (disagreement >= DISTANCE_BLEND_FULL_RATIO) return lower;
+
+  const float blend =
+      (disagreement - DISTANCE_BLEND_START_RATIO) /
+      (DISTANCE_BLEND_FULL_RATIO - DISTANCE_BLEND_START_RATIO);
+  return weighted + (lower - weighted) * blend;
 }
 
 float span(const float *values, uint8_t count) {
@@ -167,6 +197,8 @@ void MeasurementManager::compute_stabilized_measurement_() {
   float z_values[STABILIZATION_WINDOW];
   float z_width_values[STABILIZATION_WINDOW];
   float z_height_values[STABILIZATION_WINDOW];
+  float width_weight_values[STABILIZATION_WINDOW];
+  float height_weight_values[STABILIZATION_WINDOW];
   float quality_values[STABILIZATION_WINDOW];
 
   float yaw_values[STABILIZATION_WINDOW];
@@ -184,6 +216,8 @@ void MeasurementManager::compute_stabilized_measurement_() {
     z_values[i] = sample.z_mm;
     z_width_values[i] = sample.z_from_width_mm;
     z_height_values[i] = sample.z_from_height_mm;
+    width_weight_values[i] = sample.width_distance_weight;
+    height_weight_values[i] = sample.height_distance_weight;
     quality_values[i] = sample.quality;
 
     if (sample.pose_valid) {
@@ -214,14 +248,30 @@ void MeasurementManager::compute_stabilized_measurement_() {
   GeometryMeasurement result = this->raw_measurement_;
   result.x_mm = robust_center(x_values, this->stabilization_count_);
   result.y_mm = robust_center(y_values, this->stabilization_count_);
-  result.z_mm = robust_center(z_values, this->stabilization_count_);
-  result.distance_mm = std::sqrt(result.x_mm * result.x_mm +
-                                 result.y_mm * result.y_mm +
-                                 result.z_mm * result.z_mm);
   result.z_from_width_mm =
       robust_center(z_width_values, this->stabilization_count_);
   result.z_from_height_mm =
       robust_center(z_height_values, this->stabilization_count_);
+
+  float width_weight =
+      robust_center(width_weight_values, this->stabilization_count_);
+  float height_weight =
+      robust_center(height_weight_values, this->stabilization_count_);
+  const float weight_sum = width_weight + height_weight;
+  if (std::isfinite(weight_sum) && weight_sum > 0.0f) {
+    result.width_distance_weight = width_weight / weight_sum;
+    result.height_distance_weight = height_weight / weight_sum;
+  } else {
+    result.width_distance_weight = 0.5f;
+    result.height_distance_weight = 0.5f;
+  }
+
+  result.z_mm = fuse_stabilized_axes(
+      result.z_from_width_mm, result.z_from_height_mm,
+      result.width_distance_weight, result.height_distance_weight);
+  result.distance_mm = std::sqrt(result.x_mm * result.x_mm +
+                                 result.y_mm * result.y_mm +
+                                 result.z_mm * result.z_mm);
   result.quality = robust_center(quality_values, this->stabilization_count_);
 
   if (result.z_mm > 0.0f) {
