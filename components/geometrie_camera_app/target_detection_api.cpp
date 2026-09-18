@@ -97,7 +97,13 @@ void TargetDetectionApiHandler::send_status_(AsyncWebServerRequest *request, int
     json += std::to_string(this->service_->source_process_count());
     json += ",\"detection_ms\":";
     json += std::to_string(this->service_->detection_ms());
-    json += ",\"target\":{\"center_x_px\":";
+    json += ",\"target\":{";
+    json += "\"model\":\"R1_250x100\"";
+    json += ",\"marker_count\":" + std::to_string(observation.board_marker_count);
+    json += ",\"marker_mask\":" + std::to_string(observation.board_marker_mask);
+    json += ",\"complete\":";
+    json += observation.board_complete ? "true" : "false";
+    json += ",\"center_x_px\":";
     json += std::to_string(observation.center_x_px);
     json += ",\"center_y_px\":";
     json += std::to_string(observation.center_y_px);
