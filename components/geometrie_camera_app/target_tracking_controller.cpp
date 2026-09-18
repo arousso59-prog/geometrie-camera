@@ -123,7 +123,6 @@ bool target_safe_for_window(const TargetObservation &reference,
 
 TargetTrackingController::TargetTrackingController(CameraViewportController *viewport_controller)
     : viewport_controller_(viewport_controller),
-      enabled_(true),
       active_(false),
       lost_cycles_(3),
       recenter_threshold_pct_(70),
@@ -138,9 +137,6 @@ TargetTrackingController::TargetTrackingController(CameraViewportController *vie
 bool TargetTrackingController::start() {
   this->clear_runtime_();
   this->active_ = false;
-  if (!this->enabled_) {
-    return true;
-  }
   if (this->viewport_controller_ == nullptr || !this->viewport_controller_->supports_precise_roi()) {
     this->last_error_ = "precise_roi_unsupported";
     return false;
@@ -159,16 +155,6 @@ void TargetTrackingController::stop() {
   }
   this->active_ = false;
   this->clear_runtime_();
-}
-
-bool TargetTrackingController::set_enabled(bool enabled) {
-  if (this->active_) {
-    this->last_error_ = "tracking_active";
-    return false;
-  }
-  this->enabled_ = enabled;
-  this->clear_runtime_();
-  return true;
 }
 
 bool TargetTrackingController::set_lost_cycles(uint8_t cycles) {
@@ -193,7 +179,6 @@ bool TargetTrackingController::set_recenter_threshold_pct(uint8_t percent) {
   return true;
 }
 
-bool TargetTrackingController::enabled() const { return this->enabled_; }
 bool TargetTrackingController::active() const { return this->active_; }
 bool TargetTrackingController::supported() const {
   return this->viewport_controller_ != nullptr && this->viewport_controller_->supports_precise_roi();
