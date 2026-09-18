@@ -141,3 +141,17 @@ SEARCH et les trois niveaux de zoom servent uniquement à trouver et centrer la 
 Une mesure n'est calculée qu'après verrouillage en **PRECISE natif 800×600**. La calibration reste référencée dans le repère 2560×1920.
 
 Les modes supprimés ne doivent pas être réintroduits comme dépendances des trois workflows opérationnels.
+
+
+## Recherche optique ciblée
+
+La calibration ne balaie plus les cinq niveaux AE automatiques ni les bornes extrêmes d'exposition/gain.
+
+Le profil final restant en AEC=OFF / AGC=OFF, la recherche est centrée sur les paramètres réellement utilisés en mesure :
+
+- centre initial : dernier bon profil manuel si disponible, sinon exposition 400 / gain 7 ;
+- exposition : ±160, ±80, ±40, ±20 ;
+- gain : ±4, ±2, ±1 ;
+- 15 captures de réglage au maximum.
+
+Le score privilégie RMS faible, sigma faible et gradients horizontaux/verticaux forts et équilibrés.
