@@ -16,7 +16,8 @@ TargetDetectionService::TargetDetectionService(JpegFilteredDiagnostic *source, T
       detection_ms_(0),
       ready_(false) {}
 
-bool TargetDetectionService::detect(bool high_precision) {
+bool TargetDetectionService::detect(
+    bool high_precision, bool center_marker_only) {
   this->ready_ = false;
   this->last_observation_ = TargetObservation();
   this->detection_ms_ = 0;
@@ -34,7 +35,8 @@ bool TargetDetectionService::detect(bool high_precision) {
   frame.stride = this->source_->grayscale_stride();
 
   const uint32_t started_ms = millis();
-  this->last_observation_ = this->detector_->detect(frame, high_precision);
+  this->last_observation_ =
+      this->detector_->detect(frame, high_precision, center_marker_only);
   this->detection_ms_ = millis() - started_ms;
 
   this->source_process_count_ = this->source_->process_count();
