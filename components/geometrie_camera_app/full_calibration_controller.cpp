@@ -331,8 +331,10 @@ void FullCalibrationController::loop() {
           this->tracking_controller_->viewport_controller()->snapshot().mode;
       const bool high_precision_detection =
           mode_before == CameraViewportMode::PRECISE_ROI;
+      const bool camera_only = this->kind_ == CalibrationKind::CAMERA;
 
-      if (!this->detection_service_->detect(high_precision_detection)) {
+      if (!this->detection_service_->detect(
+              high_precision_detection, camera_only)) {
         this->fail_("calibration_detection_failed");
         return;
       }
@@ -340,10 +342,16 @@ void FullCalibrationController::loop() {
       const bool target_found = this->detection_service_->target_found();
       const TargetObservation local_observation =
           this->detection_service_->last_observation();
+
       const bool precision_target_found =
-          target_found && local_observation.board_complete &&
-          local_observation.marker_id == TargetMarkerId::BOARD_R1 &&
-          local_observation.subpixel_refined;
+          camera_only
+              ? (target_found &&
+                 local_observation.marker_id == TargetMarkerId::B &&
+                 local_observation.subpixel_refined)
+              : (target_found &&
+                 local_observation.board_complete &&
+                 local_observation.marker_id == TargetMarkerId::BOARD_R1 &&
+                 local_observation.subpixel_refined);
 
       this->last_target_found_ = target_found;
       this->last_marker_count_ = local_observation.board_marker_count;
@@ -359,13 +367,13 @@ void FullCalibrationController::loop() {
       }
 
       if (this->preview_attempt_ == this->attempts_) {
-        this->preview_mode_ = CameraViewportController::mode_text(mode_before);
+        this->preview_mode_ =
+            CameraViewportController::mode_text(mode_before);
       }
 
-      // Pendant la recherche du PRECISE et pendant les mesures finales, le
-      // tracking reste actif. Pendant l'optimisation optique, on gele le ROI
-      // PRECISE afin que tous les candidats soient compares sur exactement la
-      // meme zone du capteur.
+      // Tracking actif uniquement pendant la recherche PRECISE et pendant
+      // l'echantillonnage geometrique. Pendant le reglage optique camera, le
+      // ROI PRECISE reste fige autour du marqueur central B.
       if (this->phase_ == CalibrationPhase::TRACKING ||
           this->phase_ == CalibrationPhase::SAMPLING) {
         const TrackingUpdateResult tracking_result =
@@ -392,10 +400,24 @@ void FullCalibrationController::loop() {
         if (precision_target_found &&
             mode_before == CameraViewportMode::PRECISE_ROI &&
             this->tracking_controller_->target_locked()) {
-          if (!this->begin_optical_tuning_(local_observation)) {
-            this->fail_("optical_tuning_start_failed");
+          if (camera_only) {
+            if (!this->begin_optical_tuning_(local_observation)) {
+              this->fail_("optical_tuning_start_failed");
+              return;
+            }
+            if (!this->request_next_capture_()) {
+              this->fail_("capture_request_failed");
+            }
             return;
           }
+
+          // Calibration geometrique : aucun reglage camera. On passe
+          // directement aux echantillons A+B+C.
+          this->phase_ = CalibrationPhase::SAMPLING;
+          ESP_LOGI(TAG,
+                   "Calibration GEOMETRIQUE: R1 A+B+C verrouillee en PRECISE; "
+                   "debut des %u echantillons",
+                   static_cast<unsigned>(this->requested_samples_));
           if (!this->request_next_capture_()) {
             this->fail_("capture_request_failed");
           }
@@ -413,10 +435,20 @@ void FullCalibrationController::loop() {
       }
 
       if (this->phase_ != CalibrationPhase::SAMPLING) {
+        if (!camera_only) {
+          this->fail_("unexpected_geometry_calibration_phase");
+          return;
+        }
         if (!this->handle_tuning_result_(
                 local_observation, precision_target_found)) {
           this->fail_("optical_tuning_failed");
         }
+        return;
+      }
+
+      // Seule la calibration geometrique possede une phase SAMPLING.
+      if (camera_only) {
+        this->fail_("unexpected_camera_sampling_phase");
         return;
       }
 
@@ -435,8 +467,8 @@ void FullCalibrationController::loop() {
           this->last_sample_fy_px_ = sample.fy_px;
           this->update_running_stats_();
           ESP_LOGI(TAG,
-                   "Calibration R1 PRECISE: echantillon %u/%u fx=%.3f fy=%.3f "
-                   "reference=%.2fx%.2f px qualite=%.3f",
+                   "Calibration GEOMETRIQUE R1: echantillon %u/%u "
+                   "fx=%.3f fy=%.3f reference=%.2fx%.2f px qualite=%.3f",
                    static_cast<unsigned>(this->valid_samples_),
                    static_cast<unsigned>(this->requested_samples_),
                    sample.fx_px, sample.fy_px,
