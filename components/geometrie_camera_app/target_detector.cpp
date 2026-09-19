@@ -53,7 +53,9 @@ void TargetDetector::reset_tracking() {
 }
 
 TargetObservation TargetDetector::detect(
-    const GrayFrameView &frame, bool high_precision) {
+    const GrayFrameView &frame,
+    bool high_precision,
+    bool center_marker_only) {
   TargetObservation best;
   float best_selection_score = -1000.0f;
   this->candidates_.count = 0;
@@ -70,13 +72,18 @@ TargetObservation TargetDetector::detect(
   for (size_t index = 0; index < this->candidates_.count; ++index) {
     const TargetCandidate &candidate = this->candidates_.candidates[index];
 
-    const TargetObservation coarse_observation = this->code_decoder_.decode(frame, candidate);
+    const TargetObservation coarse_observation =
+        this->code_decoder_.decode(
+            frame, candidate,
+            center_marker_only ? TargetMarkerId::B : TargetMarkerId::NONE);
     TargetObservation candidate_best = coarse_observation;
 
     TargetCandidate refined_candidate = candidate;
     if (this->corner_refiner_.refine(frame, candidate, refined_candidate)) {
       const TargetObservation refined_observation =
-          this->code_decoder_.decode(frame, refined_candidate);
+          this->code_decoder_.decode(
+              frame, refined_candidate,
+              center_marker_only ? TargetMarkerId::B : TargetMarkerId::NONE);
       ESP_LOGD(TAG,
                "V6.1 candidate[%u] coarse=%.4f refined=%.4f refined_valid=%s",
                static_cast<unsigned>(index), coarse_observation.quality,
@@ -100,7 +107,9 @@ TargetObservation TargetDetector::detect(
                                            subpixel_candidate,
                                            &subpixel_metrics)) {
           const TargetObservation subpixel_observation =
-              this->code_decoder_.decode(frame, subpixel_candidate);
+              this->code_decoder_.decode(
+                  frame, subpixel_candidate,
+                  center_marker_only ? TargetMarkerId::B : TargetMarkerId::NONE);
 
           ESP_LOGD(TAG,
                    "V5.7 candidate[%u] subpixel=%.4f valid=%s rms=%.3f max=%.3f grad=%.1f",
@@ -214,6 +223,12 @@ TargetObservation TargetDetector::detect(
               candidate_best.subpixel_left_line.dy =
                   subpixel_metrics.left_line_dy;
 
+              if (center_marker_only) {
+                // Calibration camera : le contour subpixel du marqueur B
+                // suffit pour le score optique. Ne pas calculer les
+                // transitions internes / homographie V3.
+                candidate_best.pattern_refined = false;
+              } else {
               // Pose V3 : exploiter les transitions internes du motif 7x7.
               // Ce raffinement ne remplace jamais les coins/droites utilisés
               // par la distance V6.1 ; il produit uniquement une homographie
@@ -243,6 +258,7 @@ TargetObservation TargetDetector::detect(
                   candidate_best.pattern_homography[h] =
                       pattern_metrics.homography[h];
                 }
+              }
               }
             }
           }
@@ -308,6 +324,15 @@ TargetObservation TargetDetector::detect(
       best = candidate_best;
       best_selection_score = selection_score;
     }
+  }
+
+  if (center_marker_only && this->marker_best_[1].valid) {
+    best = this->marker_best_[1];
+    best.board_marker_mask = 0x02;
+    best.board_marker_count = 1;
+    best.board_complete = false;
+    this->update_tracking_(best);
+    return best;
   }
 
   TargetObservation board;
