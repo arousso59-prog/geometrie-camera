@@ -266,7 +266,12 @@ void FullCalibrationController::loop() {
     case FullCalibrationState::DETECT: {
       this->attempts_++;
 
-      if (!this->detection_service_->detect()) {
+      const CameraViewportMode mode_before =
+          this->tracking_controller_->viewport_controller()->snapshot().mode;
+      const bool high_precision_detection =
+          mode_before == CameraViewportMode::PRECISE_ROI;
+
+      if (!this->detection_service_->detect(high_precision_detection)) {
         this->fail_("calibration_detection_failed");
         return;
       }
@@ -291,8 +296,6 @@ void FullCalibrationController::loop() {
         this->preview_attempt_ = this->attempts_;
       }
 
-      const CameraViewportMode mode_before =
-          this->tracking_controller_->viewport_controller()->snapshot().mode;
       if (this->preview_attempt_ == this->attempts_) {
         this->preview_mode_ = CameraViewportController::mode_text(mode_before);
       }
