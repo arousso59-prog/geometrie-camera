@@ -21,7 +21,13 @@ bool FullCalibrationApiHandler::canHandle(AsyncWebServerRequest *request) const 
 
   char url_buf[AsyncWebServerRequest::URL_BUF_SIZE];
   const auto url = request->url_to(url_buf);
-  return url == "/calibration/full/start" ||
+  return url == "/calibration/geometry/start" ||
+         url == "/calibration/camera/start" ||
+         url == "/calibration/status" ||
+         url == "/calibration/cancel" ||
+         url == "/calibration/preview.bmp" ||
+         // Alias historique V35 : geometry.
+         url == "/calibration/full/start" ||
          url == "/calibration/full/status" ||
          url == "/calibration/full/cancel" ||
          url == "/calibration/full/preview.bmp";
@@ -37,18 +43,21 @@ void FullCalibrationApiHandler::handleRequest(AsyncWebServerRequest *request) {
     return;
   }
 
-  if (url == "/calibration/full/status") {
+  if (url == "/calibration/status" ||
+      url == "/calibration/full/status") {
     this->send_status_(request, 200, "ok");
     return;
   }
 
-  if (url == "/calibration/full/cancel") {
+  if (url == "/calibration/cancel" ||
+      url == "/calibration/full/cancel") {
     this->controller_->cancel();
     this->send_status_(request, 200, "ok");
     return;
   }
 
-  if (url == "/calibration/full/preview.bmp") {
+  if (url == "/calibration/preview.bmp" ||
+      url == "/calibration/full/preview.bmp") {
     if (this->preview_ == nullptr || this->controller_->preview_attempt() == 0 ||
         this->preview_->bmp_data() == nullptr || this->preview_->bmp_size() == 0) {
       request->send(404, "application/json",
@@ -65,10 +74,28 @@ void FullCalibrationApiHandler::handleRequest(AsyncWebServerRequest *request) {
     return;
   }
 
-  if (url == "/calibration/full/start") {
+  if (url == "/calibration/camera/start") {
+    if (this->controller_->running()) {
+      request->send(200, "application/json",
+                    "{\"status\":\"already_running\",\"running\":true}");
+      return;
+    }
+
+    if (!this->controller_->start_camera()) {
+      this->send_status_(request, 409, "error");
+      return;
+    }
+
+    request->send(
+        202, "application/json",
+        "{\"status\":\"accepted\",\"running\":true,\"kind\":\"camera\"}");
+    return;
+  }
+
+  if (url == "/calibration/geometry/start" ||
+      url == "/calibration/full/start") {
     // Demarrage idempotent : si une calibration est deja en cours, ne pas
-    // renvoyer 409. Le PC peut reprendre le suivi via /status sans relancer
-    // ni interrompre l'operation ESP.
+    // renvoyer 409. Le PC peut reprendre le suivi via /status sans relancer.
     if (this->controller_->running()) {
       request->send(200, "application/json",
                     "{\"status\":\"already_running\",\"running\":true}");
@@ -111,7 +138,7 @@ void FullCalibrationApiHandler::handleRequest(AsyncWebServerRequest *request) {
       return;
     }
 
-    if (!this->controller_->start(
+    if (!this->controller_->start_geometry(
             distance_mm,
             static_cast<uint8_t>(sample_count),
             has_force && force_value == 1)) {
@@ -121,8 +148,9 @@ void FullCalibrationApiHandler::handleRequest(AsyncWebServerRequest *request) {
 
     // Reponse volontairement minimale. Ne pas serialiser tout l'etat dans
     // la requete qui vient elle-meme de lancer capture + tracking.
-    request->send(202, "application/json",
-                  "{\"status\":\"accepted\",\"running\":true}");
+    request->send(
+        202, "application/json",
+        "{\"status\":\"accepted\",\"running\":true,\"kind\":\"geometry\"}");
     return;
   }
 
@@ -187,9 +215,14 @@ void FullCalibrationApiHandler::send_status_(
   json += status;
   json += "\"";
   json += ",\"state\":\"" + std::string(this->controller_->state_text()) + "\"";
+  json += ",\"kind\":\"" + std::string(this->controller_->kind_text()) + "\"";
   json += ",\"running\":";
   json += this->controller_->running() ? "true" : "false";
-  json += ",\"acquisition_mode\":\"precise_native_800x600_optical_tuning\"";
+  json += ",\"acquisition_mode\":\"";
+  json += this->controller_->kind() == CalibrationKind::CAMERA
+              ? "center_B_optical_tuning"
+              : "R1_geometry_precise";
+  json += "\"";
   json += ",\"phase\":\"" + std::string(this->controller_->phase_text()) + "\"";
   json += ",\"reference_resolution\":\"2560x1920\"";
   json += ",\"requested_samples\":" + std::to_string(this->controller_->requested_samples());
@@ -252,7 +285,7 @@ void FullCalibrationApiHandler::send_status_(
   json += this->controller_->using_auto_fallback() ? "true" : "false";
   json += "}";
 
-  json += ",\"preview\":\"/calibration/full/preview.bmp\"";
+  json += ",\"preview\":\"/calibration/preview.bmp\"";
 
   if (!this->controller_->last_error().empty()) {
     json += ",\"error\":\"" + this->controller_->last_error() + "\"";
@@ -269,7 +302,7 @@ void FullCalibrationApiHandler::send_status_(
   // Pendant l'operation, garder la reponse courte : le PC ne requiert que
   // progression + statistiques. La calibration complete n'est serialisee
   // qu'une fois l'operation terminee.
-  if (complete) {
+  if (complete && this->controller_->kind() == CalibrationKind::GEOMETRY) {
     json += ",\"calibration\":{";
     json += "\"fx_px\":" + std::to_string(calibration.fx_px);
     json += ",\"fy_px\":" + std::to_string(calibration.fy_px);
@@ -282,6 +315,19 @@ void FullCalibrationApiHandler::send_status_(
     json += ",\"k3\":" + std::to_string(calibration.k3);
     json += ",\"reference_width_px\":" + std::to_string(calibration.reference_width_px);
     json += ",\"reference_height_px\":" + std::to_string(calibration.reference_height_px);
+    json += ",\"persistent\":true";
+    json += "}";
+  }
+  if (complete && this->controller_->kind() == CalibrationKind::CAMERA) {
+    json += ",\"camera_profile\":{";
+    json += "\"ae_level\":" + std::to_string(this->controller_->best_ae_level());
+    json += ",\"exposure\":" + std::to_string(this->controller_->best_exposure());
+    json += ",\"gain\":" + std::to_string(this->controller_->best_gain());
+    json += ",\"brightness\":" + std::to_string(this->controller_->best_brightness());
+    json += ",\"contrast\":" + std::to_string(this->controller_->best_contrast());
+    json += ",\"score\":" + std::to_string(this->controller_->best_optical_score());
+    json += ",\"auto_fallback\":";
+    json += this->controller_->using_auto_fallback() ? "true" : "false";
     json += "}";
   }
   json += "}}";
