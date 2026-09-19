@@ -182,7 +182,7 @@ cycle_ms
 
 ## API
 
-Contrat : `GET /api/wsdl`, version **34**.
+Contrat : `GET /api/wsdl`, version **36**.
 
 ### Lecture seule
 
@@ -347,3 +347,20 @@ La calibration n'accepte plus de taille de cible. La distance connue reste le se
 - correspondances subpixel du motif.
 
 Ainsi les primitives de pose et la calibration intrinsèque utilisent toutes le repère canonique 2560 × 1920.
+
+
+## Calibration V36
+
+Deux workflows utilisent désormais le même contrôleur interne mais avec des contraintes distinctes.
+
+`GEOMETRY` :
+
+`R1 A+B+C → PRECISE → N échantillons → fx/fy robustes → NVS`
+
+Aucun réglage caméra n'est modifié. `GeometryCalibrationStorage` charge automatiquement l'enregistrement R1 au boot et le réinjecte dans `GeometryMeasurementEngine`.
+
+`CAMERA` :
+
+`B central → tracking → PRECISE → contour subpixel B → score optique → réglages OV5640`
+
+La détection B seule ne lance pas `TargetPatternRefiner`, ne construit pas de pose R1 et ne modifie jamais fx/fy. Le décodage gris est conservé car il fournit directement la luminance nécessaire au décodage et au score optique.
