@@ -15,7 +15,9 @@ class TargetDetector {
  public:
   TargetDetector();
 
-  TargetObservation detect(const GrayFrameView &frame);
+  // high_precision=false : tracking rapide, un marqueur R1 identifie suffit.
+  // high_precision=true  : PRECISE, recherche A+B+C + subpixel/motif.
+  TargetObservation detect(const GrayFrameView &frame, bool high_precision = false);
   void reset_tracking();
 
  private:
