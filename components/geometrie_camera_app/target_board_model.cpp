@@ -123,7 +123,7 @@ bool project_h(const float h[9], float u, float v, ImagePoint &point) {
 bool fit_homography(PatternFeature *features, uint16_t count,
                     float h[9], uint16_t &inliers,
                     float &rms, float &max_residual) {
-  if (features == nullptr || count < 8) return false;
+  if (features == nullptr || count < 4) return false;
 
   // Buffers persistants : eviter ~5 Ko de tableaux temporaires sur la pile
   // FreeRTOS pendant la detection multi-marqueurs.
@@ -264,7 +264,7 @@ bool build_target_r1_observation(
     uint16_t composite_capacity,
     TargetObservation &result) {
   result = TargetObservation();
-  if (composite_features == nullptr || composite_capacity < 8) return false;
+  if (composite_features == nullptr || composite_capacity < 4) return false;
 
   uint8_t marker_count = 0;
   uint8_t marker_mask = 0;
