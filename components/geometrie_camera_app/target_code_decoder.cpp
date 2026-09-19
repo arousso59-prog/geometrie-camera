@@ -47,8 +47,10 @@ TargetPoint expand_point(const TargetPoint &point, float center_x, float center_
 
 TargetCodeDecoder::TargetCodeDecoder() {}
 
-TargetObservation TargetCodeDecoder::decode(const GrayFrameView &frame,
-                                            const TargetCandidate &candidate) const {
+TargetObservation TargetCodeDecoder::decode(
+    const GrayFrameView &frame,
+    const TargetCandidate &candidate,
+    TargetMarkerId required_marker) const {
   TargetObservation best;
   float best_score = 0.0f;
   float best_pattern_score = 0.0f;
@@ -101,6 +103,10 @@ TargetObservation TargetCodeDecoder::decode(const GrayFrameView &frame,
       static constexpr TargetMarkerId MARKER_IDS[3] = {
           TargetMarkerId::A, TargetMarkerId::B, TargetMarkerId::C};
       for (TargetMarkerId marker_id : MARKER_IDS) {
+        if (required_marker != TargetMarkerId::NONE &&
+            marker_id != required_marker) {
+          continue;
+        }
         for (uint8_t rotation = 0; rotation < 4; ++rotation) {
         uint32_t black_sum = 0;
         uint32_t white_sum = 0;
