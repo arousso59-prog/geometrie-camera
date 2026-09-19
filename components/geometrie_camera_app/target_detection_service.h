@@ -14,7 +14,7 @@ class TargetDetectionService {
  public:
   TargetDetectionService(JpegFilteredDiagnostic *source, TargetDetector *detector);
 
-  bool detect();
+  bool detect(bool high_precision = false);
   void reset_tracking();
 
   bool ready() const;
