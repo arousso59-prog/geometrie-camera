@@ -290,6 +290,15 @@ TargetObservation TargetDetector::detect(
       if (!high_precision) {
         break;
       }
+
+      // En PRECISE, des que A+B+C sont acquis, les candidats restants ne
+      // peuvent plus apporter de nouvelle information geometrique majeure.
+      // Cela borne le cout avec la nouvelle cible a trois raffinements utiles.
+      if (this->marker_best_[0].valid &&
+          this->marker_best_[1].valid &&
+          this->marker_best_[2].valid) {
+        break;
+      }
     }
 
     const float selection_score = this->selection_score_(candidate_best);
