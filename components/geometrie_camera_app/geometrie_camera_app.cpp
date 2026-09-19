@@ -81,7 +81,7 @@ void GeometrieCameraApp::dump_config() {
   ESP_LOGCONFIG(TAG, "  Tracking API: /tracking/*, /api/camera/viewport");
   ESP_LOGCONFIG(TAG, "  Target diagnostic API: /target/status, /target/preview.bmp");
   ESP_LOGCONFIG(TAG, "  Measurement API: /measurement/*");
-  ESP_LOGCONFIG(TAG, "  Full calibration API: /calibration/full/*");
+  ESP_LOGCONFIG(TAG, "  Calibration API: /calibration/geometry/start, /calibration/camera/start, /calibration/status");
   ESP_LOGCONFIG(TAG, "  Continuous API: /continuous/start, /continuous/stop, /continuous/status");
   ESP_LOGCONFIG(TAG,
                 "  Target model: R1 fixed board %.0fx%.0f mm, reference %.0fx%.0f mm, markers A+B+C",
@@ -114,7 +114,8 @@ std::string GeometrieCameraApp::status_text() const {
   }
 
   if (this->full_calibration_controller_.running()) {
-    return std::string("Calibration native PRECISE - ") +
+    return std::string("Calibration ") +
+           this->full_calibration_controller_.kind_text() + " - " +
            this->full_calibration_controller_.state_text() + " - " +
            std::to_string(this->full_calibration_controller_.valid_samples()) + "/" +
            std::to_string(this->full_calibration_controller_.requested_samples());
@@ -225,7 +226,7 @@ void GeometrieCameraApp::register_api_if_possible_() {
   ESP_LOGI(TAG,
            "API HTTP camera enregistree: /api/wsdl, /api/runtime/status, "
            "/api/camera/viewport, /tracking/status, /target/status, /target/preview.bmp, /measurement/*, "
-           "/calibration/full/* et /continuous/*");
+           "/calibration/* et /continuous/*");
 }
 
 }  // namespace geometrie_camera_app
