@@ -12,7 +12,10 @@ class TargetCodeDecoder {
  public:
   TargetCodeDecoder();
 
-  TargetObservation decode(const GrayFrameView &frame, const TargetCandidate &candidate) const;
+  TargetObservation decode(
+      const GrayFrameView &frame,
+      const TargetCandidate &candidate,
+      TargetMarkerId required_marker = TargetMarkerId::NONE) const;
 
  private:
   TargetPoint project_(const TargetCandidate &candidate, float u, float v) const;
