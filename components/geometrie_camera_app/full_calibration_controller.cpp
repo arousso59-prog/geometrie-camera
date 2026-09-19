@@ -281,7 +281,8 @@ void FullCalibrationController::loop() {
           this->detection_service_->last_observation();
       const bool precision_target_found =
           target_found && local_observation.board_complete &&
-          local_observation.marker_id == TargetMarkerId::BOARD_R1;
+          local_observation.marker_id == TargetMarkerId::BOARD_R1 &&
+          local_observation.subpixel_refined;
 
       this->last_target_found_ = target_found;
       this->last_marker_count_ = local_observation.board_marker_count;
