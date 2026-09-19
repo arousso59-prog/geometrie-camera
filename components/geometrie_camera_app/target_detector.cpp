@@ -303,9 +303,17 @@ TargetObservation TargetDetector::detect(
       // marqueur R1 correctement code est trouve, il suffit a reconstruire
       // la position de la plaque et a guider le viewport. Inutile de payer
       // les 7 autres candidats et les raffinements metrologiques.
-      if (!high_precision && candidate_best.marker_id == TargetMarkerId::B) {
-        // B est le marqueur central et le plus grand : son extrapolation vers
-        // le centre de la plaque est la plus courte et donc la plus stable.
+      if (center_marker_only &&
+          candidate_best.marker_id == TargetMarkerId::B) {
+        // Calibration camera : B seul suffit, y compris en PRECISE. Une fois
+        // son contour subpixel obtenu il est inutile d'examiner d'autres
+        // candidats.
+        break;
+      }
+
+      if (!high_precision &&
+          candidate_best.marker_id == TargetMarkerId::B) {
+        // Tracking R1 normal : B est le marqueur central et le plus grand.
         break;
       }
 
