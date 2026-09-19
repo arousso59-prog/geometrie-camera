@@ -14,9 +14,15 @@ class ContinuousMeasurementController;
 class JpegDiagnostic;
 class JpegFilteredDiagnostic;
 class MeasurementManager;
+class GeometryCalibrationStorage;
 class TargetDetectionService;
 class TargetTrackingController;
 class TargetDetectionPreview;
+
+enum class CalibrationKind : uint8_t {
+  GEOMETRY,
+  CAMERA,
+};
 
 enum class FullCalibrationState : uint8_t {
   IDLE,
@@ -38,10 +44,16 @@ class FullCalibrationController {
                             JpegFilteredDiagnostic *filtered_source,
                             TargetDetectionService *detection_service,
                             MeasurementManager *measurement_manager,
+                            GeometryCalibrationStorage *geometry_storage,
                             ContinuousMeasurementController *continuous_controller,
                             TargetTrackingController *tracking_controller,
                             TargetDetectionPreview *preview);
 
+  bool start_geometry(float known_distance_mm,
+                      uint8_t sample_count = DEFAULT_SAMPLE_COUNT,
+                      bool force = false);
+  bool start_camera();
+  // Compatibilite API interne historique : equivalent geometry.
   bool start(float known_distance_mm,
              uint8_t sample_count = DEFAULT_SAMPLE_COUNT,
              bool force = false);
@@ -50,6 +62,8 @@ class FullCalibrationController {
 
   bool running() const;
   FullCalibrationState state() const;
+  CalibrationKind kind() const;
+  const char *kind_text() const;
   const char *state_text() const;
   const std::string &last_error() const;
 
@@ -129,6 +143,7 @@ class FullCalibrationController {
   bool start_brightness_tuning_();
   bool advance_manual_pair_(bool exposure_axis);
   bool finish_optical_tuning_();
+  void finish_camera_success_();
   bool fallback_to_auto_sampling_(const char *reason);
   bool apply_camera_snapshot_(const CameraSettingsSnapshot &snapshot);
   void restore_previous_camera_settings_();
@@ -147,11 +162,13 @@ class FullCalibrationController {
   JpegFilteredDiagnostic *filtered_source_;
   TargetDetectionService *detection_service_;
   MeasurementManager *measurement_manager_;
+  GeometryCalibrationStorage *geometry_storage_;
   ContinuousMeasurementController *continuous_controller_;
   TargetTrackingController *tracking_controller_;
   TargetDetectionPreview *preview_;
 
   FullCalibrationState state_;
+  CalibrationKind kind_;
   CalibrationPhase phase_;
   std::string last_error_;
 
