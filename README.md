@@ -65,7 +65,7 @@ La référence du contrat HTTP est :
 GET /api/wsdl
 ```
 
-Version actuelle : **34**.
+Version actuelle : **35**.
 
 ### Diagnostic lecture seule
 
@@ -355,3 +355,20 @@ La taille de cible n'est plus un paramètre utilisateur. Le seul paramètre géo
 Les calculs de distance utilisent désormais séparément **240 mm en largeur** et **90 mm en hauteur**. Les calculs de pose utilisent le même rectangle physique : l'ancien modèle carré 50 × 50 mm n'est plus utilisé comme cible globale.
 
 V34 corrige également le remappage ROI → repère capteur : coins, dimensions V5/V6/V6.1, droites subpixel, homographie et correspondances du motif sont maintenant tous exprimés dans le même repère 2560 × 1920 avant les calculs de pose.
+
+
+## Tracking R1 rapide V35
+
+Le premier essai V34 a montré deux défauts pendant la calibration : détection trop coûteuse avant PRECISE et perte fréquente de la plaque lors des zooms intermédiaires.
+
+V35 sépare explicitement les deux besoins :
+
+- SEARCH / ZOOM_WIDE / ZOOM_MEDIUM / ZOOM_FINE : détection rapide, sans raffinement subpixel ni motif interne ;
+- un seul marqueur R1 correctement identifié suffit à reconstruire la position de la plaque pour le tracking ;
+- le marqueur B central 50 × 50 mm est préféré lorsqu'il est disponible ;
+- si B est absent, A ou C peuvent maintenir le tracking ;
+- PRECISE : recherche complète A+B+C, raffinements subpixel et motif activés ;
+- calibration et mesure restent interdites tant que A+B+C et le raffinement subpixel ne sont pas valides ;
+- en PRECISE, une plaque partielle conserve le tracking mais n'est plus considérée comme une panne de calcul.
+
+Ainsi le 50 × 50 central n'est pas réintroduit comme ancienne cible : seul son rôle de repère de tracking est utilisé. La cible métrologique reste exclusivement R1 250 × 100 mm.
