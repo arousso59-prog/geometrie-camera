@@ -315,11 +315,13 @@ bool build_target_r1_observation(
     }
   }
 
-  if (marker_count < 2) return false;
+  if (marker_count < 1) return false;
 
+  // Un seul marqueur R1 IDENTIFIE suffit geometriquement a projeter le cadre
+  // complet et guider le tracking. La mesure/calibration haute precision reste
+  // strictement desactivee tant que A+B+C ne sont pas simultanement presents.
   // Si le raffinement interne n'a pas fourni assez de points, utiliser les
-  // coins canoniques des marqueurs pour le tracking. La mesure haute precision
-  // restera desactivee tant que les trois marqueurs subpixel ne sont pas la.
+  // quatre coins canoniques du/des marqueurs.
   if (feature_count < MIN_PATTERN_FEATURES) {
     feature_count = 0;
     for (uint8_t m = 0; m < 3; ++m) {
