@@ -65,7 +65,7 @@ La référence du contrat HTTP est :
 GET /api/wsdl
 ```
 
-Version actuelle : **35**.
+Version actuelle : **36**.
 
 ### Diagnostic lecture seule
 
@@ -80,10 +80,11 @@ GET /target/preview.bmp
 ### Calibration
 
 ```text
-GET /calibration/full/start?distance_mm=<mm>&samples=<3..20>&force=<0|1>
-GET /calibration/full/status
-GET /calibration/full/preview.bmp
-GET /calibration/full/cancel
+GET /calibration/geometry/start?distance_mm=<mm>&samples=<3..20>&force=<0|1>
+GET /calibration/camera/start
+GET /calibration/status
+GET /calibration/preview.bmp
+GET /calibration/cancel
 ```
 
 ### Mesure
@@ -372,3 +373,34 @@ V35 sépare explicitement les deux besoins :
 - en PRECISE, une plaque partielle conserve le tracking mais n'est plus considérée comme une panne de calcul.
 
 Ainsi le 50 × 50 central n'est pas réintroduit comme ancienne cible : seul son rôle de repère de tracking est utilisé. La cible métrologique reste exclusivement R1 250 × 100 mm.
+
+
+## Deux calibrations séparées V36
+
+La calibration unique historique est remplacée par deux opérations indépendantes.
+
+### Calibration géométrique R1
+
+Cette opération est rare :
+
+- cible complète A+B+C obligatoire ;
+- distance caméra → centre de cible connue ;
+- aucun réglage exposition/gain/contraste/luminosité n'est effectué ;
+- calcul robuste de fx/fy sur plusieurs images PRECISE ;
+- sauvegarde du résultat dans la mémoire non volatile NVS de l'ESP ;
+- chargement automatique de cette calibration au démarrage.
+
+Une calibration géométrique réussie n'a donc plus besoin d'être répétée après chaque redémarrage.
+
+### Calibration caméra
+
+Cette opération peut être faite régulièrement selon l'éclairage :
+
+- seul le marqueur central B 50×50 mm est recherché ;
+- B guide tous les niveaux SEARCH → WIDE → MEDIUM → FINE → PRECISE ;
+- en PRECISE, seuls les quatre contours subpixel de B sont raffinés ;
+- aucun calcul A+B+C, aucune homographie interne V3/V4 et aucun calcul fx/fy ;
+- la calibration géométrique courante reste strictement inchangée ;
+- l'optimisation conserve AEC/AGC automatique initial, lecture des registres OV5640, validation manuelle puis réglage local exposition/gain/contraste/luminosité.
+
+Le pipeline conserve le décodage JPEG vers **luminance 8 bits**. Ce n'est pas une binarisation noir/blanc : ces niveaux de gris sont nécessaires pour identifier B et mesurer P10/P90, contraste, gradients et RMS des bords. En revanche, la reconstruction métrologique complète de la cible est supprimée de cette calibration caméra.
