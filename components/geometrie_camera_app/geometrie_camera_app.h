@@ -12,6 +12,7 @@
 #include "continuous_measurement_controller.h"
 #include "full_calibration_api.h"
 #include "full_calibration_controller.h"
+#include "geometry_calibration_storage.h"
 #include "jpeg_diagnostic.h"
 #include "jpeg_filtered_diagnostic.h"
 #include "measurement_api.h"
@@ -75,6 +76,7 @@ class GeometrieCameraApp : public Component {
   void register_api_if_possible_();
 
   MeasurementManager measurement_manager_;
+  GeometryCalibrationStorage geometry_calibration_storage_;
   TargetDetector target_detector_;
   CameraResolutionController resolution_controller_;
   CameraSettingsController settings_controller_;
