@@ -10,6 +10,7 @@
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 #include "geometry_measurement.h"
+#include "geometry_calibration_storage.h"
 #include "jpeg_diagnostic.h"
 #include "jpeg_filtered_diagnostic.h"
 #include "measurement_manager.h"
@@ -55,6 +56,7 @@ FullCalibrationController::FullCalibrationController(
     JpegFilteredDiagnostic *filtered_source,
     TargetDetectionService *detection_service,
     MeasurementManager *measurement_manager,
+    GeometryCalibrationStorage *geometry_storage,
     ContinuousMeasurementController *continuous_controller,
     TargetTrackingController *tracking_controller,
     TargetDetectionPreview *preview)
@@ -63,10 +65,12 @@ FullCalibrationController::FullCalibrationController(
       filtered_source_(filtered_source),
       detection_service_(detection_service),
       measurement_manager_(measurement_manager),
+      geometry_storage_(geometry_storage),
       continuous_controller_(continuous_controller),
       tracking_controller_(tracking_controller),
       preview_(preview),
       state_(FullCalibrationState::IDLE),
+      kind_(CalibrationKind::GEOMETRY),
       phase_(CalibrationPhase::TRACKING),
       last_error_(),
       known_distance_mm_(0.0f),
@@ -131,15 +135,18 @@ FullCalibrationController::FullCalibrationController(
       previous_camera_settings_(),
       previous_camera_settings_saved_(false) {}
 
-bool FullCalibrationController::start(float known_distance_mm,
-                                      uint8_t sample_count,
-                                      bool force) {
+bool FullCalibrationController::start(
+    float known_distance_mm, uint8_t sample_count, bool force) {
+  return this->start_geometry(known_distance_mm, sample_count, force);
+}
+
+bool FullCalibrationController::start_geometry(
+    float known_distance_mm, uint8_t sample_count, bool force) {
   if (this->running()) {
     this->last_error_ = "calibration_already_running";
     return false;
   }
   if (this->jpeg_source_ == nullptr ||
-      this->settings_controller_ == nullptr ||
       this->filtered_source_ == nullptr ||
       this->detection_service_ == nullptr ||
       this->measurement_manager_ == nullptr ||
@@ -161,22 +168,83 @@ bool FullCalibrationController::start(float known_distance_mm,
     return false;
   }
 
-  GeometryMeasurementEngine &engine = this->measurement_manager_->measurement_engine();
+  GeometryMeasurementEngine &engine =
+      this->measurement_manager_->measurement_engine();
   if (engine.has_calibration() && !force) {
     this->last_error_ = "calibration_locked";
     this->state_ = FullCalibrationState::ERROR;
     return false;
   }
 
-  if (this->continuous_controller_ != nullptr && this->continuous_controller_->running()) {
+  if (this->continuous_controller_ != nullptr &&
+      this->continuous_controller_->running()) {
     this->continuous_controller_->stop();
   }
 
   this->previous_calibration_ = engine.calibration();
   this->previous_config_saved_ = true;
 
+  // La calibration geometrique ne modifie plus l'optique. Elle exploite le
+  // profil camera courant, normalement obtenu par la calibration camera.
+  this->previous_camera_settings_saved_ = false;
+
+  this->reset_run_();
+  this->kind_ = CalibrationKind::GEOMETRY;
+  this->known_distance_mm_ = known_distance_mm;
+  this->requested_samples_ = sample_count;
+  this->max_attempts_ = std::min<uint8_t>(
+      MAX_TOTAL_ATTEMPTS,
+      static_cast<uint8_t>(std::max<int>(sample_count * 5, sample_count + 24)));
+
+  ESP_LOGI(TAG,
+           "Calibration GEOMETRIQUE R1: distance=%.2f mm, cible complete A+B+C, "
+           "%u echantillons; reglages camera inchanges; sauvegarde NVS en fin",
+           known_distance_mm, static_cast<unsigned>(sample_count));
+
+  if (this->jpeg_source_->capture_pending()) {
+    this->capture_started_ms_ = millis();
+    this->state_ = FullCalibrationState::WAIT_IDLE;
+    return true;
+  }
+
+  if (!this->begin_native_tracking_()) {
+    this->fail_("native_tracking_start_failed");
+    return false;
+  }
+  return true;
+}
+
+bool FullCalibrationController::start_camera() {
+  if (this->running()) {
+    this->last_error_ = "calibration_already_running";
+    return false;
+  }
+  if (this->jpeg_source_ == nullptr ||
+      this->settings_controller_ == nullptr ||
+      this->filtered_source_ == nullptr ||
+      this->detection_service_ == nullptr ||
+      this->measurement_manager_ == nullptr ||
+      this->tracking_controller_ == nullptr ||
+      !this->tracking_controller_->supported()) {
+    this->last_error_ = "camera_calibration_dependencies_unavailable";
+    this->state_ = FullCalibrationState::ERROR;
+    return false;
+  }
+
+  if (this->continuous_controller_ != nullptr &&
+      this->continuous_controller_->running()) {
+    this->continuous_controller_->stop();
+  }
+
+  // La calibration camera ne touche jamais fx/fy. Sauvegarder tout de meme
+  // la config geometrique pour qu'un echec ne puisse pas la modifier.
+  this->previous_calibration_ =
+      this->measurement_manager_->measurement_engine().calibration();
+  this->previous_config_saved_ = true;
+
   this->previous_camera_settings_ = this->settings_controller_->read();
-  this->previous_camera_settings_saved_ = this->previous_camera_settings_.available;
+  this->previous_camera_settings_saved_ =
+      this->previous_camera_settings_.available;
   if (!this->previous_camera_settings_saved_) {
     this->last_error_ = "camera_settings_unavailable";
     this->state_ = FullCalibrationState::ERROR;
@@ -184,23 +252,16 @@ bool FullCalibrationController::start(float known_distance_mm,
   }
 
   this->reset_run_();
-  this->known_distance_mm_ = known_distance_mm;
-  this->requested_samples_ = sample_count;
+  this->kind_ = CalibrationKind::CAMERA;
+  this->known_distance_mm_ = 0.0f;
+  this->requested_samples_ = 0;
   this->max_attempts_ = std::min<uint8_t>(
       MAX_TOTAL_ATTEMPTS,
-      static_cast<uint8_t>(std::max<int>(
-          sample_count * 5 + OPTICAL_TUNING_MAX_ATTEMPTS,
-          sample_count + 24 + OPTICAL_TUNING_MAX_ATTEMPTS)));
+      static_cast<uint8_t>(32 + OPTICAL_TUNING_MAX_ATTEMPTS));
 
   ESP_LOGI(TAG,
-           "Calibration R1 demandee: PRECISE=%ux%u, distance=%.2f mm, "
-           "cible fixe=250x100 mm reference=240x90 mm, marqueurs A+B+C, "
-           "echantillons=%u, auto-reglage optique <=%u prises",
-           static_cast<unsigned>(NATIVE_OUTPUT_WIDTH),
-           static_cast<unsigned>(NATIVE_OUTPUT_HEIGHT),
-           known_distance_mm,
-           static_cast<unsigned>(sample_count),
-           static_cast<unsigned>(OPTICAL_TUNING_MAX_ATTEMPTS));
+           "Calibration CAMERA: marqueur central B uniquement, "
+           "tracking + contours subpixel + score optique; fx/fy inchanges");
 
   if (this->jpeg_source_->capture_pending()) {
     this->capture_started_ms_ = millis();
