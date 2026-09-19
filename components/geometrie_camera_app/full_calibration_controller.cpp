@@ -521,6 +521,11 @@ bool FullCalibrationController::running() const {
 }
 
 FullCalibrationState FullCalibrationController::state() const { return this->state_; }
+CalibrationKind FullCalibrationController::kind() const { return this->kind_; }
+
+const char *FullCalibrationController::kind_text() const {
+  return this->kind_ == CalibrationKind::CAMERA ? "camera" : "geometry";
+}
 
 const char *FullCalibrationController::state_text() const {
   switch (this->state_) {
@@ -607,7 +612,13 @@ bool FullCalibrationController::begin_native_tracking_() {
   if (!this->tracking_controller_->start()) return false;
   this->detection_service_->reset_tracking();
   this->phase_ = CalibrationPhase::TRACKING;
-  ESP_LOGI(TAG, "Calibration: SEARCH actif, progression vers PRECISE avant reglage optique");
+  if (this->kind_ == CalibrationKind::CAMERA) {
+    ESP_LOGI(TAG,
+             "Calibration CAMERA: SEARCH -> PRECISE sur marqueur central B");
+  } else {
+    ESP_LOGI(TAG,
+             "Calibration GEOMETRIQUE: SEARCH -> PRECISE, R1 complete A+B+C requise");
+  }
   return this->request_next_capture_();
 }
 
@@ -975,14 +986,14 @@ bool FullCalibrationController::handle_tuning_result_(
     }
 
     if (this->auto_fallback_) {
-      this->phase_ = CalibrationPhase::SAMPLING;
       this->current_optical_score_ = this->best_optical_score_;
       ESP_LOGW(TAG,
-               "Calibration poursuivie en AEC/AGC AUTO: exp reel=%d gain reel=%d "
+               "Calibration CAMERA conserve AEC/AGC AUTO: exp reel=%d gain reel=%d "
                "score=%.1f; verrouillage manuel abandonne",
                this->best_exposure_, this->best_gain_,
                this->best_optical_score_);
-      return this->request_next_capture_();
+      this->finish_camera_success_();
+      return true;
     }
 
     this->phase_ = CalibrationPhase::TUNE_MANUAL_VALIDATE;
@@ -1176,18 +1187,32 @@ bool FullCalibrationController::finish_optical_tuning_() {
     return this->fallback_to_auto_sampling_("manual_final_apply_failed");
   }
 
-  this->phase_ = CalibrationPhase::SAMPLING;
   this->current_optical_score_ = this->best_optical_score_;
 
   ESP_LOGI(TAG,
-           "Optique verrouillee MANUEL: AE=%d exposition=%d gain=%d lum=%d ctr=%d "
-           "score=%.1f AEC=OFF AGC=OFF; debut des %u mesures calibration",
+           "Calibration CAMERA terminee MANUEL: AE=%d exposition=%d gain=%d "
+           "lum=%d ctr=%d score=%.1f AEC=OFF AGC=OFF",
            this->best_ae_level_, this->best_exposure_, this->best_gain_,
            this->best_brightness_, this->best_contrast_,
-           this->best_optical_score_,
-           static_cast<unsigned>(this->requested_samples_));
+           this->best_optical_score_);
 
-  return this->request_next_capture_();
+  this->finish_camera_success_();
+  return true;
+}
+
+void FullCalibrationController::finish_camera_success_() {
+  // fx/fy et la calibration geometrique restent strictement inchanges.
+  this->previous_config_saved_ = false;
+
+  // Conserver le profil optique qui vient d'etre selectionne.
+  this->previous_camera_settings_saved_ = false;
+
+  this->restore_nominal_camera_();
+  this->last_error_.clear();
+  this->state_ = FullCalibrationState::COMPLETE;
+
+  ESP_LOGI(TAG,
+           "Calibration CAMERA validee sur marqueur B; calibration geometrique conservee");
 }
 
 bool FullCalibrationController::fallback_to_auto_sampling_(const char *reason) {
@@ -1362,9 +1387,18 @@ void FullCalibrationController::finish_success_() {
   this->result_calibration_.reference_width_px = CALIBRATION_REFERENCE_WIDTH;
   this->result_calibration_.reference_height_px = CALIBRATION_REFERENCE_HEIGHT;
 
-  GeometryMeasurementEngine &engine = this->measurement_manager_->measurement_engine();
+  GeometryMeasurementEngine &engine =
+      this->measurement_manager_->measurement_engine();
   engine.set_calibration(this->result_calibration_);
   this->measurement_manager_->reset();
+
+  if (this->geometry_storage_ == nullptr ||
+      !this->geometry_storage_->save(
+          this->result_calibration_,
+          this->stddev_fx_px_, this->stddev_fy_px_)) {
+    this->fail_("geometry_persistence_failed");
+    return;
+  }
 
   this->previous_config_saved_ = false;
   // Les reglages camera optimises sont volontairement conserves pour les
@@ -1376,13 +1410,11 @@ void FullCalibrationController::finish_success_() {
   this->state_ = FullCalibrationState::COMPLETE;
 
   ESP_LOGI(TAG,
-           "Calibration terminee: n=%u fx=%.3f +/- %.3f fy=%.3f +/- %.3f; "
-           "camera verrouillee AE=%d exp=%d gain=%d lum=%d ctr=%d",
+           "Calibration GEOMETRIQUE terminee et sauvegardee NVS: "
+           "n=%u fx=%.3f +/- %.3f fy=%.3f +/- %.3f",
            static_cast<unsigned>(this->valid_samples_),
            this->mean_fx_px_, this->stddev_fx_px_,
-           this->mean_fy_px_, this->stddev_fy_px_,
-           this->best_ae_level_, this->best_exposure_, this->best_gain_,
-           this->best_brightness_, this->best_contrast_);
+           this->mean_fy_px_, this->stddev_fy_px_);
 }
 
 void FullCalibrationController::fail_(const char *error) {
