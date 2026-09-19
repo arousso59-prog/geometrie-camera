@@ -210,7 +210,9 @@ void ContinuousMeasurementController::loop() {
       return;
 
     case ContinuousMeasurementState::DETECT: {
-      if (!this->detection_service_->detect()) {
+      const bool high_precision_detection =
+          this->current_cycle_viewport_mode_ == "precise";
+      if (!this->detection_service_->detect(high_precision_detection)) {
         if (this->running_) this->fail_cycle_("detection_failed");
         return;
       }
@@ -240,6 +242,32 @@ void ContinuousMeasurementController::loop() {
         const TrackingUpdateResult tracking_result =
             this->tracking_controller_->update_after_detection(
                 true, this->detection_service_->last_observation());
+        if (tracking_result == TrackingUpdateResult::ERROR) {
+          this->fail_cycle_("tracking_update_failed");
+          return;
+        }
+        if (tracking_result == TrackingUpdateResult::VIEWPORT_CHANGED) {
+          this->reset_local_tracking_after_viewport_change_();
+        }
+        this->current_compute_ms_ = 0;
+        this->finish_cycle_(true, false);
+        return;
+      }
+
+      const TargetObservation &precise_observation =
+          this->detection_service_->last_observation();
+      const bool precision_ready =
+          precise_observation.board_complete &&
+          precise_observation.marker_id == TargetMarkerId::BOARD_R1 &&
+          precise_observation.subpixel_refined;
+
+      if (!precision_ready) {
+        // En PRECISE, une plaque partielle reste utile pour garder le ROI
+        // centre, mais ne doit ni produire une mesure ni etre comptee comme
+        // panne du pipeline.
+        const TrackingUpdateResult tracking_result =
+            this->tracking_controller_->update_after_detection(
+                true, precise_observation);
         if (tracking_result == TrackingUpdateResult::ERROR) {
           this->fail_cycle_("tracking_update_failed");
           return;
