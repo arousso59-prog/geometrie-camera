@@ -19,13 +19,14 @@ void ApiWsdlHandler::handleRequest(AsyncWebServerRequest *request) {
   std::string xml;
   xml.reserve(7000);
   xml += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-  xml += "<api name=\"geometrie-camera\" version=\"34\">\n";
+  xml += "<api name=\"geometrie-camera\" version=\"35\">\n";
   xml += "  <description>API operationnelle du capteur de geometrie. Le tracking haute precision et les reglages optiques sont automatiques.</description>\n";
   xml += "  <conventions>\n";
   xml += "    <item>Le tracking SEARCH vers PRECISE est permanent et ne possede plus de commande activation/desactivation.</item>\n";
   xml += "    <item>Les reglages camera sont internes a la calibration automatique et ne sont plus exposes en commande manuelle.</item>\n";
   xml += "    <item>Le pipeline image est capture JPEG, decodage gris, detection V6.1 puis mesure. Le controle de nettete et la correction d artefacts ont ete retires.</item>\n";
   xml += "    <item>V34 remplace definitivement la cible 50x50 par la cible R1 fixe 250x100 mm, reference metrologique 240x90 mm et trois marqueurs A/B/C identifies.</item>\n";
+  xml += "    <item>V35 separe le tracking rapide de la metrologie : un marqueur R1 identifie guide SEARCH/WIDE/MEDIUM/FINE; PRECISE exige A+B+C et active seul les raffinements subpixel/motif.</item>\n";
   xml += "    <item>La geometrie de cible n est plus configurable. Calibration et mesure exigent les trois marqueurs R1; deux marqueurs peuvent seulement aider le tracking.</item>\n";
   xml += "    <item>SEARCH, ZOOM_WIDE, ZOOM_MEDIUM et ZOOM_FINE servent uniquement au tracking. Seul PRECISE natif 800x600 produit une mesure.</item>\n";
   xml += "    <item>La calibration, la prise de mesure et le mode continu restent les trois usages operationnels conserves.</item>\n";
