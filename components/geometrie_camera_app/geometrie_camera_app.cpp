@@ -13,6 +13,7 @@ static const char *const TAG = "geometrie_camera_app";
 
 GeometrieCameraApp::GeometrieCameraApp()
     : measurement_manager_(),
+      geometry_calibration_storage_(),
       target_detector_(),
       resolution_controller_(),
       settings_controller_(),
@@ -28,7 +29,8 @@ GeometrieCameraApp::GeometrieCameraApp()
       full_calibration_controller_(&this->jpeg_diagnostic_,
                                    &this->settings_controller_,
                                    &this->jpeg_filtered_diagnostic_, &this->target_detection_service_,
-                                   &this->measurement_manager_, &this->continuous_measurement_controller_,
+                                   &this->measurement_manager_, &this->geometry_calibration_storage_,
+                                   &this->continuous_measurement_controller_,
                                    &this->tracking_controller_, &this->target_detection_preview_),
       runtime_diagnostics_(),
       api_wsdl_handler_(&this->resolution_controller_),
@@ -47,6 +49,15 @@ GeometrieCameraApp::GeometrieCameraApp()
 void GeometrieCameraApp::setup() {
   ESP_LOGI(TAG, "Initialisation application geometrie camera");
   this->measurement_manager_.setup();
+  this->geometry_calibration_storage_.setup();
+
+  CameraCalibration stored_calibration;
+  if (this->geometry_calibration_storage_.load(stored_calibration)) {
+    this->measurement_manager_.measurement_engine().set_calibration(
+        stored_calibration);
+    this->measurement_manager_.reset();
+  }
+
   this->resolution_controller_.sync_from_sensor();
   this->register_api_if_possible_();
 }
@@ -76,8 +87,11 @@ void GeometrieCameraApp::dump_config() {
                 "  Target model: R1 fixed board %.0fx%.0f mm, reference %.0fx%.0f mm, markers A+B+C",
                 TARGET_R1_BOARD_WIDTH_MM, TARGET_R1_BOARD_HEIGHT_MM,
                 TARGET_R1_REFERENCE_WIDTH_MM, TARGET_R1_REFERENCE_HEIGHT_MM);
-  ESP_LOGCONFIG(TAG, "  Geometry calibration: %s",
-                this->measurement_manager_.measurement_engine().has_calibration() ? "VALID" : "REQUIRED");
+  ESP_LOGCONFIG(TAG, "  Geometry calibration: %s (%s)",
+                this->measurement_manager_.measurement_engine().has_calibration()
+                    ? "VALID" : "REQUIRED",
+                this->geometry_calibration_storage_.stored_valid()
+                    ? "NVS" : "RAM/none");
   ESP_LOGCONFIG(TAG, "  Resolution active: %s", this->resolution_controller_.active_resolution().c_str());
   ESP_LOGCONFIG(TAG, "  Tracking precise ROI permanent: %s",
                 this->tracking_controller_.supported() ? "SUPPORTED" : "UNSUPPORTED");
