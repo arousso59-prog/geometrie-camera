@@ -52,7 +52,8 @@ void TargetDetector::reset_tracking() {
   ESP_LOGD(TAG, "V5.7 tracking reset on viewport change");
 }
 
-TargetObservation TargetDetector::detect(const GrayFrameView &frame) {
+TargetObservation TargetDetector::detect(
+    const GrayFrameView &frame, bool high_precision) {
   TargetObservation best;
   float best_selection_score = -1000.0f;
   this->candidates_.count = 0;
@@ -92,7 +93,7 @@ TargetObservation TargetDetector::detect(const GrayFrameView &frame) {
       // il ne participe ni a la localisation grossiere ni a la decision de
       // validite de la cible. Il affine seulement les quatre coins d'une
       // cible deja reconnue par le chemin historique.
-      if (refined_observation.valid) {
+      if (high_precision && refined_observation.valid) {
         TargetCandidate subpixel_candidate = refined_candidate;
         TargetSubpixelMetrics subpixel_metrics{};
         if (this->subpixel_refiner_.refine(frame, refined_candidate,
@@ -280,6 +281,14 @@ TargetObservation TargetDetector::detect(const GrayFrameView &frame) {
         this->marker_best_[marker_index].pattern_features =
             this->marker_features_[marker_index];
         this->marker_best_[marker_index].pattern_features_count = count;
+      }
+
+      // SEARCH/WIDE/MEDIUM/FINE ne servent qu'au tracking. Des qu'un
+      // marqueur R1 correctement code est trouve, il suffit a reconstruire
+      // la position de la plaque et a guider le viewport. Inutile de payer
+      // les 7 autres candidats et les raffinements metrologiques.
+      if (!high_precision) {
+        break;
       }
     }
 
